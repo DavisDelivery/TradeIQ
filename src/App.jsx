@@ -15,7 +15,7 @@ import { WilliamsView } from './WilliamsView.jsx';
 import { LynchView } from './LynchView.jsx';
 import { CatalystView } from './CatalystView.jsx';
 
-const APP_VERSION = '0.2.0-alpha';
+const APP_VERSION = '0.3.0-alpha';
 
 // ======================================================================
 // MOCK DATA — replaced by /api/target-board and Firestore subscriptions
