@@ -2,18 +2,27 @@
 // Returns upcoming earnings setups within 14 days, scored and sorted.
 
 import type { Handler } from '@netlify/functions';
-import { getEarningsCalendarRange, getDailyBars, getEarningsHistory } from './shared/data-provider';
+import { getEarningsCalendarRange, getDailyBars, getEarningsHistory, getUpcomingEarnings } from './shared/data-provider';
 import { CORE_WATCHLIST, UNIVERSE } from './shared/universe';
 import type { EarningsBoardResponse, EarningsSetup } from './shared/types';
 
 export const handler: Handler = async () => {
   try {
-    // Get all earnings within 14 days
+    // Primary path: full-market calendar range (1 API call, covers all tickers)
     const allEarnings = await getEarningsCalendarRange(14);
 
     // Restrict to our tracked universe (S&P 500 + Nasdaq 100 primarily)
     const universeTickers = new Set(UNIVERSE.map((u) => u.ticker));
-    const inUniverse = allEarnings.filter((e) => universeTickers.has(e.ticker));
+    let inUniverse = allEarnings.filter((e) => universeTickers.has(e.ticker));
+
+    // Fallback: if the range call returned nothing (some Finnhub plans gate this
+    // endpoint), probe CORE_WATCHLIST per-ticker. Slower but always works.
+    if (inUniverse.length === 0) {
+      const probed = await Promise.all(
+        CORE_WATCHLIST.map((t) => getUpcomingEarnings(t, 14).catch(() => null)),
+      );
+      inUniverse = probed.filter((e): e is NonNullable<typeof e> => e !== null);
+    }
 
     // Score each setup
     const to = new Date().toISOString().slice(0, 10);

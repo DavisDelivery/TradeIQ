@@ -58,6 +58,11 @@
   to = "/.netlify/functions/lynch-board"
   status = 200
 
+[[redirects]]
+  from = "/api/catalyst-board"
+  to = "/.netlify/functions/catalyst-board"
+  status = 200
+
 # SPA fallback
 [[redirects]]
   from = "/*"

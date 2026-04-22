@@ -27,8 +27,8 @@ export const handler: Handler = async () => {
       for (const c of batch) if (c) candidates.push(c);
     }
 
-    // Only keep interesting ones (score >= 60)
-    const filtered = candidates.filter((c) => c.score >= 60).sort((a, b) => b.score - a.score);
+    // Only keep interesting ones (score >= 40)
+    const filtered = candidates.filter((c) => c.score >= 40).sort((a, b) => b.score - a.score);
 
     const response: OptionsFlowResponse = {
       candidates: filtered,
