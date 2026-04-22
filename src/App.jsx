@@ -14,9 +14,10 @@ import {
 import { WilliamsView } from './WilliamsView.jsx';
 import { LynchView } from './LynchView.jsx';
 import { CatalystView } from './CatalystView.jsx';
+import { ChartView } from './ChartView.jsx';
 import { UniverseSelector, UNIVERSE_AWARE_VIEWS } from './components/UniverseSelector.jsx';
 
-const APP_VERSION = '0.3.3-alpha';
+const APP_VERSION = '0.4.0-alpha';
 
 // ======================================================================
 // MOCK DATA — replaced by /api/target-board and Firestore subscriptions
@@ -270,6 +271,7 @@ const MOBILE_NAV_VIEWS = [
   { id: 'options', label: 'Options', icon: Cpu },
   { id: 'engine', label: 'Engine', icon: Activity },
   { id: 'backtest', label: 'Backtest', icon: BarChart3 },
+  { id: 'chart', label: 'Chart', icon: LineChartIcon },
   { id: 'regime', label: 'Regime', icon: Gauge },
   { id: 'analysts', label: 'Analysts', icon: Brain },
   { id: 'alerts', label: 'Alerts', icon: Bell },
@@ -313,6 +315,7 @@ const TopBar = ({ activeView, setActiveView, regime, universeStats }) => {
     { id: 'options', label: 'Options Flow', icon: Cpu },
     { id: 'engine', label: 'Engine Test', icon: Activity },
     { id: 'backtest', label: 'Backtest', icon: BarChart3 },
+    { id: 'chart', label: 'Chart', icon: LineChartIcon },
     { id: 'regime', label: 'Regime', icon: Gauge },
     { id: 'analysts', label: 'Analysts', icon: Brain },
     { id: 'alerts', label: 'Alerts', icon: Bell },
@@ -2356,6 +2359,7 @@ export default function App() {
         {activeView === 'options' && <OptionsPlaysView universe={universe} />}
         {activeView === 'engine' && <EngineTestView />}
         {activeView === 'backtest' && <BacktestView />}
+        {activeView === 'chart' && <ChartView />}
         {activeView === 'regime' && <RegimeView regime={regime} />}
         {activeView === 'analysts' && <AnalystsView analysts={analysts} />}
         {activeView === 'alerts' && <AlertsView />}
