@@ -1,16 +1,11 @@
 import React from 'react';
-import { Users, FlaskConical, Sparkles, Zap, TrendingUp, TrendingDown } from 'lucide-react';
+import {
+  Users, FlaskConical, Sparkles, Zap, TrendingUp, TrendingDown,
+  Landmark, Briefcase,
+} from 'lucide-react';
 
-// Reusable badge strip showing catalyst signals. Drop this into any row that
-// has a ticker, and it'll surface insider/patent/setup flags compactly.
-//
-// Accepts two shapes:
-//   1. A rich `catalyst` object from /api/catalyst-board (preferred)
-//   2. Legacy loose signals: { insider, patents, setups } — for the existing
-//      target-board rows that haven't been migrated yet.
-//
-// All badges are inert — they don't fetch, animate, or open modals. Keep it
-// fast since this renders in every row of every list view.
+// Reusable badge strip showing catalyst signals. Drop into any row that has
+// a catalyst object.
 
 const CHIP_BASE = 'inline-flex items-center gap-1 px-1.5 py-0.5 text-[10px] font-medium border rounded-sm whitespace-nowrap';
 
@@ -20,6 +15,7 @@ export const CatalystChip = ({ icon: Icon, label, tone = 'neutral', title }) => 
     bear: 'border-rose-500/40 bg-rose-500/10 text-rose-300',
     warn: 'border-amber-500/40 bg-amber-500/10 text-amber-300',
     info: 'border-sky-500/40 bg-sky-500/10 text-sky-300',
+    political: 'border-violet-500/40 bg-violet-500/10 text-violet-300',
     neutral: 'border-neutral-700 bg-neutral-900/60 text-neutral-300',
   };
   return (
@@ -30,8 +26,7 @@ export const CatalystChip = ({ icon: Icon, label, tone = 'neutral', title }) => 
   );
 };
 
-// ----- Badges derived from a catalyst-board record -----
-export const CatalystBadges = ({ catalyst, max = 4 }) => {
+export const CatalystBadges = ({ catalyst, max = 5 }) => {
   if (!catalyst) return null;
   const chips = [];
 
@@ -43,6 +38,24 @@ export const CatalystBadges = ({ catalyst, max = 4 }) => {
       label: count ? `${count}-insider cluster` : 'Cluster buy',
       tone: 'bull',
       title: catalyst.components?.insider?.rationale || 'Multiple insiders buying within 14 days',
+    });
+  }
+  if (catalyst.hasPoliticalTailwind) {
+    chips.push({
+      key: 'political',
+      icon: Landmark,
+      label: 'Congress buying',
+      tone: 'political',
+      title: catalyst.components?.political?.rationale || 'Net congressional buying / lobbying acceleration',
+    });
+  }
+  if (catalyst.hasContractWin) {
+    chips.push({
+      key: 'contracts',
+      icon: Briefcase,
+      label: 'Contract flow',
+      tone: 'political',
+      title: catalyst.components?.contracts?.rationale || 'Federal contract awards accelerating',
     });
   }
   if (catalyst.hasPatentBurst) {
@@ -80,8 +93,7 @@ export const CatalystBadges = ({ catalyst, max = 4 }) => {
   );
 };
 
-// ----- Legacy loose-signals adapter. Gives existing views a cheap way to
-// render flags without requiring the full catalyst score object. -----
+// Loose-signals adapter for legacy rows that don't have a full catalyst object
 export const SignalBadges = ({ signals, max = 4 }) => {
   if (!signals) return null;
   const chips = [];
@@ -90,6 +102,12 @@ export const SignalBadges = ({ signals, max = 4 }) => {
   }
   if (signals.insiderSelling || signals.insider_selling) {
     chips.push({ key: 'is', icon: Users, label: 'Insider sell', tone: 'bear' });
+  }
+  if (signals.politicalTailwind || signals.political_tailwind) {
+    chips.push({ key: 'pol', icon: Landmark, label: 'Congress buy', tone: 'political' });
+  }
+  if (signals.contractWin || signals.contract_win) {
+    chips.push({ key: 'gc', icon: Briefcase, label: 'Contract', tone: 'political' });
   }
   if (signals.patentMomentum || signals.patent_momentum) {
     chips.push({ key: 'pm', icon: FlaskConical, label: 'Patents', tone: 'info' });
@@ -106,7 +124,6 @@ export const SignalBadges = ({ signals, max = 4 }) => {
   );
 };
 
-// ----- Conviction tier chip (used in the catalyst view header of each card) -----
 export const ConvictionChip = ({ conviction, direction }) => {
   if (!conviction) return null;
   const toneMap = { high: 'bull', medium: 'warn', low: 'neutral' };

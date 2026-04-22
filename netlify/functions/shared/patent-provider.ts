@@ -1,37 +1,27 @@
-// Patent activity provider.
+// Patent activity provider — Quiver-backed.
 //
-// Pulls recent patent grants from the USPTO PatentsView API, keyed by
-// assignee organization name. This is useful because:
+// Quiver's patents dataset covers USPTO grants mapped directly to public
+// tickers (no company-name fuzzy matching needed), which is a meaningful
+// upgrade over querying PatentsView by assignee organization name.
 //
-//   - Patent grants are PUBLIC and usually underappreciated by the market.
-//     A meaningful patent grant often doesn't move the stock on day 1 but
-//     shows up in revenue 12-24 months later when the product ships.
-//   - Grant velocity (patents per quarter, trending up) signals an R&D
-//     engine that's actively producing novel IP.
-//   - Category matters: patents in AI, quantum, biotech, and defense-tech
-//     CPC codes are usually worth more per patent than utility bolt-ons.
-//   - Citation activity (how many OTHER patents cite this one) is the best
-//     single proxy for patent importance, but it lags 2-3 years. We don't
-//     use it for freshly-granted patents.
-//
-// Requires PATENTSVIEW_API_KEY (free at patentsview.org). If the key is not
-// set or the API fails, we return an empty result and downstream scoring
-// degrades gracefully to neutral — the app still works, the signal just
-// disappears for that ticker.
+// What matters in patent signals:
+//   - Grant velocity (patents per quarter, trending up) signals an R&D engine
+//     actively producing novel IP. A jump from 5 to 40 grants/year = new
+//     product line coming to market.
+//   - Category matters. Patents in AI, biotech, quantum, defense-tech tend
+//     to be worth more than utility bolt-ons. Quiver doesn't always expose
+//     CPC, so we fall back to title keyword matching when missing.
+//   - Grants lag filings by 18-24 months, so today's grant burst often
+//     maps to revenue that shows up 12-24 months from now — this is a
+//     forward-looking fundamental, not a price-moving announcement.
 
-const PATENTSVIEW = 'https://search.patentsview.org/api/v1';
-
-// CPC classifications that tend to correlate with higher-value patents.
-// G06N = AI/machine learning, G06F = software/computing, H04L = networking,
-// A61* = medical/pharma, H01L = semiconductors, C07 = biochem, G06Q = business
-// methods (watch out — lots of junk here too).
-const HIGH_VALUE_CPC_PREFIXES = ['G06N', 'A61K', 'A61P', 'H01L', 'C07D', 'C07K', 'G06F17', 'G06F18', 'G16H'];
+import { quiverGetTicker, q, qn, qdate } from './quiver-client';
 
 export interface PatentGrant {
   patentId: string;
   title: string;
   grantDate: string;
-  cpcGroups: string[];   // e.g., ["G06N3/08", "G06F17/16"]
+  cpcGroups: string[];
   assignees: string[];
 }
 
@@ -42,108 +32,74 @@ export interface PatentActivity {
   totalGrants: number;
   grantsLast30d: number;
   grantsLast90d: number;
-  priorPeriodGrants: number;   // same-length period before lookback — for velocity delta
-  velocityChangePct: number;   // (recent - prior) / prior * 100
-  highValueGrants: number;     // count of grants in HIGH_VALUE_CPC_PREFIXES
+  priorPeriodGrants: number;
+  velocityChangePct: number;
+  highValueGrants: number;
   topCpcGroups: Array<{ group: string; count: number }>;
-  recentGrants: PatentGrant[]; // most recent 10
+  recentGrants: PatentGrant[];
   fetchedAt: string;
 }
 
-const cache = new Map<string, { data: PatentActivity; at: number }>();
-const CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour — patents don't move fast
+// CPC prefixes that empirically correlate with higher-value patents —
+// G06N = AI/ML, A61K/A61P = pharma, H01L = semis, C07D/C07K = biochem,
+// G06F17/18 = ML infrastructure, G16H = health informatics.
+const HIGH_VALUE_CPC_PREFIXES = ['G06N', 'A61K', 'A61P', 'H01L', 'C07D', 'C07K', 'G06F17', 'G06F18', 'G16H'];
+
+// When Quiver's data lacks CPC codes, fall back to title keyword matching to
+// identify high-value tech areas. This is rougher but still catches the big
+// categories.
+const HIGH_VALUE_KEYWORDS = [
+  /\b(machine learning|neural network|deep learning|artificial intelligence|\bai\b)\b/i,
+  /\b(semiconductor|wafer|transistor|photolithograph)\b/i,
+  /\b(biologic|antibod|monoclonal|vaccine|mrna|crispr|gene therap)\b/i,
+  /\b(quantum|superconduct)\b/i,
+  /\b(autonomous|lidar|radar array)\b/i,
+];
 
 export async function getPatentActivity(
   ticker: string,
   companyName: string,
   lookbackDays = 180,
 ): Promise<PatentActivity> {
-  const cacheKey = `${ticker}:${lookbackDays}`;
-  const hit = cache.get(cacheKey);
-  if (hit && Date.now() - hit.at < CACHE_TTL_MS) return hit.data;
-
   const empty: PatentActivity = {
-    ticker,
-    companyName,
-    lookbackDays,
-    totalGrants: 0,
-    grantsLast30d: 0,
-    grantsLast90d: 0,
-    priorPeriodGrants: 0,
-    velocityChangePct: 0,
-    highValueGrants: 0,
-    topCpcGroups: [],
-    recentGrants: [],
+    ticker, companyName, lookbackDays,
+    totalGrants: 0, grantsLast30d: 0, grantsLast90d: 0,
+    priorPeriodGrants: 0, velocityChangePct: 0, highValueGrants: 0,
+    topCpcGroups: [], recentGrants: [],
     fetchedAt: new Date().toISOString(),
   };
 
-  const apiKey = process.env.PATENTSVIEW_API_KEY;
-  if (!apiKey || !companyName) {
-    cache.set(cacheKey, { data: empty, at: Date.now() });
-    return empty;
-  }
-
   try {
-    const to = new Date();
-    const from = new Date(Date.now() - lookbackDays * 86400000);
-    const priorFrom = new Date(Date.now() - lookbackDays * 2 * 86400000);
+    // Quiver exposes patent data under the `allpatents` endpoint. Some plans
+    // also have `patents` — we try both.
+    let rows = await quiverGetTicker('allpatents', ticker);
+    if (rows.length === 0) rows = await quiverGetTicker('patents', ticker);
+    if (rows.length === 0) return empty;
 
-    // Query the current window + prior window in one call so we can compute velocity.
-    const body = {
-      q: {
-        _and: [
-          { _gte: { patent_date: priorFrom.toISOString().slice(0, 10) } },
-          { _lte: { patent_date: to.toISOString().slice(0, 10) } },
-          // PatentsView's _contains is case-insensitive on assignee_organization.
-          { _contains: { 'assignees.assignee_organization': companyName } },
-        ],
-      },
-      f: [
-        'patent_id',
-        'patent_title',
-        'patent_date',
-        'cpc_current.cpc_group_id',
-        'assignees.assignee_organization',
-      ],
-      s: [{ patent_date: 'desc' }],
-      o: { size: 500 }, // cap to avoid pagination gymnastics; most companies won't exceed this
-    };
+    const grants = rows.map(normalizePatent).filter(Boolean) as PatentGrant[];
 
-    const res = await fetch(`${PATENTSVIEW}/patent/`, {
-      method: 'POST',
-      headers: { 'X-Api-Key': apiKey, 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    });
-    if (!res.ok) {
-      cache.set(cacheKey, { data: empty, at: Date.now() });
-      return empty;
-    }
-    const data = (await res.json()) as { patents?: any[] };
-    const patents = (data.patents ?? []).map(normalizePatent).filter(Boolean) as PatentGrant[];
+    const fromIso = new Date(Date.now() - lookbackDays * 86400000).toISOString().slice(0, 10);
+    const priorFromIso = new Date(Date.now() - lookbackDays * 2 * 86400000).toISOString().slice(0, 10);
+    const thirtyIso = new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10);
+    const ninetyIso = new Date(Date.now() - 90 * 86400000).toISOString().slice(0, 10);
 
-    const fromIso = from.toISOString().slice(0, 10);
-    const thirtyDaysAgo = new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10);
-    const ninetyDaysAgo = new Date(Date.now() - 90 * 86400000).toISOString().slice(0, 10);
+    const current = grants.filter((g) => g.grantDate >= fromIso);
+    const prior = grants.filter((g) => g.grantDate >= priorFromIso && g.grantDate < fromIso);
 
-    const current = patents.filter((p) => p.grantDate >= fromIso);
-    const prior = patents.filter((p) => p.grantDate < fromIso);
+    const grantsLast30d = current.filter((g) => g.grantDate >= thirtyIso).length;
+    const grantsLast90d = current.filter((g) => g.grantDate >= ninetyIso).length;
 
-    const grantsLast30d = current.filter((p) => p.grantDate >= thirtyDaysAgo).length;
-    const grantsLast90d = current.filter((p) => p.grantDate >= ninetyDaysAgo).length;
+    const velocityChangePct = prior.length > 0
+      ? ((current.length - prior.length) / prior.length) * 100
+      : current.length > 0 ? 100 : 0;
 
-    const velocityChangePct =
-      prior.length > 0 ? ((current.length - prior.length) / prior.length) * 100 : current.length > 0 ? 100 : 0;
-
-    const highValueGrants = current.filter((p) =>
-      p.cpcGroups.some((g) => HIGH_VALUE_CPC_PREFIXES.some((pref) => g.startsWith(pref))),
-    ).length;
+    const highValueGrants = current.filter(isHighValue).length;
 
     const cpcCounts = new Map<string, number>();
-    for (const p of current) {
-      for (const g of p.cpcGroups) {
-        // truncate to subclass level (first 4 chars) to avoid fragmentation across specific groups
-        const sub = g.slice(0, 4);
-        cpcCounts.set(sub, (cpcCounts.get(sub) ?? 0) + 1);
+    for (const g of current) {
+      for (const code of g.cpcGroups) {
+        const sub = code.slice(0, 4);
+        if (sub) cpcCounts.set(sub, (cpcCounts.get(sub) ?? 0) + 1);
       }
     }
     const topCpcGroups = Array.from(cpcCounts.entries())
@@ -151,13 +107,10 @@ export async function getPatentActivity(
       .sort((a, b) => b.count - a.count)
       .slice(0, 5);
 
-    const out: PatentActivity = {
-      ticker,
-      companyName,
-      lookbackDays,
+    return {
+      ticker, companyName, lookbackDays,
       totalGrants: current.length,
-      grantsLast30d,
-      grantsLast90d,
+      grantsLast30d, grantsLast90d,
       priorPeriodGrants: prior.length,
       velocityChangePct: +velocityChangePct.toFixed(1),
       highValueGrants,
@@ -165,32 +118,39 @@ export async function getPatentActivity(
       recentGrants: current.slice(0, 10),
       fetchedAt: new Date().toISOString(),
     };
-
-    cache.set(cacheKey, { data: out, at: Date.now() });
-    return out;
   } catch {
-    cache.set(cacheKey, { data: empty, at: Date.now() });
     return empty;
   }
 }
 
 function normalizePatent(raw: any): PatentGrant | null {
   if (!raw) return null;
-  const patentId = String(raw.patent_id ?? '');
-  const title = String(raw.patent_title ?? '').trim();
-  const grantDate = String(raw.patent_date ?? '');
+  const patentId = String(q(raw, 'PatentNumber', 'PatentID', 'patent_id', 'id') ?? '');
+  const title = String(q(raw, 'Title', 'title', 'patent_title') ?? '').trim();
+  const grantDate = qdate(raw, 'Date', 'GrantDate', 'grant_date', 'patent_date');
   if (!patentId || !grantDate) return null;
-  const cpcGroups = Array.isArray(raw.cpc_current)
-    ? raw.cpc_current.map((c: any) => String(c.cpc_group_id ?? '')).filter(Boolean)
-    : [];
-  const assignees = Array.isArray(raw.assignees)
-    ? raw.assignees.map((a: any) => String(a.assignee_organization ?? '')).filter(Boolean)
-    : [];
+
+  const cpcRaw = q(raw, 'CPC', 'cpc', 'CPCGroups', 'cpc_groups');
+  const cpcGroups: string[] = Array.isArray(cpcRaw)
+    ? cpcRaw.map(String)
+    : typeof cpcRaw === 'string' ? cpcRaw.split(/[,\s;]+/).filter(Boolean) : [];
+
+  const assigneeRaw = q(raw, 'Assignee', 'assignee', 'Assignees', 'assignees');
+  const assignees: string[] = Array.isArray(assigneeRaw)
+    ? assigneeRaw.map(String)
+    : assigneeRaw ? [String(assigneeRaw)] : [];
+
   return { patentId, title, grantDate, cpcGroups, assignees };
 }
 
-// 0-100 patent momentum score. This is a proxy for innovation velocity —
-// companies whose patent output is accelerating in high-value areas.
+function isHighValue(g: PatentGrant): boolean {
+  if (g.cpcGroups.some((c) => HIGH_VALUE_CPC_PREFIXES.some((p) => c.startsWith(p)))) return true;
+  if (g.cpcGroups.length === 0 && g.title) {
+    return HIGH_VALUE_KEYWORDS.some((re) => re.test(g.title));
+  }
+  return false;
+}
+
 export function scorePatentActivity(p: PatentActivity): {
   score: number;
   confidence: number;
@@ -205,12 +165,10 @@ export function scorePatentActivity(p: PatentActivity): {
     return { score: 50, confidence: 0.1, rationale: 'no recent patents', tags: [] };
   }
 
-  // Volume
   if (p.totalGrants > 40) { raw += 15; parts.push(`${p.totalGrants} grants in ${p.lookbackDays}d`); }
   else if (p.totalGrants > 10) { raw += 8; parts.push(`${p.totalGrants} grants in ${p.lookbackDays}d`); }
   else if (p.totalGrants > 3) { raw += 3; parts.push(`${p.totalGrants} grants in ${p.lookbackDays}d`); }
 
-  // Velocity
   if (p.velocityChangePct > 50) {
     raw += 20;
     tags.push(`+${Math.round(p.velocityChangePct)}% grants`);
@@ -224,7 +182,6 @@ export function scorePatentActivity(p: PatentActivity): {
     parts.push('declining patent output');
   }
 
-  // High-value concentration
   const hvShare = p.totalGrants > 0 ? p.highValueGrants / p.totalGrants : 0;
   if (hvShare > 0.3 && p.highValueGrants >= 3) {
     raw += 15;
@@ -232,7 +189,6 @@ export function scorePatentActivity(p: PatentActivity): {
     parts.push(`${p.highValueGrants} patents in AI/bio/semi codes`);
   }
 
-  // Recent burst
   if (p.grantsLast30d >= 5) {
     raw += 8;
     tags.push(`${p.grantsLast30d} in 30d`);

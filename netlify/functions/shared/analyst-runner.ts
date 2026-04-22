@@ -6,8 +6,11 @@ import { runSectorRotation } from '../analysts/sector-rotation';
 import { runFundamental, runFlow, runEarnings, runNewsSentiment } from '../analysts/core';
 import { runInsider } from '../analysts/insider';
 import { runPatents } from '../analysts/patents';
+import { runPolitical } from '../analysts/political';
 import { getInsiderActivity } from './insider-provider';
 import { getPatentActivity } from './patent-provider';
+import { getPoliticalActivity } from './political-provider';
+import { getGovContractActivity } from './govcontracts-provider';
 import { SECTOR_ETFS, SPY, findEntry } from './universe';
 import type { AnalystOutput, Direction, Target, Tier, ConflictLevel, AnalystContribution, TopSignal } from './types';
 import type { Bar } from './data-provider';
@@ -42,21 +45,21 @@ export async function fetchBarCache(
   return cache;
 }
 
-// Weights sum to 1.0. Insider/patent additions required trimming existing
-// weights proportionally — technicals/news/flow reduced slightly to make room
-// for the two catalyst analysts. Insider carries more weight than patents
-// because Form 4 data is fresh (days) while patent grants lag their filing
-// by 18-24 months.
+// Weights sum to 1.0. Political analyst (Quiver-only: congress + lobbying +
+// contracts) gets a meaningful slice because it captures academic-backed
+// alpha (Ziobrowski senate studies) plus sector-specific signals (defense
+// contract flow, regulatory-win lobbying) that the other analysts miss.
 const ANALYST_WEIGHTS: Record<string, number> = {
-  'technical-analyst': 0.17,
-  'sector-rotation': 0.10,
-  'fundamental-analyst': 0.15,
-  'flow-analyst': 0.12,
-  'news-sentiment': 0.12,
-  'earnings-analyst': 0.08,
-  'macro-regime': 0.08,
-  'insider-analyst': 0.12,
+  'technical-analyst': 0.15,
+  'sector-rotation': 0.08,
+  'fundamental-analyst': 0.13,
+  'flow-analyst': 0.10,
+  'news-sentiment': 0.10,
+  'earnings-analyst': 0.07,
+  'macro-regime': 0.07,
+  'insider-analyst': 0.14,
   'patent-analyst': 0.06,
+  'political-analyst': 0.10,
 };
 
 export interface TargetForOneOpts {
@@ -82,13 +85,15 @@ export async function runAnalystsForTicker(opts: TargetForOneOpts): Promise<{
   }
 
   const companyName = entry?.name ?? ticker;
-  const [fundamentals, news, upcoming, history, insiderActivity, patentActivity] = await Promise.all([
+  const [fundamentals, news, upcoming, history, insiderActivity, patentActivity, politicalActivity, contractActivity] = await Promise.all([
     getFundamentals(ticker).catch(() => null),
     getNews(ticker, 15).catch(() => []),
     getUpcomingEarnings(ticker, 45).catch(() => null),
     getEarningsHistory(ticker, 4).catch(() => []),
     getInsiderActivity(ticker, 90).catch(() => null),
     getPatentActivity(ticker, companyName, 180).catch(() => null),
+    getPoliticalActivity(ticker, 180).catch(() => null),
+    getGovContractActivity(ticker, 180).catch(() => null),
   ]);
 
   const tech = runTechnical(bars);
@@ -105,6 +110,7 @@ export async function runAnalystsForTicker(opts: TargetForOneOpts): Promise<{
     score: 50, direction: 'neutral' as Direction, confidence: 0,
     rationale: 'patent data unavailable', signals: {},
   };
+  const pol = runPolitical(politicalActivity, contractActivity);
 
   // Macro-regime analyst: just a constant biased nudge from the regime layer
   const macroScore = Math.round(50 + macroBias * 20);
@@ -127,6 +133,7 @@ export async function runAnalystsForTicker(opts: TargetForOneOpts): Promise<{
     'macro-regime': macro,
     'insider-analyst': ins,
     'patent-analyst': pat,
+    'political-analyst': pol,
   };
 
   // Build contributions (weighted score vector)
@@ -203,6 +210,7 @@ function signalTypeFor(analyst: string, direction: Direction): string {
     case 'macro-regime': return lng ? 'risk_on' : 'risk_off';
     case 'insider-analyst': return lng ? 'insider_buying' : 'insider_selling';
     case 'patent-analyst': return 'patent_momentum';
+    case 'political-analyst': return lng ? 'political_tailwind' : 'political_headwind';
     default: return analyst;
   }
 }

@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import {
   FlaskConical, Users, Sparkles, TrendingUp, TrendingDown, Zap,
-  Filter, RefreshCw, AlertCircle, ExternalLink,
+  Filter, RefreshCw, AlertCircle, ExternalLink, Landmark, Briefcase,
 } from 'lucide-react';
 import { CatalystBadges, ConvictionChip, CatalystChip } from './components/CatalystBadges.jsx';
 
@@ -15,6 +15,8 @@ const INDEX_OPTIONS = [
 const FILTER_OPTIONS = [
   { id: 'all', label: 'Any catalyst', desc: 'Any signal active' },
   { id: 'cluster', label: 'Cluster buys', desc: '2+ insiders in 14d' },
+  { id: 'political', label: 'Congress/lobby', desc: 'Bipartisan or net buying' },
+  { id: 'contracts', label: 'Gov contracts', desc: 'Fed awards accelerating' },
   { id: 'patents', label: 'Patent bursts', desc: 'Grant velocity +30%' },
   { id: 'setup', label: 'Stacked setups', desc: '2+ technicals aligned' },
 ];
@@ -199,6 +201,22 @@ const CatalystDetail = ({ pick }) => {
         tone="bull"
       />
       <ComponentBreakdown
+        icon={Landmark}
+        title="Political"
+        score={comp.political?.score}
+        confidence={comp.political?.confidence}
+        rationale={comp.political?.rationale}
+        tone="political"
+      />
+      <ComponentBreakdown
+        icon={Briefcase}
+        title="Gov Contracts"
+        score={comp.contracts?.score}
+        confidence={comp.contracts?.confidence}
+        rationale={comp.contracts?.rationale}
+        tone="political"
+      />
+      <ComponentBreakdown
         icon={FlaskConical}
         title="Patents"
         score={comp.patent?.score}
@@ -227,6 +245,7 @@ const ComponentBreakdown = ({ icon: Icon, title, score, confidence, rationale, t
     bull: 'text-emerald-400',
     info: 'text-sky-400',
     warn: 'text-amber-400',
+    political: 'text-violet-400',
   }[tone] || 'text-neutral-400';
 
   return (
