@@ -14,8 +14,9 @@ import {
 import { WilliamsView } from './WilliamsView.jsx';
 import { LynchView } from './LynchView.jsx';
 import { CatalystView } from './CatalystView.jsx';
+import { UniverseSelector, UNIVERSE_AWARE_VIEWS } from './components/UniverseSelector.jsx';
 
-const APP_VERSION = '0.3.0-alpha';
+const APP_VERSION = '0.3.1-alpha';
 
 // ======================================================================
 // MOCK DATA — replaced by /api/target-board and Firestore subscriptions
@@ -2142,6 +2143,8 @@ const ResearchPanel = ({ ticker }) => {
 export default function App() {
   const [activeView, setActiveView] = useState('board');
   const [selectedTarget, setSelectedTarget] = useState(null);
+  const [universe, setUniverse] = useState('sp500');
+  const showUniverseBar = UNIVERSE_AWARE_VIEWS.has(activeView);
 
   return (
     <div className="min-h-screen bg-[#050607] text-neutral-200 pb-16 sm:pb-0 overflow-x-hidden" style={{
@@ -2170,13 +2173,21 @@ export default function App() {
         universeStats={{ core: 784, watchlist: 12 }}
       />
 
+      {showUniverseBar && (
+        <div className="sticky top-[80px] sm:top-[92px] z-30 border-b border-neutral-800/60 bg-[#0a0b0d]/95 backdrop-blur-xl">
+          <div className="px-3 sm:px-6 py-2 max-w-[1400px] mx-auto">
+            <UniverseSelector universe={universe} setUniverse={setUniverse} />
+          </div>
+        </div>
+      )}
+
       <main>
-        {activeView === 'board' && <LiveTargetBoard onOpenTarget={setSelectedTarget} />}
-        {activeView === 'catalyst' && <CatalystView />}
-        {activeView === 'williams' && <WilliamsView />}
-        {activeView === 'lynch' && <LynchView />}
-        {activeView === 'earnings' && <EarningsPlaysView />}
-        {activeView === 'options' && <OptionsPlaysView />}
+        {activeView === 'board' && <LiveTargetBoard onOpenTarget={setSelectedTarget} universe={universe} />}
+        {activeView === 'catalyst' && <CatalystView universe={universe} />}
+        {activeView === 'williams' && <WilliamsView universe={universe} />}
+        {activeView === 'lynch' && <LynchView universe={universe} />}
+        {activeView === 'earnings' && <EarningsPlaysView universe={universe} />}
+        {activeView === 'options' && <OptionsPlaysView universe={universe} />}
         {activeView === 'engine' && <EngineTestView />}
         {activeView === 'backtest' && <BacktestView />}
         {activeView === 'regime' && <RegimeView regime={MOCK_REGIME} />}

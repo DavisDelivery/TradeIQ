@@ -1,23 +1,15 @@
 import React, { useState, useEffect } from 'react';
 import { TrendingUp, TrendingDown, Shield } from 'lucide-react';
 
-const INDEX_OPTIONS = [
-  { id: 'all', label: 'All' },
-  { id: 'sp500', label: 'S&P 500' },
-  { id: 'ndx', label: 'Nasdaq 100' },
-  { id: 'russell2k', label: 'Russell 2K' },
-];
-
-export const LynchView = () => {
+export const LynchView = ({ universe = 'sp500' }) => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [data, setData] = useState(null);
-  const [index, setIndex] = useState('sp500');
 
   const load = async () => {
     setLoading(true); setError(null);
     try {
-      const r = await fetch(`/api/lynch-board?index=${index}&limit=30`);
+      const r = await fetch(`/api/lynch-board?index=${universe}&limit=30`);
       const json = await r.json();
       if (!r.ok || !json.ok) throw new Error(json.error || `HTTP ${r.status}`);
       setData(json);
@@ -28,7 +20,7 @@ export const LynchView = () => {
     }
   };
 
-  useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [index]);
+  useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [universe]);
 
   return (
     <div className="px-3 py-4 sm:p-6 max-w-[1400px] mx-auto">
@@ -45,21 +37,9 @@ export const LynchView = () => {
         </p>
       </header>
 
-      <div className="flex flex-wrap gap-1 mb-4">
-        {INDEX_OPTIONS.map(opt => (
-          <button key={opt.id} onClick={() => setIndex(opt.id)}
-            className={`px-3 py-1.5 text-[12px] font-medium border transition-colors ${
-              index === opt.id
-                ? 'bg-emerald-500/10 border-emerald-500/40 text-emerald-400'
-                : 'bg-neutral-950/40 border-neutral-800 text-neutral-400 hover:border-neutral-700'
-            }`}
-          >{opt.label}</button>
-        ))}
-      </div>
-
       {loading && !data && (
         <div className="border border-neutral-800 p-8 text-center text-neutral-500 font-mono text-sm">
-          Pulling fundamentals for {index === 'all' ? 'full universe' : INDEX_OPTIONS.find(o => o.id === index)?.label}...
+          Pulling fundamentals for {universe === 'all' ? 'full universe' : universe.toUpperCase()}...
           <div className="text-[10px] text-neutral-600 mt-2">
             This scan hits Polygon financials + Finnhub earnings — slower than Williams.
           </div>

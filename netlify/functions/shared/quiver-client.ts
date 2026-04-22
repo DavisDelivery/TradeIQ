@@ -1,22 +1,4 @@
-// Shared Quiver Quantitative API client. All providers that need Quiver data
-// route through here so auth, caching, rate handling, and error behavior live
-// in one place.
-//
-// Base: https://api.quiverquant.com/beta
-// Auth: Authorization: Token <key>
-//
-// Endpoint families used:
-//   /historical/insiders/{ticker}        — SEC Form 4 insider transactions
-//   /historical/allpatents/{ticker}      — patent grants
-//   /historical/senatetrading/{ticker}   — senator disclosures (STOCK Act)
-//   /historical/housetrading/{ticker}    — house rep disclosures
-//   /historical/govcontractsall/{ticker} — federal contract awards
-//   /historical/lobbying/{ticker}        — corporate lobbying spend
-//   /historical/wallstreetbets/{ticker}  — WSB mention counts
-//
-// The "live" variants of these (no ticker path, no query param) return recent
-// activity across all tickers — useful for board-wide scans where pulling
-// per-ticker would be expensive.
+// Shared Quiver Quantitative API client.
 
 const QUIVER_BASE = 'https://api.quiverquant.com/beta';
 
@@ -26,9 +8,6 @@ function quiverKey(): string {
   return k;
 }
 
-// Shared in-memory cache across all Quiver calls. Keyed by URL; lambdas get a
-// fresh cache on cold-start, warm invocations reuse it. 10-minute TTL is a
-// reasonable default — most Quiver datasets update daily, some hourly.
 const cache = new Map<string, { data: any; at: number }>();
 const DEFAULT_TTL_MS = 10 * 60 * 1000;
 
@@ -40,23 +19,22 @@ export async function quiverGet<T = any>(
   const ttl = opts.ttlMs ?? DEFAULT_TTL_MS;
   const hit = cache.get(url);
   if (hit && Date.now() - hit.at < ttl) return hit.data as T;
-
   try {
     const res = await fetch(url, {
-      headers: {
-        Accept: 'application/json',
-        Authorization: `Token ${quiverKey()}`,
-      },
+      headers: { Accept: 'application/json', Authorization: `Token ${quiverKey()}` },
     });
-
-    // 403 usually means the dataset isn't in the current subscription tier.
-    // We don't want to blow up — just return null and let downstream scorers
-    // degrade to neutral. Same for any non-2xx.
-    if (!res.ok) {
-      cache.set(url, { data: null, at: Date.now() });
-      return null;
+    if (!res.ok) { cache.set(url, { data: null, at: Date.now() }); return null; }
+    const ctype = res.headers.get('content-type') ?? '';
+    if (!ctype.toLowerCase().includes('json')) {
+      cache.set(url, { data: null, at: Date.now() }); return null;
     }
-    const data = (await res.json()) as T;
+    const text = await res.text();
+    if (!text || text.trim().startsWith('<')) {
+      cache.set(url, { data: null, at: Date.now() }); return null;
+    }
+    let data: T;
+    try { data = JSON.parse(text) as T; }
+    catch { cache.set(url, { data: null, at: Date.now() }); return null; }
     cache.set(url, { data, at: Date.now() });
     return data;
   } catch {
@@ -65,8 +43,6 @@ export async function quiverGet<T = any>(
   }
 }
 
-// Ticker-scoped fetch. Quiver sometimes returns an array, sometimes an object
-// with a records field — we normalize to an array.
 export async function quiverGetTicker<T = any>(
   endpoint: string,
   ticker: string,
@@ -85,9 +61,6 @@ export async function quiverGetTicker<T = any>(
   return [];
 }
 
-// Flexible field reader — Quiver's field names have shifted over the years
-// (Date vs date, Ticker vs ticker, AcquiredDisposedCode vs ad_code). This
-// helper tries each candidate until it finds one.
 export function q(row: any, ...names: string[]): any {
   for (const n of names) {
     if (row && row[n] !== undefined && row[n] !== null && row[n] !== '') return row[n];
@@ -95,9 +68,6 @@ export function q(row: any, ...names: string[]): any {
   return undefined;
 }
 
-// Number coercion that treats strings, null, and undefined as "missing"
-// rather than returning 0. Important for scoring — a missing field shouldn't
-// contribute as a zero and skew weighted averages.
 export function qn(row: any, ...names: string[]): number | undefined {
   const v = q(row, ...names);
   if (v === undefined) return undefined;
@@ -105,8 +75,6 @@ export function qn(row: any, ...names: string[]): number | undefined {
   return Number.isFinite(n) ? n : undefined;
 }
 
-// ISO date coercion. Quiver returns dates in various forms (YYYY-MM-DD,
-// ISO timestamps with offsets). We normalize to YYYY-MM-DD for comparison.
 export function qdate(row: any, ...names: string[]): string {
   const v = q(row, ...names);
   if (!v) return '';

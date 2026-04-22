@@ -1,31 +1,22 @@
 import React, { useState, useEffect } from 'react';
 import { TrendingUp, TrendingDown, Activity, Zap } from 'lucide-react';
 
-const INDEX_OPTIONS = [
-  { id: 'all', label: 'All' },
-  { id: 'sp500', label: 'S&P 500' },
-  { id: 'ndx', label: 'Nasdaq 100' },
-  { id: 'dow', label: 'Dow 30' },
-  { id: 'russell2k', label: 'Russell 2K' },
-];
-
 const SIDE_OPTIONS = [
   { id: 'both', label: 'Both' },
   { id: 'long', label: 'Long' },
   { id: 'short', label: 'Short' },
 ];
 
-export const WilliamsView = () => {
+export const WilliamsView = ({ universe = 'sp500' }) => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [data, setData] = useState(null);
-  const [index, setIndex] = useState('sp500');
   const [side, setSide] = useState('both');
 
   const load = async () => {
     setLoading(true); setError(null);
     try {
-      const r = await fetch(`/api/williams-board?index=${index}&side=${side}&limit=30`);
+      const r = await fetch(`/api/williams-board?index=${universe}&side=${side}&limit=30`);
       const json = await r.json();
       if (!r.ok || !json.ok) throw new Error(json.error || `HTTP ${r.status}`);
       setData(json);
@@ -36,7 +27,7 @@ export const WilliamsView = () => {
     }
   };
 
-  useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [index, side]);
+  useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [universe, side]);
 
   return (
     <div className="px-3 py-4 sm:p-6 max-w-[1400px] mx-auto">
@@ -56,17 +47,6 @@ export const WilliamsView = () => {
 
       {/* Filters */}
       <div className="flex flex-col sm:flex-row gap-3 mb-4">
-        <div className="flex flex-wrap gap-1">
-          {INDEX_OPTIONS.map(opt => (
-            <button key={opt.id} onClick={() => setIndex(opt.id)}
-              className={`px-3 py-1.5 text-[12px] font-medium border transition-colors ${
-                index === opt.id
-                  ? 'bg-emerald-500/10 border-emerald-500/40 text-emerald-400'
-                  : 'bg-neutral-950/40 border-neutral-800 text-neutral-400 hover:border-neutral-700'
-              }`}
-            >{opt.label}</button>
-          ))}
-        </div>
         <div className="flex gap-1 sm:ml-auto">
           {SIDE_OPTIONS.map(opt => (
             <button key={opt.id} onClick={() => setSide(opt.id)}
@@ -82,7 +62,7 @@ export const WilliamsView = () => {
 
       {loading && !data && (
         <div className="border border-neutral-800 p-8 text-center text-neutral-500 font-mono text-sm">
-          Scanning {index === 'all' ? 'full universe' : INDEX_OPTIONS.find(o => o.id === index)?.label}...
+          Scanning {universe === 'all' ? 'full universe' : universe.toUpperCase()}...
         </div>
       )}
 
