@@ -18,8 +18,13 @@ export const LogButton = ({ payload, size = 'sm', className = '' }) => {
   const [logged, setLogged] = useState(false);
 
   useEffect(() => {
-    const existing = readLog().some((e) => entryMatches(e, payload));
-    setLogged(existing);
+    const recheck = () => {
+      const existing = readLog().some((e) => entryMatches(e, payload));
+      setLogged(existing);
+    };
+    recheck();
+    window.addEventListener('tradelog:change', recheck);
+    return () => window.removeEventListener('tradelog:change', recheck);
   }, [payload.ticker, payload.source, payload.reportDate]);
 
   const handleClick = (ev) => {

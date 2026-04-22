@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import {
   BookMarked, TrendingUp, TrendingDown, Minus, X, RefreshCw, AlertCircle,
-  Zap, Briefcase, Activity, Shield, Target,
+  Zap, Briefcase, Activity, Shield, Target, Cloud, CloudOff,
 } from 'lucide-react';
-import { readLog, removeTrade, computeForwardReturns, daysBetween } from './tradeLog.js';
+import { readLog, removeTrade, computeForwardReturns, daysBetween, cloudSyncState } from './tradeLog.js';
 
 const SOURCE_META = {
   earnings: { label: 'Earnings', icon: Zap, color: 'text-sky-400 border-sky-500/40 bg-sky-500/5' },
@@ -31,10 +31,21 @@ export const JournalView = () => {
   const [errorTickers, setErrorTickers] = useState(new Set());
   const [expandedId, setExpandedId] = useState(null);
   const [sourceFilter, setSourceFilter] = useState('all');
+  const [cloudState, setCloudState] = useState(cloudSyncState());
 
   const refresh = () => setLog(readLog());
 
-  useEffect(() => { refresh(); }, []);
+  useEffect(() => {
+    refresh();
+    const handler = () => refresh();
+    window.addEventListener('tradelog:change', handler);
+    // Poll cloud state for UI indicator (Firestore sub takes 1-2s to establish)
+    const poll = setInterval(() => setCloudState(cloudSyncState()), 1500);
+    return () => {
+      window.removeEventListener('tradelog:change', handler);
+      clearInterval(poll);
+    };
+  }, []);
 
   // Fetch SPY bars once for alpha calculations
   useEffect(() => {
@@ -114,9 +125,16 @@ export const JournalView = () => {
         <div className="flex items-baseline gap-3 mb-2">
           <BookMarked className="h-4 w-4 text-emerald-400" />
           <h1 className="text-xl sm:text-2xl font-serif font-semibold text-neutral-100">Journal</h1>
+          <span
+            className={`inline-flex items-center gap-1 text-[10px] font-mono uppercase tracking-wider ${cloudState.ready ? 'text-emerald-500' : 'text-neutral-600'}`}
+            title={cloudState.ready ? 'Synced to Firestore — visible on all your devices' : 'Offline — storing locally, will sync when reconnected'}
+          >
+            {cloudState.ready ? <Cloud className="h-3 w-3" /> : <CloudOff className="h-3 w-3" />}
+            {cloudState.ready ? 'synced' : 'local'}
+          </span>
         </div>
         <p className="text-[12px] text-neutral-500 leading-relaxed max-w-2xl">
-          Trades you've logged from anywhere in the app. Forward returns computed from entry price at 5/20/30/60/90-day windows. Stored locally on this device.
+          Trades you've logged from anywhere in the app. Forward returns computed from entry price at 5/20/30/60/90-day windows. Synced across devices via Firebase.
         </p>
       </header>
 

@@ -20,7 +20,7 @@ import { LogButton } from './components/LogButton.jsx';
 import { UniverseSelector, UNIVERSE_AWARE_VIEWS } from './components/UniverseSelector.jsx';
 import { readLog, logTrade, removeTrade, computeForwardReturns } from './tradeLog.js';
 
-const APP_VERSION = '0.5.0-alpha';
+const APP_VERSION = '0.6.0-alpha';
 
 // ======================================================================
 // MOCK DATA — replaced by /api/target-board and Firestore subscriptions
