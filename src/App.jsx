@@ -16,7 +16,7 @@ import { LynchView } from './LynchView.jsx';
 import { CatalystView } from './CatalystView.jsx';
 import { UniverseSelector, UNIVERSE_AWARE_VIEWS } from './components/UniverseSelector.jsx';
 
-const APP_VERSION = '0.3.1-alpha';
+const APP_VERSION = '0.3.2-alpha';
 
 // ======================================================================
 // MOCK DATA — replaced by /api/target-board and Firestore subscriptions
@@ -2144,7 +2144,22 @@ export default function App() {
   const [activeView, setActiveView] = useState('board');
   const [selectedTarget, setSelectedTarget] = useState(null);
   const [universe, setUniverse] = useState('sp500');
+  const [regime, setRegime] = useState(MOCK_REGIME);
+  const [analysts, setAnalysts] = useState(MOCK_ANALYSTS);
   const showUniverseBar = UNIVERSE_AWARE_VIEWS.has(activeView);
+
+  useEffect(() => {
+    // Live regime from FRED. Falls back to MOCK_REGIME if network/auth fails.
+    fetch('/api/regime')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => { if (d && d.regime) setRegime(d); })
+      .catch(() => {});
+    // Live analyst roster + health. Falls back to MOCK_ANALYSTS.
+    fetch('/api/analysts-status')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => { if (d?.analysts?.length) setAnalysts(d.analysts); })
+      .catch(() => {});
+  }, []);
 
   return (
     <div className="min-h-screen bg-[#050607] text-neutral-200 pb-16 sm:pb-0 overflow-x-hidden" style={{
@@ -2169,7 +2184,7 @@ export default function App() {
       <TopBar
         activeView={activeView}
         setActiveView={setActiveView}
-        regime={MOCK_REGIME}
+        regime={regime}
         universeStats={{ core: 784, watchlist: 12 }}
       />
 
@@ -2190,8 +2205,8 @@ export default function App() {
         {activeView === 'options' && <OptionsPlaysView universe={universe} />}
         {activeView === 'engine' && <EngineTestView />}
         {activeView === 'backtest' && <BacktestView />}
-        {activeView === 'regime' && <RegimeView regime={MOCK_REGIME} />}
-        {activeView === 'analysts' && <AnalystsView analysts={MOCK_ANALYSTS} />}
+        {activeView === 'regime' && <RegimeView regime={regime} />}
+        {activeView === 'analysts' && <AnalystsView analysts={analysts} />}
         {activeView === 'alerts' && <AlertsView alerts={MOCK_ALERTS} />}
         {activeView === 'settings' && <SettingsView />}
       </main>

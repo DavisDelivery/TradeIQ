@@ -63,6 +63,16 @@
   to = "/.netlify/functions/catalyst-board"
   status = 200
 
+[[redirects]]
+  from = "/api/regime"
+  to = "/.netlify/functions/regime"
+  status = 200
+
+[[redirects]]
+  from = "/api/analysts-status"
+  to = "/.netlify/functions/analysts-status"
+  status = 200
+
 # SPA fallback
 [[redirects]]
   from = "/*"
