@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { TrendingUp, TrendingDown, Activity, Zap } from 'lucide-react';
+import { LogButton } from './components/LogButton.jsx';
 
 const SIDE_OPTIONS = [
   { id: 'both', label: 'Both' },
@@ -122,6 +123,19 @@ const WilliamsCard = ({ c, rank }) => {
         {c.signals.downtrend && <span className="text-rose-400">TREND ↓</span>}
         <span>close-str {c.signals.closeStrength10d}%</span>
         <span className="ml-auto text-neutral-600">conf {(c.confidence * 100).toFixed(0)}%</span>
+      </div>
+      <div className="mt-2 flex justify-end">
+        <LogButton
+          size="xs"
+          payload={{
+            ticker: c.ticker,
+            source: 'williams',
+            loggedPrice: c.signals?.close ?? c.price,
+            composite: c.score,
+            direction: c.side,
+            rationale: c.rationale,
+          }}
+        />
       </div>
     </div>
   );

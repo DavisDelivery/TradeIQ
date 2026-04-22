@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { TrendingUp, TrendingDown, Shield } from 'lucide-react';
+import { LogButton } from './components/LogButton.jsx';
 
 export const LynchView = ({ universe = 'sp500' }) => {
   const [loading, setLoading] = useState(true);
@@ -117,6 +118,20 @@ const LynchCard = ({ c, rank }) => {
           <span>OM {c.signals.operatingMarginPct}%</span>
         )}
         <span className="ml-auto text-neutral-600">conf {(c.confidence * 100).toFixed(0)}%</span>
+      </div>
+      <div className="mt-2 flex justify-end">
+        <LogButton
+          size="xs"
+          payload={{
+            ticker: c.ticker,
+            source: 'lynch',
+            loggedPrice: c.signals?.price ?? c.price,
+            composite: Math.round(c.score),
+            direction: c.score > 0 ? 'long' : 'short',
+            rationale: c.rationale,
+            signals: c.signals,
+          }}
+        />
       </div>
     </div>
   );

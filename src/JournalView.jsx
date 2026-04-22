@@ -26,6 +26,7 @@ const WINDOWS = [
 export const JournalView = () => {
   const [log, setLog] = useState([]);
   const [perfByTicker, setPerfByTicker] = useState({});
+  const [spyBars, setSpyBars] = useState(null);
   const [loadingTickers, setLoadingTickers] = useState(new Set());
   const [errorTickers, setErrorTickers] = useState(new Set());
   const [expandedId, setExpandedId] = useState(null);
@@ -34,6 +35,16 @@ export const JournalView = () => {
   const refresh = () => setLog(readLog());
 
   useEffect(() => { refresh(); }, []);
+
+  // Fetch SPY bars once for alpha calculations
+  useEffect(() => {
+    if (log.length === 0 || spyBars) return;
+    fetch('/api/chart-analysis?ticker=SPY&lookback=180&skipAi=1')
+      .then((r) => r.ok ? r.json() : null)
+      .then((json) => { if (json?.ok && Array.isArray(json.bars)) setSpyBars(json.bars); })
+      .catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [log.length]);
 
   // Fetch chart-analysis data for each distinct ticker in the log (no AI narrative)
   useEffect(() => {
@@ -154,6 +165,8 @@ export const JournalView = () => {
               const loading = loadingTickers.has(t.ticker);
               const errored = errorTickers.has(t.ticker);
               const fwd = bars ? computeForwardReturns(bars, t.loggedAt, t.loggedPrice) : {};
+              // SPY benchmark at the same log date, using its own base price at that point
+              const spyFwd = spyBars ? computeForwardReturns(spyBars, t.loggedAt, spyBars.find((b) => new Date(b.date).getTime() >= new Date(t.loggedAt).getTime())?.c ?? spyBars[0].c) : {};
               const source = SOURCE_META[t.source] ?? SOURCE_META.chart;
               const SourceIcon = source.icon;
               const isOpen = expandedId === t.id;
@@ -184,7 +197,13 @@ export const JournalView = () => {
                     </div>
                     <div className="grid grid-cols-3 sm:grid-cols-6 gap-1 text-[11px]">
                       {WINDOWS.map((w) => (
-                        <ReturnCell key={w.key} label={w.label} entry={fwd[w.key]} loading={loading && !bars} />
+                        <ReturnCell
+                          key={w.key}
+                          label={w.label}
+                          entry={fwd[w.key]}
+                          spyEntry={spyFwd[w.key]}
+                          loading={loading && !bars}
+                        />
                       ))}
                     </div>
                   </button>
@@ -244,20 +263,30 @@ const FilterChip = ({ active, onClick, children }) => (
   </button>
 );
 
-const ReturnCell = ({ label, entry, loading }) => {
+const ReturnCell = ({ label, entry, spyEntry, loading }) => {
   let value = '—';
   let color = '#737373';
+  let alphaText = null;
+  let alphaColor = '#737373';
   if (loading) {
     value = '…';
   } else if (entry) {
     const r = entry.returnPct;
     value = `${r >= 0 ? '+' : ''}${r.toFixed(2)}%`;
     color = r >= 0 ? '#14e89a' : '#f43f5e';
+    if (spyEntry) {
+      const alpha = r - spyEntry.returnPct;
+      alphaText = `α ${alpha >= 0 ? '+' : ''}${alpha.toFixed(1)}`;
+      alphaColor = alpha >= 0 ? '#10b981' : '#f43f5e';
+    }
   }
   return (
     <div className="border border-neutral-800/60 p-1.5 text-center">
       <div className="text-[9px] font-mono uppercase tracking-widest text-neutral-500">{label}</div>
       <div className="font-mono text-[12px] tabular-nums" style={{ color }}>{value}</div>
+      {alphaText && (
+        <div className="font-mono text-[9px] tabular-nums opacity-80" style={{ color: alphaColor }}>{alphaText}</div>
+      )}
     </div>
   );
 };

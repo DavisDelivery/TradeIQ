@@ -8,6 +8,7 @@ import {
   LineChart as LineChartIcon, TrendingUp, TrendingDown, Minus,
   Brain, Zap, AlertCircle, Search, RefreshCw,
 } from 'lucide-react';
+import { LogButton } from './components/LogButton.jsx';
 
 const QUICK_TICKERS = ['NVDA', 'AAPL', 'MSFT', 'TSLA', 'META', 'GOOGL', 'AMZN', 'SPY'];
 
@@ -134,6 +135,19 @@ const SignalHeader = ({ data }) => {
           {signal.action}
           <span className="text-[10px] opacity-70 ml-1">{(signal.confidence * 100).toFixed(0)}%</span>
         </div>
+        <LogButton
+          size="sm"
+          payload={{
+            ticker,
+            source: 'chart',
+            loggedPrice: price,
+            composite: Math.round(signal.confidence * 100),
+            direction: signal.action === 'BUY' ? 'long' : signal.action === 'SELL' ? 'short' : 'neutral',
+            rationale: data.narrative || `Rule-stack ${signal.action}: ${signal.bullPoints.concat(signal.bearPoints.map((b) => `(bear: ${b})`)).join('; ')}`,
+            signalAction: signal.action,
+            signalConfidence: signal.confidence,
+          }}
+        />
       </div>
       {(signal.bullPoints.length > 0 || signal.bearPoints.length > 0) && (
         <div className="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1 text-[11px]">

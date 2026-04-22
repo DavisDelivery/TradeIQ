@@ -16,6 +16,7 @@ import { LynchView } from './LynchView.jsx';
 import { CatalystView } from './CatalystView.jsx';
 import { ChartView } from './ChartView.jsx';
 import { JournalView } from './JournalView.jsx';
+import { LogButton } from './components/LogButton.jsx';
 import { UniverseSelector, UNIVERSE_AWARE_VIEWS } from './components/UniverseSelector.jsx';
 import { readLog, logTrade, removeTrade, computeForwardReturns } from './tradeLog.js';
 
@@ -700,9 +701,23 @@ const TargetDetail = ({ target, onClose }) => {
               )}
             </div>
           </div>
-          <button onClick={onClose} className="text-neutral-400 hover:text-neutral-200 p-1">
-            <X className="h-5 w-5" />
-          </button>
+          <div className="flex items-center gap-2">
+            <LogButton
+              size="md"
+              payload={{
+                ticker: target.ticker,
+                source: 'board',
+                loggedPrice: target.price,
+                composite: target.composite,
+                tier: target.tier,
+                direction: target.direction,
+                rationale: target.rationale,
+              }}
+            />
+            <button onClick={onClose} className="text-neutral-400 hover:text-neutral-200 p-1">
+              <X className="h-5 w-5" />
+            </button>
+          </div>
         </div>
 
         <div className="p-6 space-y-6">

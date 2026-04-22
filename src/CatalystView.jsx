@@ -4,6 +4,7 @@ import {
   Filter, RefreshCw, AlertCircle, ExternalLink, Landmark, Briefcase,
 } from 'lucide-react';
 import { CatalystBadges, ConvictionChip, CatalystChip } from './components/CatalystBadges.jsx';
+import { LogButton } from './components/LogButton.jsx';
 
 const FILTER_OPTIONS = [
   { id: 'all', label: 'Any catalyst', desc: 'Any signal active' },
@@ -174,6 +175,22 @@ const CatalystDetail = ({ pick }) => {
         <span className="uppercase tracking-wider">{pick.sector}</span>
         <span className="opacity-40">·</span>
         <ConvictionChip conviction={pick.conviction} direction={pick.direction} />
+        <div className="ml-auto">
+          <LogButton
+            size="sm"
+            payload={{
+              ticker: pick.ticker,
+              source: 'catalyst',
+              loggedPrice: pick.price,
+              composite: pick.composite,
+              conviction: pick.conviction,
+              direction: pick.direction,
+              sector: pick.sector,
+              rationale: pick.rationale,
+              tags: pick.tags,
+            }}
+          />
+        </div>
       </div>
     </div>
   );
