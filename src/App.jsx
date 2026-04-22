@@ -13,6 +13,7 @@ import {
 } from 'recharts';
 import { WilliamsView } from './WilliamsView.jsx';
 import { LynchView } from './LynchView.jsx';
+import { CatalystView } from './CatalystView.jsx';
 
 const APP_VERSION = '0.2.0-alpha';
 
@@ -261,6 +262,7 @@ const DirectionPill = ({ direction }) => {
 
 const MOBILE_NAV_VIEWS = [
   { id: 'board', label: 'Board', icon: Target },
+  { id: 'catalyst', label: 'Catalyst', icon: Zap },
   { id: 'williams', label: 'Williams', icon: Activity },
   { id: 'lynch', label: 'Lynch', icon: Shield },
   { id: 'earnings', label: 'Earnings', icon: Zap },
@@ -303,6 +305,7 @@ const MobileBottomNav = ({ activeView, setActiveView }) => (
 const TopBar = ({ activeView, setActiveView, regime, universeStats }) => {
   const views = [
     { id: 'board', label: 'Target Board', icon: Target },
+    { id: 'catalyst', label: 'Catalyst', icon: Zap },
     { id: 'williams', label: 'Williams', icon: Activity },
     { id: 'lynch', label: 'Lynch', icon: Shield },
     { id: 'earnings', label: 'Earnings', icon: Zap },
@@ -2169,6 +2172,7 @@ export default function App() {
 
       <main>
         {activeView === 'board' && <LiveTargetBoard onOpenTarget={setSelectedTarget} />}
+        {activeView === 'catalyst' && <CatalystView />}
         {activeView === 'williams' && <WilliamsView />}
         {activeView === 'lynch' && <LynchView />}
         {activeView === 'earnings' && <EarningsPlaysView />}

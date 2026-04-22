@@ -4,6 +4,10 @@ import { getDailyBars, getFundamentals, getNews, getUpcomingEarnings, getEarning
 import { runTechnical } from '../analysts/technical';
 import { runSectorRotation } from '../analysts/sector-rotation';
 import { runFundamental, runFlow, runEarnings, runNewsSentiment } from '../analysts/core';
+import { runInsider } from '../analysts/insider';
+import { runPatents } from '../analysts/patents';
+import { getInsiderActivity } from './insider-provider';
+import { getPatentActivity } from './patent-provider';
 import { SECTOR_ETFS, SPY, findEntry } from './universe';
 import type { AnalystOutput, Direction, Target, Tier, ConflictLevel, AnalystContribution, TopSignal } from './types';
 import type { Bar } from './data-provider';
@@ -38,14 +42,21 @@ export async function fetchBarCache(
   return cache;
 }
 
+// Weights sum to 1.0. Insider/patent additions required trimming existing
+// weights proportionally — technicals/news/flow reduced slightly to make room
+// for the two catalyst analysts. Insider carries more weight than patents
+// because Form 4 data is fresh (days) while patent grants lag their filing
+// by 18-24 months.
 const ANALYST_WEIGHTS: Record<string, number> = {
-  'technical-analyst': 0.20,
-  'sector-rotation': 0.12,
-  'fundamental-analyst': 0.18,
-  'flow-analyst': 0.15,
-  'news-sentiment': 0.15,
-  'earnings-analyst': 0.10,
-  'macro-regime': 0.10,
+  'technical-analyst': 0.17,
+  'sector-rotation': 0.10,
+  'fundamental-analyst': 0.15,
+  'flow-analyst': 0.12,
+  'news-sentiment': 0.12,
+  'earnings-analyst': 0.08,
+  'macro-regime': 0.08,
+  'insider-analyst': 0.12,
+  'patent-analyst': 0.06,
 };
 
 export interface TargetForOneOpts {
@@ -70,11 +81,14 @@ export async function runAnalystsForTicker(opts: TargetForOneOpts): Promise<{
     return { target: null, analysts: {} };
   }
 
-  const [fundamentals, news, upcoming, history] = await Promise.all([
+  const companyName = entry?.name ?? ticker;
+  const [fundamentals, news, upcoming, history, insiderActivity, patentActivity] = await Promise.all([
     getFundamentals(ticker).catch(() => null),
     getNews(ticker, 15).catch(() => []),
     getUpcomingEarnings(ticker, 45).catch(() => null),
     getEarningsHistory(ticker, 4).catch(() => []),
+    getInsiderActivity(ticker, 90).catch(() => null),
+    getPatentActivity(ticker, companyName, 180).catch(() => null),
   ]);
 
   const tech = runTechnical(bars);
@@ -83,6 +97,14 @@ export async function runAnalystsForTicker(opts: TargetForOneOpts): Promise<{
   const flow = runFlow(bars);
   const earn = runEarnings(upcoming, history);
   const news_ = runNewsSentiment(news);
+  const ins = insiderActivity ? runInsider(insiderActivity) : {
+    score: 50, direction: 'neutral' as Direction, confidence: 0,
+    rationale: 'insider data unavailable', signals: {},
+  };
+  const pat = patentActivity ? runPatents(patentActivity) : {
+    score: 50, direction: 'neutral' as Direction, confidence: 0,
+    rationale: 'patent data unavailable', signals: {},
+  };
 
   // Macro-regime analyst: just a constant biased nudge from the regime layer
   const macroScore = Math.round(50 + macroBias * 20);
@@ -103,6 +125,8 @@ export async function runAnalystsForTicker(opts: TargetForOneOpts): Promise<{
     'news-sentiment': news_,
     'earnings-analyst': earn,
     'macro-regime': macro,
+    'insider-analyst': ins,
+    'patent-analyst': pat,
   };
 
   // Build contributions (weighted score vector)
@@ -177,6 +201,8 @@ function signalTypeFor(analyst: string, direction: Direction): string {
     case 'sector-rotation': return lng ? 'sector_leadership' : 'sector_laggard';
     case 'earnings-analyst': return 'earnings_setup';
     case 'macro-regime': return lng ? 'risk_on' : 'risk_off';
+    case 'insider-analyst': return lng ? 'insider_buying' : 'insider_selling';
+    case 'patent-analyst': return 'patent_momentum';
     default: return analyst;
   }
 }
