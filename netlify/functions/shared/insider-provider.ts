@@ -1,52 +1,23 @@
 // Insider activity provider — Quiver-backed.
-//
-// Quiver's insider dataset is SEC Form 4 data, same source as Finnhub but
-// cleaner schema and includes the transaction code field we need to filter
-// option exercises, grants, and tax withholdings out of the signal.
-//
-// Public shape (InsiderActivity, InsiderCluster, etc.) is unchanged from the
-// pre-Quiver version so every downstream consumer (insider analyst, catalyst
-// scorer, catalyst board, CatalystView) keeps working without modification.
-//
-// What matters in insider buying (unchanged rationale from before):
-//   - Open-market PURCHASES only. Option exercises are usually comp, not
-//     conviction. Gifts, 10b5-1 planned sales, and ESPPs are noise.
-//   - CLUSTER buys (2+ insiders in the same 14-day window) dramatically
-//     outperform lone-insider signals (Cohen/Malloy/Pomorski 2012).
-//   - Size relative to salary matters.
-//   - Role matters. CEO + CFO + Director cluster > three random VPs.
-//   - First-buy-in-12mo events are statistically meaningful.
-
-import { quiverGetTicker, q, qn, qdate } from './quiver-client';
+import { quiverGet, q, qn, qdate } from './quiver-client';
 
 export interface InsiderTransaction {
-  name: string;
-  share: number;
-  change: number;
-  filingDate: string;
-  transactionDate: string;
-  transactionPrice: number;
-  transactionCode: string;
-  position: string;
+  name: string; share: number; change: number;
+  filingDate: string; transactionDate: string;
+  transactionPrice: number; transactionCode: string; position: string;
 }
 
 export interface InsiderCluster {
-  windowStart: string;
-  windowEnd: string;
-  buyerCount: number;
-  totalDollarValue: number;
+  windowStart: string; windowEnd: string;
+  buyerCount: number; totalDollarValue: number;
   roles: string[];
   topBuyers: Array<{ name: string; role: string; dollars: number }>;
 }
 
 export interface InsiderActivity {
-  ticker: string;
-  lookbackDays: number;
-  totalBuys: number;
-  totalSells: number;
-  netDollars: number;
-  buyDollars: number;
-  sellDollars: number;
+  ticker: string; lookbackDays: number;
+  totalBuys: number; totalSells: number;
+  netDollars: number; buyDollars: number; sellDollars: number;
   uniqueBuyers: number;
   clusters: InsiderCluster[];
   latestBuy?: { date: string; dollars: number; role: string; name: string };
@@ -68,18 +39,20 @@ export async function getInsiderActivity(
   };
 
   try {
-    const rows = await quiverGetTicker('insiders', ticker);
+    const raw = await quiverGet<any>(`/live/insiders?ticker=${encodeURIComponent(ticker)}`);
+    const rows: any[] = Array.isArray(raw)
+      ? raw
+      : Array.isArray(raw?.data) ? raw.data
+      : Array.isArray(raw?.records) ? raw.records
+      : [];
     if (rows.length === 0) return empty;
 
     const all = rows.map(normalizeTx).filter(Boolean) as InsiderTransaction[];
-
     const fromIso = new Date(Date.now() - lookbackDays * 86400000).toISOString().slice(0, 10);
     const priorYearIso = new Date(Date.now() - (lookbackDays + 365) * 86400000).toISOString().slice(0, 10);
 
     const inWindow = all.filter((t) => t.transactionDate >= fromIso);
-    const priorYearWindow = all.filter(
-      (t) => t.transactionDate >= priorYearIso && t.transactionDate < fromIso,
-    );
+    const priorYearWindow = all.filter((t) => t.transactionDate >= priorYearIso && t.transactionDate < fromIso);
 
     const buys = inWindow.filter((t) => t.transactionCode === 'P' && t.share > 0);
     const sells = inWindow.filter((t) => t.transactionCode === 'S' && t.share < 0);
@@ -87,25 +60,20 @@ export async function getInsiderActivity(
     const buyDollars = buys.reduce((a, t) => a + t.share * t.transactionPrice, 0);
     const sellDollars = sells.reduce((a, t) => a + Math.abs(t.share) * t.transactionPrice, 0);
     const uniqueBuyers = new Set(buys.map((t) => t.name)).size;
-
     const clusters = detectClusters(buys);
 
     const latest = buys.length
       ? buys.reduce((a, b) => (a.transactionDate > b.transactionDate ? a : b))
       : undefined;
 
-    const hadPriorYearPurchase = priorYearWindow.some(
-      (t) => t.transactionCode === 'P' && t.share > 0,
-    );
+    const hadPriorYearPurchase = priorYearWindow.some((t) => t.transactionCode === 'P' && t.share > 0);
     const firstBuyInAYear = buys.length > 0 && !hadPriorYearPurchase;
 
     return {
       ticker, lookbackDays,
-      totalBuys: buys.length,
-      totalSells: sells.length,
+      totalBuys: buys.length, totalSells: sells.length,
       netDollars: buyDollars - sellDollars,
-      buyDollars, sellDollars, uniqueBuyers,
-      clusters,
+      buyDollars, sellDollars, uniqueBuyers, clusters,
       latestBuy: latest ? {
         date: latest.transactionDate,
         dollars: +(latest.share * latest.transactionPrice).toFixed(0),
@@ -116,9 +84,7 @@ export async function getInsiderActivity(
       transactions: buys,
       fetchedAt: new Date().toISOString(),
     };
-  } catch {
-    return empty;
-  }
+  } catch { return empty; }
 }
 
 function normalizeTx(raw: any): InsiderTransaction | null {
@@ -127,16 +93,13 @@ function normalizeTx(raw: any): InsiderTransaction | null {
   const share = qn(raw, 'Shares', 'shares', 'Amount', 'amount') ?? 0;
   const price = qn(raw, 'PricePerShare', 'Price', 'pricePerShare', 'price') ?? 0;
   const rawCode = String(q(raw, 'TransactionCode', 'transactionCode', 'Code', 'code') ?? '').trim().toUpperCase();
-  // Quiver sometimes reports acquired/disposed separately. Map to P/S when we
-  // don't have an explicit code.
   const ad = String(q(raw, 'AcquiredDisposedCode', 'AcquistionOrDisposition', 'AD') ?? '').trim().toUpperCase();
   const code = rawCode || (ad === 'A' ? 'P' : ad === 'D' ? 'S' : '');
 
   if (!name || !Number.isFinite(share)) return null;
 
   return {
-    name,
-    share,
+    name, share,
     change: qn(raw, 'SharesOwnedFollowingTransaction', 'Change', 'change') ?? 0,
     filingDate: qdate(raw, 'FilingDate', 'filingDate'),
     transactionDate: qdate(raw, 'Date', 'TransactionDate', 'transactionDate'),
@@ -155,10 +118,7 @@ function detectClusters(buys: InsiderTransaction[]): InsiderCluster[] {
     const start = sorted[i];
     const startTs = Date.parse(start.transactionDate);
     let j = i;
-    while (
-      j < sorted.length &&
-      Date.parse(sorted[j].transactionDate) - startTs <= 14 * 86400000
-    ) j++;
+    while (j < sorted.length && Date.parse(sorted[j].transactionDate) - startTs <= 14 * 86400000) j++;
     const window = sorted.slice(i, j);
     const names = new Set(window.map((t) => t.name));
     if (names.size >= 2) {
@@ -178,22 +138,16 @@ function detectClusters(buys: InsiderTransaction[]): InsiderCluster[] {
         windowEnd: window[window.length - 1].transactionDate,
         buyerCount: names.size,
         totalDollarValue: +window.reduce((a, t) => a + t.share * t.transactionPrice, 0).toFixed(0),
-        roles,
-        topBuyers,
+        roles, topBuyers,
       });
       i = j;
-    } else {
-      i++;
-    }
+    } else { i++; }
   }
   return clusters;
 }
 
 export function scoreInsiderActivity(a: InsiderActivity): {
-  score: number;
-  confidence: number;
-  rationale: string;
-  tags: string[];
+  score: number; confidence: number; rationale: string; tags: string[];
 } {
   const tags: string[] = [];
   let raw = 0;
@@ -210,14 +164,8 @@ export function scoreInsiderActivity(a: InsiderActivity): {
     parts.push(`${biggest.buyerCount} insiders bought within 14d ($${fmtK(biggest.totalDollarValue)})`);
   }
 
-  const leadershipBuy = a.transactions.some((t) =>
-    /(CEO|CFO|CHIEF|PRESIDENT|CHAIR)/i.test(t.position),
-  );
-  if (leadershipBuy) {
-    raw += 15;
-    tags.push('C-suite buy');
-    parts.push('C-suite buying');
-  }
+  const leadershipBuy = a.transactions.some((t) => /(CEO|CFO|CHIEF|PRESIDENT|CHAIR)/i.test(t.position));
+  if (leadershipBuy) { raw += 15; tags.push('C-suite buy'); parts.push('C-suite buying'); }
 
   if (a.netDollars > 5_000_000) { raw += 20; parts.push(`$${fmtK(a.netDollars)} net buys`); }
   else if (a.netDollars > 1_000_000) { raw += 12; parts.push(`$${fmtK(a.netDollars)} net buys`); }
@@ -225,9 +173,7 @@ export function scoreInsiderActivity(a: InsiderActivity): {
   else if (a.netDollars < -5_000_000) { raw -= 10; parts.push(`$${fmtK(Math.abs(a.netDollars))} net sells`); }
 
   if (a.firstBuyInAYear) {
-    raw += 15;
-    tags.push('first buy in 12mo');
-    parts.push('first insider purchase in 12mo');
+    raw += 15; tags.push('first buy in 12mo'); parts.push('first insider purchase in 12mo');
   }
 
   if (a.uniqueBuyers >= 3) raw += 5;
@@ -236,12 +182,7 @@ export function scoreInsiderActivity(a: InsiderActivity): {
   const score = Math.round(50 + raw);
   const confidence = Math.min(1, (a.totalBuys + a.totalSells) / 6);
 
-  return {
-    score,
-    confidence,
-    rationale: parts.join(', ') || 'mixed insider activity',
-    tags,
-  };
+  return { score, confidence, rationale: parts.join(', ') || 'mixed insider activity', tags };
 }
 
 function fmtK(n: number): string {
