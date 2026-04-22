@@ -1,7 +1,6 @@
 [build]
-  base = "app"
   publish = "dist"
-  command = "npm ci && npm run build"
+  command = "npm run build"
   functions = "netlify/functions"
 
 [build.environment]
@@ -10,30 +9,28 @@
 [functions]
   node_bundler = "esbuild"
 
-  [functions."*"]
-    included_files = [
-      "netlify/functions/analysts/**",
-      "netlify/functions/synthesis/**",
-      "netlify/functions/shared/**",
-      "netlify/functions/ingest/**",
-      "netlify/functions/backtest/**"
-    ]
-    external_node_modules = ["@netlify/blobs", "@anthropic-ai/sdk"]
+# ==========================================================================
+# API redirects — rewrite /api/<endpoint> to /.netlify/functions/<endpoint>
+# ==========================================================================
 
-# API routes
 [[redirects]]
   from = "/api/target-board"
   to = "/.netlify/functions/target-board"
   status = 200
 
 [[redirects]]
-  from = "/api/health"
-  to = "/.netlify/functions/health"
+  from = "/api/engine-test"
+  to = "/.netlify/functions/engine-test"
   status = 200
 
 [[redirects]]
-  from = "/api/research"
-  to = "/.netlify/functions/research"
+  from = "/api/earnings-board"
+  to = "/.netlify/functions/earnings-board"
+  status = 200
+
+[[redirects]]
+  from = "/api/options-flow"
+  to = "/.netlify/functions/options-flow"
   status = 200
 
 [[redirects]]
@@ -42,23 +39,23 @@
   status = 200
 
 [[redirects]]
-  from = "/api/claude-pm"
-  to = "/.netlify/functions/claude-pm"
+  from = "/api/research"
+  to = "/.netlify/functions/research"
   status = 200
 
 [[redirects]]
-  from = "/api/arbitrator"
-  to = "/.netlify/functions/arbitrator"
+  from = "/api/health"
+  to = "/.netlify/functions/health"
   status = 200
 
 [[redirects]]
-  from = "/api/earnings-interpreter"
-  to = "/.netlify/functions/earnings-interpreter"
+  from = "/api/williams-board"
+  to = "/.netlify/functions/williams-board"
   status = 200
 
 [[redirects]]
-  from = "/api/regime-narrative"
-  to = "/.netlify/functions/regime-narrative"
+  from = "/api/lynch-board"
+  to = "/.netlify/functions/lynch-board"
   status = 200
 
 # SPA fallback
@@ -67,7 +64,15 @@
   to = "/index.html"
   status = 200
 
-# Security headers
+# ==========================================================================
+# Headers
+# ==========================================================================
+
+[[headers]]
+  for = "/assets/*"
+  [headers.values]
+    Cache-Control = "public, max-age=31536000, immutable"
+
 [[headers]]
   for = "/*"
   [headers.values]

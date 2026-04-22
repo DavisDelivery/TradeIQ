@@ -2,12 +2,26 @@
   "name": "tradeiq-alpha",
   "version": "0.2.0-alpha",
   "private": true,
-  "description": "Multi-factor equity analytics platform with Claude-driven portfolio management",
-  "workspaces": ["app"],
+  "type": "module",
   "scripts": {
-    "dev": "cd app && npm run dev",
-    "build": "cd app && npm run build",
-    "preview": "cd app && npm run preview",
-    "deploy": "cd app && npm run build && netlify deploy --prod --dir=dist --site=8e90d525-78f3-4288-9c15-8b1968e994c1"
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "lucide-react": "^0.383.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "recharts": "^2.12.7"
+  },
+  "devDependencies": {
+    "@netlify/functions": "^2.8.2",
+    "@types/node": "^25.6.0",
+    "@vitejs/plugin-react": "^4.3.1",
+    "autoprefixer": "^10.4.19",
+    "postcss": "^8.4.38",
+    "tailwindcss": "^3.4.4",
+    "typescript": "^5.5.4",
+    "vite": "^5.3.1"
   }
 }

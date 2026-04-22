@@ -2,11 +2,6 @@ node_modules/
 dist/
 .env
 .env.local
-.env.*.local
 .netlify/
 *.log
 .DS_Store
-.vscode/
-.idea/
-coverage/
-*.tsbuildinfo
