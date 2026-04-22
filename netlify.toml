@@ -1,0 +1,76 @@
+[build]
+  base = "app"
+  publish = "dist"
+  command = "npm ci && npm run build"
+  functions = "netlify/functions"
+
+[build.environment]
+  NODE_VERSION = "20"
+
+[functions]
+  node_bundler = "esbuild"
+
+  [functions."*"]
+    included_files = [
+      "netlify/functions/analysts/**",
+      "netlify/functions/synthesis/**",
+      "netlify/functions/shared/**",
+      "netlify/functions/ingest/**",
+      "netlify/functions/backtest/**"
+    ]
+    external_node_modules = ["@netlify/blobs", "@anthropic-ai/sdk"]
+
+# API routes
+[[redirects]]
+  from = "/api/target-board"
+  to = "/.netlify/functions/target-board"
+  status = 200
+
+[[redirects]]
+  from = "/api/health"
+  to = "/.netlify/functions/health"
+  status = 200
+
+[[redirects]]
+  from = "/api/research"
+  to = "/.netlify/functions/research"
+  status = 200
+
+[[redirects]]
+  from = "/api/backtest"
+  to = "/.netlify/functions/backtest"
+  status = 200
+
+[[redirects]]
+  from = "/api/claude-pm"
+  to = "/.netlify/functions/claude-pm"
+  status = 200
+
+[[redirects]]
+  from = "/api/arbitrator"
+  to = "/.netlify/functions/arbitrator"
+  status = 200
+
+[[redirects]]
+  from = "/api/earnings-interpreter"
+  to = "/.netlify/functions/earnings-interpreter"
+  status = 200
+
+[[redirects]]
+  from = "/api/regime-narrative"
+  to = "/.netlify/functions/regime-narrative"
+  status = 200
+
+# SPA fallback
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
+
+# Security headers
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Frame-Options = "DENY"
+    X-Content-Type-Options = "nosniff"
+    Referrer-Policy = "same-origin"

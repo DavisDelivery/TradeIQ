@@ -1,0 +1,13 @@
+{
+  "name": "tradeiq-alpha",
+  "version": "0.2.0-alpha",
+  "private": true,
+  "description": "Multi-factor equity analytics platform with Claude-driven portfolio management",
+  "workspaces": ["app"],
+  "scripts": {
+    "dev": "cd app && npm run dev",
+    "build": "cd app && npm run build",
+    "preview": "cd app && npm run preview",
+    "deploy": "cd app && npm run build && netlify deploy --prod --dir=dist --site=8e90d525-78f3-4288-9c15-8b1968e994c1"
+  }
+}
