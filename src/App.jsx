@@ -4,7 +4,7 @@ import {
   AlertTriangle, ChevronRight, CircleCheck, CircleX, Circle, Gauge,
   BarChart3, Brain, Newspaper, Globe2, Eye, Target, Clock, ArrowUpRight,
   ArrowDownRight, Minus, Shield, Cpu, LineChart as LineChartIcon, Filter, X,
-  Inbox, Bell, ExternalLink, Info
+  Inbox, Bell, ExternalLink, Info, BookMarked
 } from 'lucide-react';
 import {
   AreaChart, Area, LineChart, Line, BarChart, Bar, RadarChart,
@@ -15,9 +15,11 @@ import { WilliamsView } from './WilliamsView.jsx';
 import { LynchView } from './LynchView.jsx';
 import { CatalystView } from './CatalystView.jsx';
 import { ChartView } from './ChartView.jsx';
+import { JournalView } from './JournalView.jsx';
 import { UniverseSelector, UNIVERSE_AWARE_VIEWS } from './components/UniverseSelector.jsx';
+import { readLog, logTrade, removeTrade, computeForwardReturns } from './tradeLog.js';
 
-const APP_VERSION = '0.4.0-alpha';
+const APP_VERSION = '0.5.0-alpha';
 
 // ======================================================================
 // MOCK DATA — replaced by /api/target-board and Firestore subscriptions
@@ -275,6 +277,7 @@ const MOBILE_NAV_VIEWS = [
   { id: 'regime', label: 'Regime', icon: Gauge },
   { id: 'analysts', label: 'Analysts', icon: Brain },
   { id: 'alerts', label: 'Alerts', icon: Bell },
+  { id: 'journal', label: 'Journal', icon: BookMarked },
   { id: 'settings', label: 'Settings', icon: Settings },
 ];
 
@@ -319,6 +322,7 @@ const TopBar = ({ activeView, setActiveView, regime, universeStats }) => {
     { id: 'regime', label: 'Regime', icon: Gauge },
     { id: 'analysts', label: 'Analysts', icon: Brain },
     { id: 'alerts', label: 'Alerts', icon: Bell },
+    { id: 'journal', label: 'Journal', icon: BookMarked },
     { id: 'settings', label: 'Settings', icon: Settings },
   ];
 
@@ -1394,6 +1398,14 @@ const EngineTestView = () => {
 // EARNINGS PLAYS VIEW
 // ======================================================================
 
+// Small stat display used inside expanded earnings detail panels
+const DetailStat = ({ label, value, color }) => (
+  <div>
+    <div className="text-neutral-500 uppercase tracking-widest text-[9px] font-mono mb-0.5">{label}</div>
+    <div className="text-sm font-mono" style={color ? { color } : { color: '#e5e5e5' }}>{value}</div>
+  </div>
+);
+
 const MOCK_EARNINGS = [
   {
     ticker: 'NVDA', reportDate: '2026-05-28', reportTime: 'AMC', daysUntil: 5,
@@ -1420,6 +1432,8 @@ const EarningsPlaysView = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [data, setData] = useState(null);
+  const [expandedKey, setExpandedKey] = useState(null);
+  const [loggedIds, setLoggedIds] = useState(() => new Set(readLog().filter((t) => t.source === 'earnings').map((t) => t.ticker + '|' + t.reportDate)));
 
   const load = async () => {
     setLoading(true);
@@ -1523,8 +1537,37 @@ const EarningsPlaysView = () => {
             put_debit_spread: 'Put Debit Spread',
           }[e.strategy] || e.strategy;
           const biasColor = e.bias === 'sell_premium' ? '#4dbaf2' : '#14e89a';
+          const cardKey = e.ticker + e.reportDate;
+          const isOpen = expandedKey === cardKey;
+          const alreadyLogged = loggedIds.has(cardKey);
+          const moveRatio = (e.avgPriorMove !== null && e.expectedMove > 0)
+            ? e.avgPriorMove / e.expectedMove : null;
+          const handleLog = (ev) => {
+            ev.stopPropagation();
+            if (alreadyLogged) return;
+            logTrade({
+              ticker: e.ticker,
+              source: 'earnings',
+              loggedPrice: e.price,
+              strategy: strategyLabel,
+              bias: e.bias,
+              reportDate: e.reportDate,
+              reportTime: e.reportTime,
+              daysUntilAtLog: e.daysUntil,
+              expectedMove: e.expectedMove,
+              ivr: e.ivr,
+              avgPriorMove: e.avgPriorMove,
+              composite: e.composite,
+              rationale: e.rationale,
+            });
+            setLoggedIds(new Set([...loggedIds, cardKey]));
+          };
           return (
-            <div key={e.ticker + e.reportDate} className="border border-neutral-800 hover:border-neutral-700 p-4 sm:p-5">
+            <div
+              key={cardKey}
+              onClick={() => setExpandedKey(isOpen ? null : cardKey)}
+              className={`border bg-neutral-950/40 p-4 sm:p-5 cursor-pointer transition-colors ${isOpen ? 'border-neutral-600' : 'border-neutral-800 hover:border-neutral-700'}`}
+            >
               <div className="flex items-start justify-between mb-3 gap-3">
                 <div>
                   <div className="flex items-baseline gap-3 flex-wrap">
@@ -1543,6 +1586,11 @@ const EarningsPlaysView = () => {
                       {e.bias.replace('_', ' ')}
                     </span>
                     <span className="text-[12px] text-neutral-300">{strategyLabel}</span>
+                    {alreadyLogged && (
+                      <span className="text-[10px] font-mono text-emerald-400 border border-emerald-500/40 px-1.5 py-0.5">
+                        LOGGED
+                      </span>
+                    )}
                   </div>
                 </div>
                 <div className="text-right">
@@ -1573,6 +1621,49 @@ const EarningsPlaysView = () => {
               </div>
 
               <p className="text-[12px] text-neutral-400 leading-relaxed">{e.rationale}</p>
+
+              {isOpen && (
+                <div className="mt-4 pt-4 border-t border-neutral-800 space-y-3" onClick={(ev) => ev.stopPropagation()}>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-[11px]">
+                    <DetailStat label="Report Time" value={e.reportTime?.toUpperCase() || '—'} />
+                    <DetailStat label="Days Until" value={`${e.daysUntil}d`} />
+                    <DetailStat
+                      label="Prior / Expected"
+                      value={moveRatio !== null ? `${moveRatio.toFixed(2)}x` : '—'}
+                      color={moveRatio === null ? undefined : (
+                        (e.bias === 'sell_premium' && moveRatio < 0.8) ||
+                        (e.bias === 'buy_premium' && moveRatio > 1.2)
+                      ) ? '#14e89a' : '#f59e0b'}
+                    />
+                    <DetailStat label="Score" value={e.composite} color={e.composite >= 80 ? '#14e89a' : '#4dbaf2'} />
+                  </div>
+
+                  <div className="text-[11px] text-neutral-400 leading-relaxed bg-neutral-900/40 border border-neutral-800 p-3">
+                    <div className="font-mono uppercase tracking-widest text-[9px] text-neutral-500 mb-1">Strategy read</div>
+                    {e.bias === 'sell_premium'
+                      ? `Iron Condor profits if ${e.ticker} stays within ±${e.expectedMove?.toFixed(1)}% of current price through ${e.reportDate}. Prior average move (${e.avgPriorMove !== null ? e.avgPriorMove.toFixed(1) + '%' : 'unknown'}) ${moveRatio !== null && moveRatio < 0.8 ? 'suggests overpriced IV — good setup' : moveRatio !== null && moveRatio > 1.2 ? 'suggests IV might be underpriced — caution' : 'is mixed'}. Size small — a single bad print eats several winners.`
+                      : `Long Straddle profits if ${e.ticker} moves MORE than ±${e.expectedMove?.toFixed(1)}% through ${e.reportDate}. Prior average move (${e.avgPriorMove !== null ? e.avgPriorMove.toFixed(1) + '%' : 'unknown'}) ${moveRatio !== null && moveRatio > 1.2 ? 'suggests realized moves typically exceed expected — edge intact' : moveRatio !== null && moveRatio < 0.8 ? 'suggests underwhelming prior reactions — risk of theta decay' : 'is mixed'}. Time the exit for day-of-print or day-after.`
+                    }
+                  </div>
+
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <button
+                      onClick={handleLog}
+                      disabled={alreadyLogged}
+                      className={`px-3 py-1.5 text-[11px] font-mono uppercase tracking-widest border transition-colors ${
+                        alreadyLogged
+                          ? 'text-emerald-400 border-emerald-500/40 bg-emerald-500/10 cursor-default'
+                          : 'text-emerald-400 border-emerald-500/40 bg-emerald-500/5 hover:bg-emerald-500/15'
+                      }`}
+                    >
+                      {alreadyLogged ? '✓ Logged' : '+ Log Trade'}
+                    </button>
+                    <span className="text-[10px] text-neutral-600 font-mono">
+                      {alreadyLogged ? 'See Journal tab for forward returns' : 'Tracks 5d/20d/30d/60d/90d returns in Journal'}
+                    </span>
+                  </div>
+                </div>
+              )}
             </div>
           );
         })}
@@ -2363,6 +2454,7 @@ export default function App() {
         {activeView === 'regime' && <RegimeView regime={regime} />}
         {activeView === 'analysts' && <AnalystsView analysts={analysts} />}
         {activeView === 'alerts' && <AlertsView />}
+        {activeView === 'journal' && <JournalView />}
         {activeView === 'settings' && <SettingsView />}
       </main>
 
