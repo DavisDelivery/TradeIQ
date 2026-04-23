@@ -123,7 +123,10 @@ export const handler: Handler = async (event) => {
     sectorReturns.forEach((s, i) => { sectorRank[s.sector] = i + 1; });
 
     const picks: ProphetPick[] = [];
-    const concurrency = 10;
+    // Lower concurrency prevents the function's internal DNS resolver from saturating.
+    // Each ticker fires ~7 concurrent HTTPS calls (bars, fund, earnings, insider, political, gov, patent).
+    // At concurrency=10 that's 70 in-flight sockets, which triggers "DNS cache overflow" on Netlify.
+    const concurrency = 5;
     let tickersScanned = 0;
     let partial = false;
 
@@ -159,14 +162,16 @@ export const handler: Handler = async (event) => {
     // Sort by composite desc
     picks.sort((a, b) => b.composite - a.composite);
 
-    // Narrative for top N within remaining time budget
+    // Narrative for top N within remaining time budget.
+    // Cap at 5 — more than that bloats response size past 250KB which
+    // can trigger mid-response truncation on mobile clients.
     if (narrate && process.env.ANTHROPIC_API_KEY) {
       const narrativeStart = Date.now();
-      const maxNarratives = Math.min(10, picks.length);
+      const maxNarratives = Math.min(5, picks.length);
       for (let i = 0; i < maxNarratives; i++) {
         if (Date.now() - narrativeStart > NARRATIVE_BUDGET_MS) break;
         const text = await getCachedNarrative(picks[i]);
-        if (text) picks[i].narrative = text;
+        if (text) picks[i].narrative = sanitizeForJson(text);
       }
     }
 
@@ -204,6 +209,20 @@ export const handler: Handler = async (event) => {
     return json(500, { ok: false, error: String(err?.message ?? err) });
   }
 };
+
+// Strip control characters and normalize whitespace so narratives can't break JSON
+// encoding. Claude output is generally clean but rare unicode edge cases (U+2028,
+// lone surrogates from models running in different contexts) can truncate responses.
+function sanitizeForJson(s: string): string {
+  return s
+    // Remove all ASCII control chars except newline/tab
+    .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '')
+    // Remove U+2028 and U+2029 which break JSON.parse in some browsers
+    .replace(/[\u2028\u2029]/g, ' ')
+    // Cap length
+    .slice(0, 1500)
+    .trim();
+}
 
 function pickUniverse(mode: 'largecap' | 'russell' | 'all') {
   if (mode === 'largecap') {

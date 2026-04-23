@@ -50,7 +50,25 @@ export const ProphetView = () => {
         const text = await r.text();
         throw new Error(`Server ${r.status}: ${text.slice(0, 120)}`);
       }
-      const json = await r.json();
+      // Read as text first so we can sanitize before parsing. Mobile clients sometimes
+      // receive responses with stray unicode that break native JSON.parse.
+      const raw = await r.text();
+      let json;
+      try {
+        json = JSON.parse(raw);
+      } catch (parseErr) {
+        // Sanitize: strip ASCII control chars and try again
+        const clean = raw.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u2028\u2029]/g, ' ');
+        try {
+          json = JSON.parse(clean);
+        } catch {
+          // Last resort — retry the scan with narratives disabled (eliminates the main source of bad bytes)
+          console.error('[prophet] JSON parse failed, retrying without narratives', parseErr.message);
+          const fallback = await fetch(`${url}&narrate=0`);
+          if (!fallback.ok) throw new Error(`Scan failed: ${parseErr.message}`);
+          json = await fallback.json();
+        }
+      }
       if (!r.ok || !json.ok) throw new Error(json.error || `HTTP ${r.status}`);
       setData(json);
     } catch (e) {
