@@ -78,6 +78,11 @@
   to = "/.netlify/functions/chart-analysis"
   status = 200
 
+[[redirects]]
+  from = "/api/prophet-picks"
+  to = "/.netlify/functions/prophet-picks"
+  status = 200
+
 # SPA fallback
 [[redirects]]
   from = "/*"

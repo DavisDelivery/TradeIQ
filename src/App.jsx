@@ -4,7 +4,7 @@ import {
   AlertTriangle, ChevronRight, CircleCheck, CircleX, Circle, Gauge,
   BarChart3, Brain, Newspaper, Globe2, Eye, Target, Clock, ArrowUpRight,
   ArrowDownRight, Minus, Shield, Cpu, LineChart as LineChartIcon, Filter, X,
-  Inbox, Bell, ExternalLink, Info, BookMarked
+  Inbox, Bell, ExternalLink, Info, BookMarked, Sparkles
 } from 'lucide-react';
 import {
   AreaChart, Area, LineChart, Line, BarChart, Bar, RadarChart,
@@ -16,11 +16,12 @@ import { LynchView } from './LynchView.jsx';
 import { CatalystView } from './CatalystView.jsx';
 import { ChartView } from './ChartView.jsx';
 import { JournalView } from './JournalView.jsx';
+import { ProphetView } from './ProphetView.jsx';
 import { LogButton } from './components/LogButton.jsx';
 import { UniverseSelector, UNIVERSE_AWARE_VIEWS } from './components/UniverseSelector.jsx';
 import { readLog, logTrade, removeTrade, computeForwardReturns } from './tradeLog.js';
 
-const APP_VERSION = '0.6.0-alpha';
+const APP_VERSION = '0.7.0-alpha';
 
 // ======================================================================
 // MOCK DATA — replaced by /api/target-board and Firestore subscriptions
@@ -267,6 +268,7 @@ const DirectionPill = ({ direction }) => {
 
 const MOBILE_NAV_VIEWS = [
   { id: 'board', label: 'Board', icon: Target },
+  { id: 'prophet', label: 'Prophet', icon: Sparkles },
   { id: 'catalyst', label: 'Catalyst', icon: Zap },
   { id: 'williams', label: 'Williams', icon: Activity },
   { id: 'lynch', label: 'Lynch', icon: Shield },
@@ -312,6 +314,7 @@ const MobileBottomNav = ({ activeView, setActiveView }) => (
 const TopBar = ({ activeView, setActiveView, regime, universeStats }) => {
   const views = [
     { id: 'board', label: 'Target Board', icon: Target },
+    { id: 'prophet', label: 'Prophet', icon: Sparkles },
     { id: 'catalyst', label: 'Catalyst', icon: Zap },
     { id: 'williams', label: 'Williams', icon: Activity },
     { id: 'lynch', label: 'Lynch', icon: Shield },
@@ -2458,6 +2461,7 @@ export default function App() {
 
       <main>
         {activeView === 'board' && <LiveTargetBoard onOpenTarget={setSelectedTarget} universe={universe} />}
+        {activeView === 'prophet' && <ProphetView />}
         {activeView === 'catalyst' && <CatalystView universe={universe} />}
         {activeView === 'williams' && <WilliamsView universe={universe} />}
         {activeView === 'lynch' && <LynchView universe={universe} />}
