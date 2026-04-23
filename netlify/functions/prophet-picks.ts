@@ -1,12 +1,15 @@
 // GET /api/prophet-picks
-//   ?universe=conservative|aggressive|everything (default conservative)
+//   ?universe=largecap|russell|all (default largecap)
+//       largecap = S&P 500 + NDX + Dow deduped (~230 tickers)
+//       russell  = Russell 2000 only (~168 tickers)
+//       all      = all four indices combined (~399 tickers)
 //   &minConviction=low|medium|high
 //   &limit=30
 //   &narrate=1|0 (default 1 — include Claude narrative for top 10)
 //
 // PROPHET: Probability-Ranked Opportunity Picker using Heuristic Ensemble Trading.
 // 7-layer ensemble: structure, momentum, volume, volatility, RS, fundamentals, catalyst.
-// Aggressive mode scans S&P500 + NDX + Dow + Russell2K (deduped).
+// Enforces a soft time budget (~22s) and returns partial results rather than timing out.
 
 import type { Handler } from '@netlify/functions';
 import { UNIVERSE, inIndex, SECTOR_ETFS, SPY, findEntry } from './shared/universe';
@@ -26,6 +29,11 @@ import type { Bar } from './shared/data-provider';
 const ANTHROPIC_API = 'https://api.anthropic.com/v1/messages';
 const MODEL = 'claude-sonnet-4-6';
 
+// Hard time budget for the scan loop. Netlify function timeout is 26s; we need
+// buffer for response serialization + narrative calls on top.
+const SCAN_BUDGET_MS = 20_000;
+const NARRATIVE_BUDGET_MS = 4_000;
+
 const headers = { 'Content-Type': 'application/json' };
 const json = (code: number, body: unknown) => ({
   statusCode: code,
@@ -33,8 +41,6 @@ const json = (code: number, body: unknown) => ({
   body: JSON.stringify(body),
 });
 
-// Module-level cache. Aggressive scans reuse this across invocations (in warm containers)
-// to avoid re-scanning 2,500 tickers on every request. Cold start = fresh scan.
 interface ProphetPick extends ProphetScore {
   ticker: string;
   name: string;
@@ -44,8 +50,12 @@ interface ProphetPick extends ProphetScore {
   narrative?: string;
 }
 
-const resultCache = new Map<string, { picks: ProphetPick[]; generatedAt: string; universeSize: number }>();
+// Module-level cache. Aggressive scans reuse this across invocations (in warm containers)
+// to avoid re-scanning on every request. Persists while Lambda container is warm.
+const resultCache = new Map<string, { picks: ProphetPick[]; generatedAt: string; universeSize: number; partial: boolean }>();
 const CACHE_TTL_MS = 20 * 60 * 1000;  // 20 min for full scan results
+// When a live scan fails or times out, fall back to stale cache as old as this:
+const STALE_CACHE_TTL_MS = 4 * 60 * 60 * 1000;  // 4 hours
 
 // Narrative cache, keyed by ticker+composite-band, TTL 6 hours
 const narrativeCache = new Map<string, { text: string; at: number }>();
@@ -53,7 +63,7 @@ const NARRATIVE_TTL_MS = 6 * 60 * 60 * 1000;
 
 export const handler: Handler = async (event) => {
   const qs = event.queryStringParameters ?? {};
-  const universe = (qs.universe as 'conservative' | 'aggressive' | 'everything') ?? 'conservative';
+  const universe = (qs.universe as 'largecap' | 'russell' | 'all') ?? 'largecap';
   const minConviction = (qs.minConviction as 'low' | 'medium' | 'high') ?? 'low';
   const limit = Math.min(Number(qs.limit ?? 30), 100);
   const narrate = qs.narrate !== '0';
@@ -67,11 +77,13 @@ export const handler: Handler = async (event) => {
       cached: true,
       universe,
       universeSize: cached.universeSize,
+      partial: cached.partial,
       generatedAt: cached.generatedAt,
       picks: filterByConviction(cached.picks, minConviction).slice(0, limit),
     });
   }
 
+  const scanStart = Date.now();
   try {
     // Pre-fetch shared context
     const to = new Date().toISOString().slice(0, 10);
@@ -84,10 +96,11 @@ export const handler: Handler = async (event) => {
 
     // Sector ETF cache
     const sectorEtfCache: Record<string, Bar[]> = {};
-    for (const [sector, etf] of Object.entries(SECTOR_ETFS)) {
+    await Promise.all(Object.entries(SECTOR_ETFS).map(async ([sector, etf]) => {
       try { sectorEtfCache[sector] = await getDailyBars(etf, from, to); }
       catch { sectorEtfCache[sector] = []; }
-    }
+    }));
+
     // Compute sector rank (20d return)
     const sectorRank: Record<string, number> = {};
     const sectorReturns = Object.entries(sectorEtfCache).map(([sector, bars]) => {
@@ -98,9 +111,27 @@ export const handler: Handler = async (event) => {
     sectorReturns.forEach((s, i) => { sectorRank[s.sector] = i + 1; });
 
     const picks: ProphetPick[] = [];
-    const concurrency = 8;
+    const concurrency = 10;
+    let tickersScanned = 0;
+    let partial = false;
+
+    // Sufficient-qualified early stop: once we have 3x the limit of qualified picks
+    // we can stop scanning — the top `limit` by composite score are unlikely to change.
+    const sufficientQualified = limit * 3;
 
     for (let i = 0; i < scanUniverse.length; i += concurrency) {
+      // Time budget check — preserve time for response + narratives
+      const elapsed = Date.now() - scanStart;
+      if (elapsed > SCAN_BUDGET_MS) {
+        console.log(`[prophet] time budget exhausted at ${tickersScanned}/${scanUniverse.length}`);
+        partial = true;
+        break;
+      }
+      if (picks.length >= sufficientQualified) {
+        console.log(`[prophet] early stop: ${picks.length} qualified at ${tickersScanned} scanned`);
+        break;
+      }
+
       const chunk = scanUniverse.slice(i, i + concurrency);
       const batch = await Promise.all(chunk.map((entry) => scoreTicker(
         entry, from, to, spyBars, sectorEtfCache[entry.sector] ?? null,
@@ -109,55 +140,73 @@ export const handler: Handler = async (event) => {
         console.error(`[prophet] ${entry.ticker}`, err.message);
         return null;
       })));
+      tickersScanned += chunk.length;
       for (const p of batch) if (p && p.conviction) picks.push(p);
     }
 
     // Sort by composite desc
     picks.sort((a, b) => b.composite - a.composite);
 
-    // Narrative for top N
+    // Narrative for top N within remaining time budget
     if (narrate && process.env.ANTHROPIC_API_KEY) {
-      const narratives = Math.min(10, picks.length);
-      for (let i = 0; i < narratives; i++) {
+      const narrativeStart = Date.now();
+      const maxNarratives = Math.min(10, picks.length);
+      for (let i = 0; i < maxNarratives; i++) {
+        if (Date.now() - narrativeStart > NARRATIVE_BUDGET_MS) break;
         const text = await getCachedNarrative(picks[i]);
         if (text) picks[i].narrative = text;
       }
     }
 
     const generatedAt = new Date().toISOString();
-    resultCache.set(cacheKey, { picks, generatedAt, universeSize: scanUniverse.length });
+    resultCache.set(cacheKey, { picks, generatedAt, universeSize: scanUniverse.length, partial });
 
     return json(200, {
       ok: true,
       cached: false,
       universe,
       universeSize: scanUniverse.length,
+      tickersScanned,
       qualified: picks.length,
+      partial,
       regime,
       generatedAt,
       picks: filterByConviction(picks, minConviction).slice(0, limit),
     });
   } catch (err: any) {
+    // On error, fall back to stale cache if we have one
+    const stale = resultCache.get(cacheKey);
+    if (stale && Date.now() - new Date(stale.generatedAt).getTime() < STALE_CACHE_TTL_MS) {
+      return json(200, {
+        ok: true,
+        cached: true,
+        stale: true,
+        universe,
+        universeSize: stale.universeSize,
+        partial: stale.partial,
+        generatedAt: stale.generatedAt,
+        picks: filterByConviction(stale.picks, minConviction).slice(0, limit),
+        warning: `Live scan failed (${err?.message ?? err}); returning last successful scan.`,
+      });
+    }
     return json(500, { ok: false, error: String(err?.message ?? err) });
   }
 };
 
-function pickUniverse(mode: 'conservative' | 'aggressive' | 'everything') {
-  if (mode === 'conservative') {
-    // S&P 500 + NDX deduped
-    const sp = inIndex('sp500');
-    const nd = inIndex('ndx');
+function pickUniverse(mode: 'largecap' | 'russell' | 'all') {
+  if (mode === 'largecap') {
+    // S&P 500 + NDX + Dow deduped
     const seen = new Set<string>();
-    return [...sp, ...nd].filter((u) => {
+    return [...inIndex('sp500'), ...inIndex('ndx'), ...inIndex('dow')].filter((u) => {
       if (seen.has(u.ticker)) return false;
       seen.add(u.ticker);
       return true;
     });
   }
-  if (mode === 'aggressive') {
-    return UNIVERSE;  // all 399 tickers in our ROWS table (sp500+ndx+dow+russell2k deduped already)
+  if (mode === 'russell') {
+    return inIndex('russell2k');
   }
-  // 'everything' — same as aggressive for now (no more universe tiers defined)
+  // 'all' — all four indices deduped (already deduped in UNIVERSE.ts ROWS)
   return UNIVERSE;
 }
 

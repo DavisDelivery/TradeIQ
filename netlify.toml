@@ -9,6 +9,10 @@
 [functions]
   node_bundler = "esbuild"
 
+# Prophet scans ~200-400 tickers with 7-layer ensemble — needs more than default 10s
+[functions."prophet-picks"]
+  timeout = 26
+
 # ==========================================================================
 # API redirects — rewrite /api/<endpoint> to /.netlify/functions/<endpoint>
 # ==========================================================================

@@ -7,8 +7,9 @@ import {
 import { LogButton } from './components/LogButton.jsx';
 
 const UNIVERSE_OPTIONS = [
-  { id: 'conservative', label: 'Conservative', desc: 'S&P 500 + NDX (~550)' },
-  { id: 'aggressive', label: 'Aggressive', desc: 'SP500+NDX+Dow+R2K (~399 tracked)' },
+  { id: 'largecap', label: 'Large Cap', desc: 'S&P 500 + NDX + Dow (~230)' },
+  { id: 'russell', label: 'Russell 2K', desc: 'Small cap only (~168)' },
+  { id: 'all', label: 'All Indices', desc: 'Full universe (~399)' },
 ];
 
 const CONVICTION_OPTIONS = [
@@ -28,7 +29,7 @@ const LAYER_META = {
 };
 
 export const ProphetView = () => {
-  const [universe, setUniverse] = useState('conservative');
+  const [universe, setUniverse] = useState('largecap');
   const [minConviction, setMinConviction] = useState('low');
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -98,12 +99,25 @@ export const ProphetView = () => {
 
       {/* Scan stats */}
       {data && !loading && (
-        <div className="flex items-center justify-between mb-3 text-[11px] text-neutral-500 font-mono">
-          <span>{data.qualified ?? data.picks?.length ?? 0} qualified / {data.universeSize} scanned{data.cached ? ' · cached' : ''}</span>
-          <button onClick={load} disabled={loading} className="flex items-center gap-1 hover:text-neutral-300 transition-colors">
+        <div className="flex items-center justify-between mb-3 text-[11px] font-mono">
+          <div className="flex items-center gap-2 text-neutral-500">
+            <span>{data.qualified ?? data.picks?.length ?? 0} qualified / {data.tickersScanned ?? data.universeSize} scanned</span>
+            {data.cached && !data.stale && <span className="text-neutral-600">· cached</span>}
+            {data.partial && <span className="text-amber-500">· partial</span>}
+            {data.stale && <span className="text-amber-500">· stale fallback</span>}
+          </div>
+          <button onClick={load} disabled={loading} className="flex items-center gap-1 text-neutral-500 hover:text-neutral-300 transition-colors">
             <RefreshCw className={`h-3 w-3 ${loading ? 'animate-spin' : ''}`} />
             {loading ? 'scanning…' : 'refresh'}
           </button>
+        </div>
+      )}
+
+      {/* Warning banner for stale/partial */}
+      {data?.warning && (
+        <div className="border border-amber-500/30 bg-amber-500/5 p-2 mb-3 flex items-start gap-2 text-[11px] text-amber-400/90">
+          <AlertCircle className="h-3.5 w-3.5 flex-shrink-0 mt-0.5" />
+          <div>{data.warning}</div>
         </div>
       )}
 
@@ -124,9 +138,11 @@ export const ProphetView = () => {
         <div className="border border-neutral-800 p-8 text-center">
           <div className="inline-block h-6 w-6 border-2 border-emerald-500/30 border-t-emerald-500 rounded-full animate-spin mb-3" />
           <div className="text-neutral-400 text-sm">
-            {universe === 'aggressive' ? 'Scanning ~400 tickers across 7 layers + AI narratives for top 10…' : 'Running 7-layer ensemble on S&P 500 + NDX…'}
+            {universe === 'all' ? 'Scanning ~399 tickers across 7 layers + AI narratives for top 10…'
+              : universe === 'russell' ? 'Scanning Russell 2000 small caps across 7 layers…'
+              : 'Scanning S&P 500 + NDX + Dow across 7 layers…'}
           </div>
-          <div className="text-neutral-600 text-[11px] mt-1 font-mono">First scan ~30-90s · cached 20 min after</div>
+          <div className="text-neutral-600 text-[11px] mt-1 font-mono">First scan 15-22s · cached 20 min after</div>
         </div>
       )}
 
