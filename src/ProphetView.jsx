@@ -8,8 +8,8 @@ import { LogButton } from './components/LogButton.jsx';
 
 const UNIVERSE_OPTIONS = [
   { id: 'largecap', label: 'Large Cap', desc: 'S&P 500 + NDX + Dow (~230)' },
-  { id: 'russell', label: 'Russell 2K', desc: 'Small cap only (~168)' },
-  { id: 'all', label: 'All Indices', desc: 'Full universe (~399)' },
+  { id: 'russell', label: 'Russell 2K', desc: 'Small cap — full IWM (~1,930)' },
+  { id: 'all', label: 'All Indices', desc: 'Full universe (~2,200)' },
 ];
 
 const CONVICTION_OPTIONS = [
@@ -138,9 +138,9 @@ export const ProphetView = () => {
         <div className="border border-neutral-800 p-8 text-center">
           <div className="inline-block h-6 w-6 border-2 border-emerald-500/30 border-t-emerald-500 rounded-full animate-spin mb-3" />
           <div className="text-neutral-400 text-sm">
-            {universe === 'all' ? 'Scanning ~399 tickers across 7 layers + AI narratives for top 10…'
-              : universe === 'russell' ? 'Scanning Russell 2000 small caps across 7 layers…'
-              : 'Scanning S&P 500 + NDX + Dow across 7 layers…'}
+            {universe === 'all' ? 'Scanning ~2,200 tickers across 7 layers — early-stops when enough qualify…'
+              : universe === 'russell' ? 'Scanning Russell 2000 (~1,930 tickers) — early-stops when enough qualify…'
+              : 'Scanning S&P 500 + NDX + Dow (~230 tickers) across 7 layers…'}
           </div>
           <div className="text-neutral-600 text-[11px] mt-1 font-mono">First scan 15-22s · cached 20 min after</div>
         </div>
