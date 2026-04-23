@@ -39,8 +39,11 @@ export const ProphetView = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [expandedTicker, setExpandedTicker] = useState(null);
+  const requestIdRef = React.useRef(0);
 
   const load = async () => {
+    // Increment request counter — any prior in-flight request becomes stale
+    const myRequestId = ++requestIdRef.current;
     setLoading(true); setError(null);
     try {
       const url = `/api/prophet-picks?universe=${universe}&minConviction=${minConviction}&limit=30`;
@@ -70,11 +73,23 @@ export const ProphetView = () => {
         }
       }
       if (!r.ok || !json.ok) throw new Error(json.error || `HTTP ${r.status}`);
+      // Drop the response if a newer request has been fired (user changed filter)
+      if (myRequestId !== requestIdRef.current) {
+        console.log('[prophet] dropping stale response', myRequestId, 'current is', requestIdRef.current);
+        return;
+      }
+      // Also guard: response's universe must match currently-selected universe
+      if (json.universe && json.universe !== universe) {
+        console.log('[prophet] response universe mismatch, dropping', json.universe, 'vs', universe);
+        return;
+      }
       setData(json);
     } catch (e) {
-      setError(e.message);
+      // Only surface errors for the latest request
+      if (myRequestId === requestIdRef.current) setError(e.message);
     } finally {
-      setLoading(false);
+      // Only clear loading if this is still the latest request
+      if (myRequestId === requestIdRef.current) setLoading(false);
     }
   };
 
@@ -123,7 +138,10 @@ export const ProphetView = () => {
       {data && !loading && (
         <div className="flex items-center justify-between mb-3 text-[11px] font-mono">
           <div className="flex items-center gap-2 text-neutral-500">
-            <span>{data.qualified ?? data.picks?.length ?? 0} qualified / {data.tickersScanned ?? data.universeSize} scanned</span>
+            <span>
+              <span className="text-neutral-300">{data.universe === 'largecap' ? 'Large Cap' : data.universe === 'russell' ? 'Russell 2K' : 'All Indices'}:</span>{' '}
+              {data.qualified ?? data.picks?.length ?? 0} qualified / {data.tickersScanned ?? data.universeSize} scanned
+            </span>
             {data.cached && !data.stale && <span className="text-neutral-600">· cached</span>}
             {data.partial && <span className="text-amber-500">· partial</span>}
             {data.stale && <span className="text-amber-500">· stale fallback</span>}
