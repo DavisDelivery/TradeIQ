@@ -21,7 +21,56 @@ import { LogButton } from './components/LogButton.jsx';
 import { UniverseSelector, UNIVERSE_AWARE_VIEWS } from './components/UniverseSelector.jsx';
 import { readLog, logTrade, removeTrade, computeForwardReturns } from './tradeLog.js';
 
-const APP_VERSION = '0.7.11-alpha';
+const APP_VERSION = '0.7.12-alpha';
+
+// ======================================================================
+// ERROR BOUNDARY — catches React render errors in any child subtree and
+// shows a recoverable fallback instead of white-screening the whole app.
+// Wraps each main view so a crash in Prophet doesn't kill the Journal.
+// ======================================================================
+class ErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+  static getDerivedStateFromError(error) {
+    return { hasError: true, error };
+  }
+  componentDidCatch(error, info) {
+    // Log to console so it shows up in remote debugging
+    console.error('[ErrorBoundary]', this.props.label || 'unknown', error, info?.componentStack);
+  }
+  reset = () => this.setState({ hasError: false, error: null });
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="p-4 sm:p-6 max-w-[800px] mx-auto">
+          <div className="border border-rose-500/40 bg-rose-500/5 p-5">
+            <div className="flex items-center gap-2 mb-2">
+              <AlertTriangle className="h-4 w-4 text-rose-400" />
+              <div className="text-[11px] font-mono uppercase tracking-widest text-rose-400">
+                Rendering error · {this.props.label || 'view'}
+              </div>
+            </div>
+            <div className="text-[12px] text-neutral-300 mb-3 font-mono break-words">
+              {String(this.state.error?.message || this.state.error || 'unknown error')}
+            </div>
+            <div className="text-[11px] text-neutral-500 mb-4">
+              The rest of the app is still working. Tap below to try this view again, or switch to another tab.
+            </div>
+            <button
+              onClick={this.reset}
+              className="px-3 h-8 border border-neutral-700 text-[11px] font-mono uppercase tracking-widest text-neutral-300 hover:text-neutral-100 hover:border-neutral-500 transition-colors"
+            >
+              ↻ Reload view
+            </button>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 // ======================================================================
 // MOCK DATA — replaced by /api/target-board and Firestore subscriptions
@@ -587,7 +636,7 @@ const LiveTargetBoard = ({ onOpenTarget, universe = 'all' }) => {
   const targets = data?.targets || [];
   return (
     <>
-      <TargetBoardView targets={targets} onOpenTarget={onOpenTarget} />
+      <TargetBoardView targets={targets} onOpenTarget={onOpenTarget} scanMeta={data} />
       {data && (
         <div className="max-w-[1400px] mx-auto px-4 sm:px-6 pb-6 text-[10px] font-mono text-neutral-600 flex items-center gap-3">
           <span>Source: <span className="text-neutral-400">{data.source}</span></span>
@@ -604,7 +653,7 @@ const LiveTargetBoard = ({ onOpenTarget, universe = 'all' }) => {
   );
 };
 
-const TargetBoardView = ({ targets, onOpenTarget }) => {
+const TargetBoardView = ({ targets, onOpenTarget, scanMeta }) => {
   const [filterTier, setFilterTier] = useState('all');
   const [filterDirection, setFilterDirection] = useState('all');
 
@@ -633,20 +682,20 @@ const TargetBoardView = ({ targets, onOpenTarget }) => {
             {filtered.length} <span className="text-neutral-500 italic font-light">targets ranked</span>
           </h1>
           <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-3 text-[11px] font-mono text-neutral-400">
-            {data?.universe && (
+            {scanMeta?.universe && (
               <div>
                 <span className="text-neutral-500 uppercase tracking-widest mr-2">Scope</span>
                 <span className="text-neutral-200 font-semibold">
-                  {data.universe === 'core' ? 'Core (33)' :
-                    data.universe === 'sp500' ? 'S&P 500' :
-                    data.universe === 'ndx' ? 'Nasdaq 100' :
-                    data.universe === 'dow' ? 'Dow 30' :
-                    (data.universe === 'russell' || data.universe === 'russell2k') ? 'Russell 2K' :
+                  {scanMeta.universe === 'core' ? 'Core (33)' :
+                    scanMeta.universe === 'sp500' ? 'S&P 500' :
+                    scanMeta.universe === 'ndx' ? 'Nasdaq 100' :
+                    scanMeta.universe === 'dow' ? 'Dow 30' :
+                    (scanMeta.universe === 'russell' || scanMeta.universe === 'russell2k') ? 'Russell 2K' :
                     'All Indices'}
                 </span>
-                {data.tickersScanned !== undefined && (
+                {scanMeta.tickersScanned !== undefined && (
                   <span className="text-neutral-500 ml-1">
-                    · {data.tickersScanned}/{data.universeSize ?? data.tickersScanned} scanned
+                    · {scanMeta.tickersScanned}/{scanMeta.universeSize ?? scanMeta.tickersScanned} scanned
                   </span>
                 )}
               </div>
@@ -2517,21 +2566,21 @@ export default function App() {
       )}
 
       <main>
-        {activeView === 'board' && <LiveTargetBoard onOpenTarget={setSelectedTarget} universe={universe} />}
-        {activeView === 'prophet' && <ProphetView />}
-        {activeView === 'catalyst' && <CatalystView universe={universe} />}
-        {activeView === 'williams' && <WilliamsView universe={universe} />}
-        {activeView === 'lynch' && <LynchView universe={universe} />}
-        {activeView === 'earnings' && <EarningsPlaysView universe={universe} />}
-        {activeView === 'options' && <OptionsPlaysView universe={universe} />}
-        {activeView === 'engine' && <EngineTestView />}
-        {activeView === 'backtest' && <BacktestView />}
-        {activeView === 'chart' && <ChartView />}
-        {activeView === 'regime' && <RegimeView regime={regime} />}
-        {activeView === 'analysts' && <AnalystsView analysts={analysts} />}
-        {activeView === 'alerts' && <AlertsView />}
-        {activeView === 'journal' && <JournalView />}
-        {activeView === 'settings' && <SettingsView />}
+        {activeView === 'board' && <ErrorBoundary label="Board"><LiveTargetBoard onOpenTarget={setSelectedTarget} universe={universe} /></ErrorBoundary>}
+        {activeView === 'prophet' && <ErrorBoundary label="Prophet"><ProphetView /></ErrorBoundary>}
+        {activeView === 'catalyst' && <ErrorBoundary label="Catalyst"><CatalystView universe={universe} /></ErrorBoundary>}
+        {activeView === 'williams' && <ErrorBoundary label="Williams"><WilliamsView universe={universe} /></ErrorBoundary>}
+        {activeView === 'lynch' && <ErrorBoundary label="Lynch"><LynchView universe={universe} /></ErrorBoundary>}
+        {activeView === 'earnings' && <ErrorBoundary label="Earnings"><EarningsPlaysView universe={universe} /></ErrorBoundary>}
+        {activeView === 'options' && <ErrorBoundary label="Options"><OptionsPlaysView universe={universe} /></ErrorBoundary>}
+        {activeView === 'engine' && <ErrorBoundary label="Engine"><EngineTestView /></ErrorBoundary>}
+        {activeView === 'backtest' && <ErrorBoundary label="Backtest"><BacktestView /></ErrorBoundary>}
+        {activeView === 'chart' && <ErrorBoundary label="Chart"><ChartView /></ErrorBoundary>}
+        {activeView === 'regime' && <ErrorBoundary label="Regime"><RegimeView regime={regime} /></ErrorBoundary>}
+        {activeView === 'analysts' && <ErrorBoundary label="Analysts"><AnalystsView analysts={analysts} /></ErrorBoundary>}
+        {activeView === 'alerts' && <ErrorBoundary label="Alerts"><AlertsView /></ErrorBoundary>}
+        {activeView === 'journal' && <ErrorBoundary label="Journal"><JournalView /></ErrorBoundary>}
+        {activeView === 'settings' && <ErrorBoundary label="Settings"><SettingsView /></ErrorBoundary>}
       </main>
 
       <TargetDetail target={selectedTarget} onClose={() => setSelectedTarget(null)} />

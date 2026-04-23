@@ -481,20 +481,38 @@ const ProphetMiniChart = ({ loading, error, data, entry, stop, targets }) => {
 
   // Downsample labels — we only show ~6 date ticks even on 120 bars
   const bars = data.bars;
+  if (!bars.length) {
+    return (
+      <div className="border border-neutral-800 bg-neutral-950/60 p-3 text-[11px] text-neutral-500 font-mono">
+        chart unavailable: no bars
+      </div>
+    );
+  }
   const last = bars[bars.length - 1];
 
-  // Compute y-domain for price pane (tight around SMAs + entry/stop/targets)
+  // Compute y-domain for price pane (tight around SMAs + entry/stop/targets).
+  // Guard against empty prices — if all bars have null c, we'd Math.min(...[]) → Infinity
+  // which blows up the chart domain math.
   const prices = [];
   bars.forEach((b) => {
-    if (b.c != null) prices.push(b.c);
-    if (b.sma200 != null) prices.push(b.sma200);
+    if (b.c != null && Number.isFinite(b.c)) prices.push(b.c);
+    if (b.sma200 != null && Number.isFinite(b.sma200)) prices.push(b.sma200);
   });
-  if (entry) prices.push(entry);
-  if (stop) prices.push(stop);
-  if (targets?.length) targets.forEach((t) => prices.push(t));
+  if (entry && Number.isFinite(entry)) prices.push(entry);
+  if (stop && Number.isFinite(stop)) prices.push(stop);
+  if (targets?.length) targets.forEach((t) => { if (Number.isFinite(t)) prices.push(t); });
+
+  if (prices.length === 0) {
+    return (
+      <div className="border border-neutral-800 bg-neutral-950/60 p-3 text-[11px] text-neutral-500 font-mono">
+        chart unavailable: no valid price data
+      </div>
+    );
+  }
+
   const pMin = Math.min(...prices);
   const pMax = Math.max(...prices);
-  const pad = (pMax - pMin) * 0.05;
+  const pad = Math.max((pMax - pMin) * 0.05, 0.01);  // guard zero-range
   const priceDomain = [Math.floor((pMin - pad) * 100) / 100, Math.ceil((pMax + pad) * 100) / 100];
 
   const fmtDate = (d) => {
@@ -596,6 +614,10 @@ const ProphetMiniChart = ({ loading, error, data, entry, stop, targets }) => {
               dataKey="macdHist"
               shape={(props) => {
                 const { x, y, width, height, payload } = props;
+                // Payload can be null or missing macdHist on sparse data — guard
+                if (!payload || payload.macdHist == null || !Number.isFinite(payload.macdHist)) {
+                  return <rect x={x} y={y} width={width} height={0} fill="transparent" />;
+                }
                 const positive = payload.macdHist >= 0;
                 const fill = positive ? '#10b98180' : '#f43f5e80';
                 return <rect x={x} y={y} width={width} height={height} fill={fill} />;
