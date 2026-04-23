@@ -44,3 +44,4 @@ Safe paths:
 ## Session log
 
 - Session 1 (Apr 21–22 2026): source recovered from deploy map; dev environment rebuilt and build verified against original.
+// deploy trigger 1776908002
