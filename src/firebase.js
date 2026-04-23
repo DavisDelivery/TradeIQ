@@ -4,12 +4,12 @@
 // and avoids version-lock issues.
 
 const FIREBASE_CONFIG = {
-  apiKey: 'AIzaSyDwWq6IaTUc6J8VRCqtyexV9zsFlD2B6xM',
-  authDomain: 'tradeiq-alpha.firebaseapp.com',
-  projectId: 'tradeiq-alpha',
-  storageBucket: 'tradeiq-alpha.firebasestorage.app',
-  messagingSenderId: '101124117025',
-  appId: '1:101124117025:web:98eac17b0203799d6f4960',
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || 'tradeiq-alpha.firebaseapp.com',
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || 'tradeiq-alpha',
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || 'tradeiq-alpha.firebasestorage.app',
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || '101124117025',
+  appId: import.meta.env.VITE_FIREBASE_APP_ID,
 };
 
 const FB_VERSION = '10.12.2';
