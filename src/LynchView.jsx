@@ -93,7 +93,7 @@ const LynchCard = ({ c, rank }) => {
         <div className="flex items-center gap-2 flex-shrink-0">
           {isLong && <TrendingUp className="h-3.5 w-3.5 text-emerald-400" />}
           <span className={`font-mono font-semibold tabular-nums ${isLong ? 'text-emerald-400' : 'text-rose-400'}`}>
-            {c.score > 0 ? '+' : ''}{c.score.toFixed(0)}
+            {(c.score ?? 0) > 0 ? '+' : ''}{(c.score ?? 0).toFixed(0)}
           </span>
         </div>
       </div>
@@ -104,20 +104,20 @@ const LynchCard = ({ c, rank }) => {
             PEG {peg}
           </span>
         )}
-        {c.signals.peRatio !== undefined && <span>PE {c.signals.peRatio}</span>}
-        {c.signals.epsGrowthYoYPct !== undefined && (
+        {c.signals?.peRatio !== undefined && <span>PE {c.signals.peRatio}</span>}
+        {c.signals?.epsGrowthYoYPct !== undefined && (
           <span>EPS YoY {c.signals.epsGrowthYoYPct > 0 ? '+' : ''}{c.signals.epsGrowthYoYPct}%</span>
         )}
-        {c.signals.revGrowthYoYPct !== undefined && (
+        {c.signals?.revGrowthYoYPct !== undefined && (
           <span>Rev YoY {c.signals.revGrowthYoYPct > 0 ? '+' : ''}{c.signals.revGrowthYoYPct}%</span>
         )}
-        {c.signals.debtToEquity !== undefined && (
+        {c.signals?.debtToEquity !== undefined && (
           <span>D/E {c.signals.debtToEquity}</span>
         )}
-        {c.signals.operatingMarginPct !== undefined && (
+        {c.signals?.operatingMarginPct !== undefined && (
           <span>OM {c.signals.operatingMarginPct}%</span>
         )}
-        <span className="ml-auto text-neutral-600">conf {(c.confidence * 100).toFixed(0)}%</span>
+        <span className="ml-auto text-neutral-600">conf {Number.isFinite(c.confidence) ? (c.confidence * 100).toFixed(0) : '—'}%</span>
       </div>
       <div className="mt-2 flex justify-end">
         <LogButton

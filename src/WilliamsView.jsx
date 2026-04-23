@@ -110,19 +110,19 @@ const WilliamsCard = ({ c, rank }) => {
         <div className="flex items-center gap-2 flex-shrink-0">
           {isLong ? <TrendingUp className="h-3.5 w-3.5 text-emerald-400" /> : <TrendingDown className="h-3.5 w-3.5 text-rose-400" />}
           <span className={`font-mono font-semibold tabular-nums ${isLong ? 'text-emerald-400' : 'text-rose-400'}`}>
-            {c.score > 0 ? '+' : ''}{c.score.toFixed(0)}
+            {(c.score ?? 0) > 0 ? '+' : ''}{(c.score ?? 0).toFixed(0)}
           </span>
         </div>
       </div>
       <p className="text-[12px] text-neutral-400 leading-relaxed mb-2">{c.rationale}</p>
       <div className="flex flex-wrap gap-x-4 gap-y-1 text-[10px] font-mono text-neutral-500">
-        <span>%R: {c.signals.williamsR ?? '—'}</span>
-        {c.signals.volBreakoutLong && <span className="text-emerald-400">VOL-BREAKOUT ↑</span>}
-        {c.signals.volBreakoutShort && <span className="text-rose-400">VOL-BREAKOUT ↓</span>}
-        {c.signals.uptrend && <span className="text-emerald-400">TREND ↑</span>}
-        {c.signals.downtrend && <span className="text-rose-400">TREND ↓</span>}
-        <span>close-str {c.signals.closeStrength10d}%</span>
-        <span className="ml-auto text-neutral-600">conf {(c.confidence * 100).toFixed(0)}%</span>
+        <span>%R: {c.signals?.williamsR ?? '—'}</span>
+        {c.signals?.volBreakoutLong && <span className="text-emerald-400">VOL-BREAKOUT ↑</span>}
+        {c.signals?.volBreakoutShort && <span className="text-rose-400">VOL-BREAKOUT ↓</span>}
+        {c.signals?.uptrend && <span className="text-emerald-400">TREND ↑</span>}
+        {c.signals?.downtrend && <span className="text-rose-400">TREND ↓</span>}
+        <span>close-str {c.signals?.closeStrength10d ?? '—'}%</span>
+        <span className="ml-auto text-neutral-600">conf {Number.isFinite(c.confidence) ? (c.confidence * 100).toFixed(0) : '—'}%</span>
       </div>
       <div className="mt-2 flex justify-end">
         <LogButton

@@ -267,8 +267,9 @@ const ProphetRow = ({ pick, expanded, onToggle }) => {
 
             {/* Layer pass/fail bar */}
             <div className="flex items-center gap-0.5 mb-2">
-              {Object.entries(pick.layers).map(([name, r]) => {
+              {Object.entries(pick.layers ?? {}).map(([name, r]) => {
                 const M = LAYER_META[name];
+                if (!M || !r) return null;
                 const Icon = M.icon;
                 return (
                   <div
@@ -397,8 +398,9 @@ const ProphetDetail = ({ pick }) => {
 
     {/* Layer breakdowns */}
     <div className="space-y-1.5">
-      {Object.entries(pick.layers).map(([name, r]) => {
+      {Object.entries(pick.layers ?? {}).map(([name, r]) => {
         const M = LAYER_META[name];
+        if (!M || !r) return null;
         const Icon = M.icon;
         return (
           <div key={name} className="border border-neutral-800 bg-neutral-950/60 p-2">
@@ -411,7 +413,7 @@ const ProphetDetail = ({ pick }) => {
               </span>
             </div>
             <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-[10px] font-mono text-neutral-500">
-              {Object.entries(r.details).slice(0, 6).map(([k, v]) => (
+              {Object.entries(r.details ?? {}).slice(0, 6).map(([k, v]) => (
                 <span key={k}>
                   <span className="text-neutral-600">{k}</span>{' '}
                   <span className={typeof v === 'boolean' ? (v ? 'text-emerald-400' : 'text-neutral-600') : 'text-neutral-300'}>
@@ -437,7 +439,7 @@ const ProphetDetail = ({ pick }) => {
           composite: pick.composite,
           conviction: pick.conviction,
           direction: pick.direction,
-          rationale: pick.narrative || `PROPHET ${pick.conviction}: ${pick.flags.slice(0, 4).join(', ')}`,
+          rationale: pick.narrative || `PROPHET ${pick.conviction}: ${(pick.flags ?? []).slice(0, 4).join(', ')}`,
           entry: pick.entry, stop: pick.stop, targets: pick.targets,
           invalidation: pick.invalidation,
           flags: pick.flags,

@@ -21,7 +21,7 @@ import { LogButton } from './components/LogButton.jsx';
 import { UniverseSelector, UNIVERSE_AWARE_VIEWS } from './components/UniverseSelector.jsx';
 import { readLog, logTrade, removeTrade, computeForwardReturns } from './tradeLog.js';
 
-const APP_VERSION = '0.7.12-alpha';
+const APP_VERSION = '0.7.13-alpha';
 
 // ======================================================================
 // ERROR BOUNDARY — catches React render errors in any child subtree and
@@ -213,9 +213,26 @@ const MOCK_EQUITY_CURVE = Array.from({ length: 60 }, (_, i) => ({
 // ======================================================================
 
 const fmt = {
-  pct: (n, d = 1) => `${n >= 0 ? '+' : ''}${n.toFixed(d)}%`,
-  money: (n) => `${n < 0 ? '-' : ''}$${Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`,
-  moneyDec: (n) => `${n < 0 ? '-' : ''}$${Math.abs(n).toFixed(2)}`,
+  pct: (n, d = 1) => {
+    if (n == null || !Number.isFinite(n)) return '—';
+    return `${n >= 0 ? '+' : ''}${n.toFixed(d)}%`;
+  },
+  money: (n) => {
+    if (n == null || !Number.isFinite(n)) return '—';
+    return `${n < 0 ? '-' : ''}$${Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
+  },
+  moneyDec: (n) => {
+    if (n == null || !Number.isFinite(n)) return '—';
+    return `${n < 0 ? '-' : ''}$${Math.abs(n).toFixed(2)}`;
+  },
+};
+
+// Safe timestamp formatter — tolerates invalid or missing dates
+const safeTimestamp = (v) => {
+  if (!v) return '—';
+  const d = new Date(v);
+  if (isNaN(d.getTime())) return '—';
+  return d.toLocaleString();
 };
 
 const tierColor = (tier) => ({
@@ -641,7 +658,7 @@ const LiveTargetBoard = ({ onOpenTarget, universe = 'all' }) => {
         <div className="max-w-[1400px] mx-auto px-4 sm:px-6 pb-6 text-[10px] font-mono text-neutral-600 flex items-center gap-3">
           <span>Source: <span className="text-neutral-400">{data.source}</span></span>
           <span>·</span>
-          <span>Generated: <span className="text-neutral-400">{new Date(data.generatedAt).toLocaleString()}</span></span>
+          <span>Generated: <span className="text-neutral-400">{safeTimestamp(data.generatedAt)}</span></span>
           <span>·</span>
           <span>{targets.length} targets</span>
           <button onClick={load} className="ml-auto px-2 h-6 border border-neutral-800 text-[10px] uppercase tracking-widest text-neutral-500 hover:text-neutral-300">

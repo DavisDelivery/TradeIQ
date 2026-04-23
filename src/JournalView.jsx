@@ -288,11 +288,11 @@ const ReturnCell = ({ label, entry, spyEntry, loading }) => {
   let alphaColor = '#737373';
   if (loading) {
     value = '…';
-  } else if (entry) {
+  } else if (entry && Number.isFinite(entry.returnPct)) {
     const r = entry.returnPct;
     value = `${r >= 0 ? '+' : ''}${r.toFixed(2)}%`;
     color = r >= 0 ? '#14e89a' : '#f43f5e';
-    if (spyEntry) {
+    if (spyEntry && Number.isFinite(spyEntry.returnPct)) {
       const alpha = r - spyEntry.returnPct;
       alphaText = `α ${alpha >= 0 ? '+' : ''}${alpha.toFixed(1)}`;
       alphaColor = alpha >= 0 ? '#10b981' : '#f43f5e';

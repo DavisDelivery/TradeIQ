@@ -118,22 +118,24 @@ const SignalHeader = ({ data }) => {
   const sigColor = signal.action === 'BUY' ? 'text-emerald-400 border-emerald-500/40 bg-emerald-500/10'
     : signal.action === 'SELL' ? 'text-rose-400 border-rose-500/40 bg-rose-500/10'
     : 'text-neutral-400 border-neutral-700 bg-neutral-900/40';
-  const changeColor = priceChangePct >= 0 ? 'text-emerald-400' : 'text-rose-400';
+  const changeColor = (priceChangePct ?? 0) >= 0 ? 'text-emerald-400' : 'text-rose-400';
   const SignalIcon = signal.action === 'BUY' ? TrendingUp : signal.action === 'SELL' ? TrendingDown : Minus;
+  const bullPoints = signal.bullPoints ?? [];
+  const bearPoints = signal.bearPoints ?? [];
   return (
     <div className="border border-neutral-800 bg-neutral-950/40 p-3 sm:p-4 mb-3">
       <div className="flex items-baseline justify-between flex-wrap gap-3">
         <div className="flex items-baseline gap-3">
           <span className="font-serif font-bold text-2xl sm:text-3xl text-neutral-100">{ticker}</span>
-          <span className="font-mono text-lg text-neutral-200">${price.toFixed(2)}</span>
+          <span className="font-mono text-lg text-neutral-200">${Number.isFinite(price) ? price.toFixed(2) : '—'}</span>
           <span className={`font-mono text-[13px] ${changeColor}`}>
-            {priceChangePct >= 0 ? '+' : ''}{priceChangePct}%
+            {(priceChangePct ?? 0) >= 0 ? '+' : ''}{priceChangePct ?? 0}%
           </span>
         </div>
         <div className={`inline-flex items-center gap-1.5 px-2.5 py-1 text-[12px] font-mono font-bold uppercase tracking-wider border ${sigColor}`}>
           <SignalIcon className="h-3.5 w-3.5" />
           {signal.action}
-          <span className="text-[10px] opacity-70 ml-1">{(signal.confidence * 100).toFixed(0)}%</span>
+          <span className="text-[10px] opacity-70 ml-1">{Number.isFinite(signal.confidence) ? (signal.confidence * 100).toFixed(0) : '—'}%</span>
         </div>
         <LogButton
           size="sm"
@@ -141,23 +143,23 @@ const SignalHeader = ({ data }) => {
             ticker,
             source: 'chart',
             loggedPrice: price,
-            composite: Math.round(signal.confidence * 100),
+            composite: Math.round((signal.confidence ?? 0) * 100),
             direction: signal.action === 'BUY' ? 'long' : signal.action === 'SELL' ? 'short' : 'neutral',
-            rationale: data.narrative || `Rule-stack ${signal.action}: ${signal.bullPoints.concat(signal.bearPoints.map((b) => `(bear: ${b})`)).join('; ')}`,
+            rationale: data.narrative || `Rule-stack ${signal.action}: ${bullPoints.concat(bearPoints.map((b) => `(bear: ${b})`)).join('; ')}`,
             signalAction: signal.action,
             signalConfidence: signal.confidence,
           }}
         />
       </div>
-      {(signal.bullPoints.length > 0 || signal.bearPoints.length > 0) && (
+      {(bullPoints.length > 0 || bearPoints.length > 0) && (
         <div className="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1 text-[11px]">
-          {signal.bullPoints.map((p, i) => (
+          {bullPoints.map((p, i) => (
             <div key={`bull-${i}`} className="flex items-baseline gap-1.5">
               <span className="text-emerald-500">+</span>
               <span className="text-neutral-400">{p}</span>
             </div>
           ))}
-          {signal.bearPoints.map((p, i) => (
+          {bearPoints.map((p, i) => (
             <div key={`bear-${i}`} className="flex items-baseline gap-1.5">
               <span className="text-rose-500">−</span>
               <span className="text-neutral-400">{p}</span>
@@ -221,15 +223,17 @@ const VolumePanel = ({ data }) => (
   </div>
 );
 
-const RsiPanel = ({ data }) => (
+const RsiPanel = ({ data }) => {
+  const rsi = data?.indicators?.latest?.rsi;
+  return (
   <div className="border border-neutral-800 bg-neutral-950/40 mb-2">
     <div className="px-3 pt-2 flex items-center justify-between">
       <span className="text-[10px] font-mono uppercase tracking-widest text-neutral-500">RSI (14)</span>
       <span className="text-[10px] font-mono text-neutral-600">
         latest <span className={
-          data.indicators.latest.rsi >= 70 ? 'text-rose-400' :
-          data.indicators.latest.rsi <= 30 ? 'text-emerald-400' : 'text-neutral-400'
-        }>{data.indicators.latest.rsi?.toFixed(1)}</span>
+          rsi >= 70 ? 'text-rose-400' :
+          rsi <= 30 ? 'text-emerald-400' : 'text-neutral-400'
+        }>{Number.isFinite(rsi) ? rsi.toFixed(1) : '—'}</span>
       </span>
     </div>
     <div className="h-24">
@@ -246,15 +250,18 @@ const RsiPanel = ({ data }) => (
       </ResponsiveContainer>
     </div>
   </div>
-);
+  );
+};
 
-const MacdPanel = ({ data }) => (
+const MacdPanel = ({ data }) => {
+  const macdHist = data?.indicators?.latest?.macdHist;
+  return (
   <div className="border border-neutral-800 bg-neutral-950/40 mb-3">
     <div className="px-3 pt-2 flex items-center justify-between">
       <span className="text-[10px] font-mono uppercase tracking-widest text-neutral-500">MACD (12, 26, 9)</span>
       <span className="text-[10px] font-mono text-neutral-600">
-        hist <span className={data.indicators.latest.macdHist >= 0 ? 'text-emerald-400' : 'text-rose-400'}>
-          {data.indicators.latest.macdHist?.toFixed(3)}
+        hist <span className={macdHist >= 0 ? 'text-emerald-400' : 'text-rose-400'}>
+          {Number.isFinite(macdHist) ? macdHist.toFixed(3) : '—'}
         </span>
       </span>
     </div>
@@ -277,7 +284,8 @@ const MacdPanel = ({ data }) => (
       </ResponsiveContainer>
     </div>
   </div>
-);
+  );
+};
 
 const NarrativeCard = ({ data }) => {
   if (!data.narrative) return null;
@@ -313,7 +321,7 @@ const SetupsCard = ({ data }) => {
               <div className="flex-1">
                 <div className="flex items-baseline gap-2">
                   <span className="font-semibold text-neutral-200">{s.label}</span>
-                  <span className="text-neutral-600 font-mono text-[10px]">{(s.strength * 100).toFixed(0)}%</span>
+                  <span className="text-neutral-600 font-mono text-[10px]">{Number.isFinite(s.strength) ? (s.strength * 100).toFixed(0) : '—'}%</span>
                 </div>
                 <div className="text-neutral-500 text-[11px] leading-relaxed">{s.rationale}</div>
               </div>
