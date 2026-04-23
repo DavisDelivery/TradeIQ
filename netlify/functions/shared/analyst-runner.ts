@@ -32,7 +32,8 @@ export async function fetchBarCache(
   }
   const cache: BarCache = {};
   const list = Array.from(needed);
-  const concurrency = 8;
+  // Concurrency 4 — at 8 we hit DNS cache overflow on larger universes (russell2k scan).
+  const concurrency = 4;
   for (let i = 0; i < list.length; i += concurrency) {
     const chunk = list.slice(i, i + concurrency);
     const results = await Promise.all(
