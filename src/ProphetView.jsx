@@ -2,8 +2,12 @@ import React, { useState, useEffect } from 'react';
 import {
   Sparkles, TrendingUp, TrendingDown, Minus, Brain, Zap, AlertCircle,
   RefreshCw, Layers, Activity, Volume2, Gauge, Scale, Briefcase, Target,
-  ChevronDown, ChevronRight,
+  ChevronDown, ChevronRight, LineChart as LineChartIcon,
 } from 'lucide-react';
+import {
+  ComposedChart, Line, Bar, XAxis, YAxis, ResponsiveContainer,
+  ReferenceLine, Tooltip, CartesianGrid,
+} from 'recharts';
 import { LogButton } from './components/LogButton.jsx';
 
 const UNIVERSE_OPTIONS = [
@@ -245,6 +249,40 @@ const ProphetRow = ({ pick, expanded, onToggle }) => {
               <span className="ml-2 text-[10px] font-mono text-neutral-500 flex-shrink-0">{pick.layersPassed}/7</span>
             </div>
 
+            {/* Earnings strip — key growth metrics + proximity warning */}
+            {pick.earnings && (
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mb-2 text-[10px] font-mono">
+                {pick.earnings.epsGrowthYoY !== undefined && (
+                  <span className={`${pick.earnings.epsGrowthYoY > 0.25 ? 'text-emerald-400' : pick.earnings.epsGrowthYoY > 0 ? 'text-neutral-300' : 'text-rose-400'}`}>
+                    EPS {pick.earnings.epsGrowthYoY >= 0 ? '+' : ''}{(pick.earnings.epsGrowthYoY * 100).toFixed(0)}%<span className="text-neutral-600"> YoY</span>
+                  </span>
+                )}
+                {pick.earnings.revenueGrowthYoY !== undefined && (
+                  <span className={`${pick.earnings.revenueGrowthYoY > 0.15 ? 'text-emerald-400/80' : 'text-neutral-400'}`}>
+                    Rev {pick.earnings.revenueGrowthYoY >= 0 ? '+' : ''}{(pick.earnings.revenueGrowthYoY * 100).toFixed(0)}%
+                  </span>
+                )}
+                {pick.earnings.epsAcceleration !== undefined && Math.abs(pick.earnings.epsAcceleration) > 0.05 && (
+                  <span className={pick.earnings.epsAcceleration > 0 ? 'text-emerald-400' : 'text-amber-400'}>
+                    {pick.earnings.epsAcceleration > 0 ? '▲' : '▼'} {Math.abs(pick.earnings.epsAcceleration * 100).toFixed(0)}pp accel
+                  </span>
+                )}
+                {pick.earnings.beatsLast4 !== undefined && (
+                  <span className={pick.earnings.beatsLast4 >= 3 ? 'text-emerald-400' : pick.earnings.beatsLast4 <= 1 ? 'text-amber-400' : 'text-neutral-400'}>
+                    {pick.earnings.beatsLast4}/4 beats
+                  </span>
+                )}
+                {pick.earnings.postEarningsDrift && (
+                  <span className="text-violet-400">PEAD window</span>
+                )}
+                {pick.earnings.daysUntilEarnings !== undefined && pick.earnings.daysUntilEarnings >= 0 && pick.earnings.daysUntilEarnings <= 14 && (
+                  <span className={pick.earnings.daysUntilEarnings <= 5 ? 'text-rose-400' : 'text-amber-400'}>
+                    ⚠ ER in {pick.earnings.daysUntilEarnings}d
+                  </span>
+                )}
+              </div>
+            )}
+
             {/* Flags */}
             {pick.flags?.length > 0 && (
               <div className="flex flex-wrap gap-1">
@@ -266,7 +304,29 @@ const ProphetRow = ({ pick, expanded, onToggle }) => {
   );
 };
 
-const ProphetDetail = ({ pick }) => (
+const ProphetDetail = ({ pick }) => {
+  const [chart, setChart] = useState(null);
+  const [chartLoading, setChartLoading] = useState(true);
+  const [chartErr, setChartErr] = useState(null);
+
+  useEffect(() => {
+    let cancel = false;
+    setChartLoading(true);
+    setChart(null);
+    setChartErr(null);
+    fetch(`/api/chart-analysis?ticker=${pick.ticker}&lookback=120&skipAi=1`)
+      .then((r) => r.json())
+      .then((d) => {
+        if (cancel) return;
+        if (d.ok && Array.isArray(d.bars)) setChart(d);
+        else setChartErr(d.error || 'no data');
+      })
+      .catch((e) => { if (!cancel) setChartErr(String(e.message || e)); })
+      .finally(() => { if (!cancel) setChartLoading(false); });
+    return () => { cancel = true; };
+  }, [pick.ticker]);
+
+  return (
   <div className="border-t border-neutral-800 p-3 sm:p-4 bg-black/40 space-y-3">
     {/* Entry/stop/targets */}
     {pick.entry && (
@@ -277,6 +337,16 @@ const ProphetDetail = ({ pick }) => (
         <TradeStat label="Invalidation" value={pick.invalidation ? `$${pick.invalidation}` : '—'} color="#737373" />
       </div>
     )}
+
+    {/* Chart — price + SMAs, RSI, MACD */}
+    <ProphetMiniChart
+      loading={chartLoading}
+      error={chartErr}
+      data={chart}
+      entry={pick.entry}
+      stop={pick.stop}
+      targets={pick.targets}
+    />
 
     {/* AI narrative */}
     {pick.narrative && (
@@ -340,7 +410,8 @@ const ProphetDetail = ({ pick }) => (
       />
     </div>
   </div>
-);
+  );
+};
 
 const TradeStat = ({ label, value, color }) => (
   <div className="border border-neutral-800 bg-neutral-950/60 p-1.5 text-center">
@@ -348,3 +419,155 @@ const TradeStat = ({ label, value, color }) => (
     <div className="font-mono text-[12px] tabular-nums" style={{ color }}>{value}</div>
   </div>
 );
+
+// ---------------------------------------------------------------------------
+// Mini chart — price w/ SMA20/50/200 + RSI pane + MACD histogram pane
+// Entry / stop / target reference lines overlay the price pane
+// ---------------------------------------------------------------------------
+const ProphetMiniChart = ({ loading, error, data, entry, stop, targets }) => {
+  if (loading) {
+    return (
+      <div className="border border-neutral-800 bg-neutral-950/60 h-[280px] flex items-center justify-center">
+        <div className="flex items-center gap-2 text-[11px] text-neutral-500 font-mono">
+          <RefreshCw className="h-3 w-3 animate-spin" />
+          <span>loading chart…</span>
+        </div>
+      </div>
+    );
+  }
+  if (error || !data?.bars?.length) {
+    return (
+      <div className="border border-neutral-800 bg-neutral-950/60 p-3 text-[11px] text-neutral-500 font-mono">
+        chart unavailable{error ? `: ${error}` : ''}
+      </div>
+    );
+  }
+
+  // Downsample labels — we only show ~6 date ticks even on 120 bars
+  const bars = data.bars;
+  const last = bars[bars.length - 1];
+
+  // Compute y-domain for price pane (tight around SMAs + entry/stop/targets)
+  const prices = [];
+  bars.forEach((b) => {
+    if (b.c != null) prices.push(b.c);
+    if (b.sma200 != null) prices.push(b.sma200);
+  });
+  if (entry) prices.push(entry);
+  if (stop) prices.push(stop);
+  if (targets?.length) targets.forEach((t) => prices.push(t));
+  const pMin = Math.min(...prices);
+  const pMax = Math.max(...prices);
+  const pad = (pMax - pMin) * 0.05;
+  const priceDomain = [Math.floor((pMin - pad) * 100) / 100, Math.ceil((pMax + pad) * 100) / 100];
+
+  const fmtDate = (d) => {
+    const dt = new Date(d);
+    return `${dt.getMonth() + 1}/${dt.getDate()}`;
+  };
+
+  const tickInterval = Math.max(1, Math.floor(bars.length / 6));
+
+  // RSI pane — color based on value
+  const rsiNow = last.rsi;
+
+  return (
+    <div className="border border-neutral-800 bg-neutral-950/60 overflow-hidden">
+      <div className="flex items-center justify-between px-3 pt-2 pb-1 border-b border-neutral-800">
+        <div className="flex items-center gap-2">
+          <LineChartIcon className="h-3 w-3 text-sky-400" />
+          <span className="text-[10px] font-mono uppercase tracking-widest text-neutral-400">{data.ticker} · {data.lookbackDays}d</span>
+        </div>
+        <div className="flex items-center gap-3 text-[10px] font-mono">
+          <span className="text-emerald-400/80">SMA20 ${data.indicators?.latest?.sma20?.toFixed(2) ?? '—'}</span>
+          <span className="text-amber-400/80">SMA50 ${data.indicators?.latest?.sma50?.toFixed(2) ?? '—'}</span>
+          <span className="text-neutral-400">SMA200 ${data.indicators?.latest?.sma200?.toFixed(2) ?? '—'}</span>
+        </div>
+      </div>
+
+      {/* PRICE PANE */}
+      <div className="h-[160px] w-full">
+        <ResponsiveContainer width="100%" height="100%">
+          <ComposedChart data={bars} margin={{ top: 6, right: 8, left: 0, bottom: 0 }}>
+            <CartesianGrid stroke="#262626" strokeDasharray="2 4" vertical={false} />
+            <XAxis
+              dataKey="date"
+              tickFormatter={fmtDate}
+              tick={{ fill: '#737373', fontSize: 9, fontFamily: 'monospace' }}
+              interval={tickInterval}
+              axisLine={{ stroke: '#404040' }}
+              tickLine={false}
+            />
+            <YAxis
+              domain={priceDomain}
+              tick={{ fill: '#737373', fontSize: 9, fontFamily: 'monospace' }}
+              axisLine={{ stroke: '#404040' }}
+              tickLine={false}
+              width={50}
+              tickFormatter={(v) => `$${v.toFixed(0)}`}
+            />
+            <Tooltip
+              contentStyle={{ background: '#0a0a0a', border: '1px solid #404040', fontSize: 11 }}
+              labelFormatter={fmtDate}
+              formatter={(v, name) => v != null ? [typeof v === 'number' ? v.toFixed(2) : v, name] : ['—', name]}
+            />
+            <Line type="monotone" dataKey="c" stroke="#e5e5e5" strokeWidth={1.5} dot={false} name="Price" />
+            <Line type="monotone" dataKey="sma20" stroke="#10b981" strokeWidth={1} dot={false} name="SMA20" connectNulls />
+            <Line type="monotone" dataKey="sma50" stroke="#f59e0b" strokeWidth={1} dot={false} name="SMA50" connectNulls />
+            <Line type="monotone" dataKey="sma200" stroke="#737373" strokeWidth={1} dot={false} strokeDasharray="3 3" name="SMA200" connectNulls />
+            {entry && <ReferenceLine y={entry} stroke="#38bdf8" strokeDasharray="4 4" label={{ value: `Entry ${entry}`, fill: '#38bdf8', fontSize: 9, position: 'insideTopRight' }} />}
+            {stop && <ReferenceLine y={stop} stroke="#f43f5e" strokeDasharray="4 4" label={{ value: `Stop ${stop}`, fill: '#f43f5e', fontSize: 9, position: 'insideTopRight' }} />}
+            {targets?.[0] && <ReferenceLine y={targets[0]} stroke="#10b981" strokeDasharray="4 4" label={{ value: `T1 ${targets[0]}`, fill: '#10b981', fontSize: 9, position: 'insideTopRight' }} />}
+            {targets?.[1] && <ReferenceLine y={targets[1]} stroke="#10b981" strokeDasharray="2 4" strokeOpacity={0.5} />}
+          </ComposedChart>
+        </ResponsiveContainer>
+      </div>
+
+      {/* RSI PANE */}
+      <div className="h-[56px] w-full border-t border-neutral-800">
+        <div className="flex items-center justify-between px-3 pt-1">
+          <span className="text-[9px] font-mono uppercase tracking-widest text-neutral-500">RSI 14</span>
+          <span className={`text-[10px] font-mono ${rsiNow > 70 ? 'text-rose-400' : rsiNow < 30 ? 'text-emerald-400' : 'text-neutral-300'}`}>
+            {rsiNow?.toFixed(1) ?? '—'}
+          </span>
+        </div>
+        <ResponsiveContainer width="100%" height={36}>
+          <ComposedChart data={bars} margin={{ top: 0, right: 8, left: 0, bottom: 0 }}>
+            <YAxis domain={[0, 100]} hide />
+            <XAxis dataKey="date" hide />
+            <ReferenceLine y={70} stroke="#f43f5e" strokeDasharray="2 3" strokeOpacity={0.5} />
+            <ReferenceLine y={30} stroke="#10b981" strokeDasharray="2 3" strokeOpacity={0.5} />
+            <ReferenceLine y={50} stroke="#404040" strokeDasharray="1 3" strokeOpacity={0.4} />
+            <Line type="monotone" dataKey="rsi" stroke="#a855f7" strokeWidth={1.2} dot={false} connectNulls />
+          </ComposedChart>
+        </ResponsiveContainer>
+      </div>
+
+      {/* MACD PANE */}
+      <div className="h-[56px] w-full border-t border-neutral-800">
+        <div className="flex items-center justify-between px-3 pt-1">
+          <span className="text-[9px] font-mono uppercase tracking-widest text-neutral-500">MACD HIST</span>
+          <span className={`text-[10px] font-mono ${last.macdHist > 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+            {last.macdHist?.toFixed(3) ?? '—'}
+          </span>
+        </div>
+        <ResponsiveContainer width="100%" height={36}>
+          <ComposedChart data={bars} margin={{ top: 0, right: 8, left: 0, bottom: 0 }}>
+            <YAxis hide />
+            <XAxis dataKey="date" hide />
+            <ReferenceLine y={0} stroke="#404040" strokeOpacity={0.5} />
+            <Bar
+              dataKey="macdHist"
+              shape={(props) => {
+                const { x, y, width, height, payload } = props;
+                const positive = payload.macdHist >= 0;
+                const fill = positive ? '#10b98180' : '#f43f5e80';
+                return <rect x={x} y={y} width={width} height={height} fill={fill} />;
+              }}
+            />
+          </ComposedChart>
+        </ResponsiveContainer>
+      </div>
+    </div>
+  );
+};

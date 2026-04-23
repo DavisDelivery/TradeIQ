@@ -37,13 +37,13 @@ export interface ProphetScore {
 
 // Base weights — will be regime-adjusted in the endpoint layer
 const BASE_WEIGHTS = {
-  structure: 0.15,
-  momentum: 0.12,
-  volume: 0.13,
-  volatility: 0.08,
-  relativeStrength: 0.12,
-  fundamental: 0.15,
-  catalyst: 0.25,
+  structure: 0.13,
+  momentum: 0.11,
+  volume: 0.12,
+  volatility: 0.07,
+  relativeStrength: 0.11,
+  fundamental: 0.20,  // raised: earnings growth + acceleration + beats history
+  catalyst: 0.26,
 };
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -620,6 +620,11 @@ export interface FundInput {
   peg?: number;
   debtToEquity?: number;
   epsSurpriseBeats?: number;  // 0-4 out of last 4
+  // Earnings-intel additions:
+  epsAcceleration?: number;     // latest YoY growth minus prior YoY growth (in fraction, 0.10 = 10pp accel)
+  avgSurpriseMagnitude?: number; // average beat % in last 4 reports
+  postEarningsDrift?: boolean;   // currently in PEAD window after a beat
+  streak?: 'beats' | 'misses' | 'mixed';
 }
 
 export function layerFundamental(fund: FundInput | null): LayerResult {
@@ -632,12 +637,16 @@ export function layerFundamental(fund: FundInput | null): LayerResult {
 
   details.revenue_growth_yoy_pct = fund.revenueGrowthYoY !== undefined ? +(fund.revenueGrowthYoY * 100).toFixed(1) : null;
   details.eps_growth_yoy_pct = fund.epsGrowthYoY !== undefined ? +(fund.epsGrowthYoY * 100).toFixed(1) : null;
+  details.eps_accel_pp = fund.epsAcceleration !== undefined ? +(fund.epsAcceleration * 100).toFixed(1) : null;
+  details.avg_surprise_pct = fund.avgSurpriseMagnitude !== undefined ? +fund.avgSurpriseMagnitude.toFixed(1) : null;
   details.operating_margin_pct = fund.operatingMargin !== undefined ? +(fund.operatingMargin * 100).toFixed(1) : null;
   details.gross_margin_pct = fund.grossMargin !== undefined ? +(fund.grossMargin * 100).toFixed(1) : null;
   details.pe = fund.pe ?? null;
   details.peg = fund.peg ?? null;
   details.debt_equity = fund.debtToEquity ?? null;
   details.beats_4q = fund.epsSurpriseBeats ?? null;
+  details.streak = fund.streak ?? null;
+  details.post_earnings_drift = fund.postEarningsDrift ?? null;
 
   let score = 0;
   const rev = fund.revenueGrowthYoY ?? 0;
@@ -645,35 +654,64 @@ export function layerFundamental(fund: FundInput | null): LayerResult {
   const om = fund.operatingMargin ?? 0;
   const gm = fund.grossMargin ?? 0;
 
+  // Revenue growth (max +25)
   if (rev > 0.20) { score += 25; flags.push('rev_growth_>20pct'); }
   else if (rev > 0.10) { score += 18; flags.push('rev_growth_>10pct'); }
   else if (rev > 0.05) score += 10;
   else if (rev > 0) score += 5;
   else if (rev < -0.05) score -= 15;
 
-  if (eps > 0.25) { score += 20; flags.push('eps_growth_strong'); }
+  // EPS growth (max +25 — up from +20)
+  if (eps > 0.50) { score += 25; flags.push('eps_growth_>50pct'); }
+  else if (eps > 0.25) { score += 20; flags.push('eps_growth_>25pct'); }
   else if (eps > 0.10) score += 12;
   else if (eps > 0) score += 5;
-  else if (eps < 0) score -= 10;
+  else if (eps < -0.10) { score -= 15; flags.push('eps_contracting'); }
+  else if (eps < 0) score -= 8;
 
-  if (om > 0.20) { score += 15; flags.push('margins_rich'); }
-  else if (om > 0.10) score += 8;
-  else if (om > 0.05) score += 3;
+  // NEW: EPS acceleration (max +15) — single strongest CANSLIM signal
+  if (fund.epsAcceleration !== undefined) {
+    if (fund.epsAcceleration > 0.15) { score += 15; flags.push('eps_accelerating'); }
+    else if (fund.epsAcceleration > 0.05) { score += 10; flags.push('eps_accel_modest'); }
+    else if (fund.epsAcceleration > 0) score += 5;
+    else if (fund.epsAcceleration < -0.15) { score -= 12; flags.push('eps_decelerating'); }
+  }
+
+  // Margins
+  if (om > 0.20) { score += 10; flags.push('margins_rich'); }
+  else if (om > 0.10) score += 6;
+  else if (om > 0.05) score += 2;
 
   if (fund.priorOperatingMargin !== undefined && om > fund.priorOperatingMargin) {
-    score += 8; flags.push('margins_expanding');
+    score += 6; flags.push('margins_expanding');
   }
-  if (gm > 0.40) score += 7;
+  if (gm > 0.40) score += 5;
 
-  if (fund.peg !== undefined && fund.peg > 0 && fund.peg < 1.5) { score += 12; flags.push('peg_favorable'); }
-  else if (fund.peg !== undefined && fund.peg > 4) score -= 10;
+  // Valuation — PEG favor
+  if (fund.peg !== undefined && fund.peg > 0 && fund.peg < 1.5) { score += 10; flags.push('peg_favorable'); }
+  else if (fund.peg !== undefined && fund.peg > 4) score -= 8;
 
-  if (fund.debtToEquity !== undefined && fund.debtToEquity < 1.0) score += 5;
-  else if (fund.debtToEquity !== undefined && fund.debtToEquity > 2.5) score -= 8;
+  if (fund.debtToEquity !== undefined && fund.debtToEquity < 1.0) score += 3;
+  else if (fund.debtToEquity !== undefined && fund.debtToEquity > 2.5) score -= 6;
 
+  // Beats count (max +12, up from +12 — same but with streak bonus)
   if (fund.epsSurpriseBeats !== undefined) {
     score += fund.epsSurpriseBeats * 3;
-    if (fund.epsSurpriseBeats >= 3) flags.push('beats_3_of_4');
+    if (fund.epsSurpriseBeats >= 3) flags.push('beats_3plus_of_4');
+  }
+
+  // NEW: Clean 4/4 streak bonus
+  if (fund.streak === 'beats' && fund.epsSurpriseBeats === 4) {
+    score += 8; flags.push('perfect_beat_streak');
+  } else if (fund.streak === 'misses') {
+    score -= 10; flags.push('miss_streak');
+  }
+
+  // NEW: Avg surprise magnitude
+  if (fund.avgSurpriseMagnitude !== undefined) {
+    if (fund.avgSurpriseMagnitude > 10) { score += 8; flags.push('blowout_avg'); }
+    else if (fund.avgSurpriseMagnitude > 3) score += 4;
+    else if (fund.avgSurpriseMagnitude < -3) score -= 6;
   }
 
   score = Math.max(0, Math.min(100, score));
@@ -699,6 +737,7 @@ export interface CatalystInput {
   newsSentiment7d?: number;     // -1 to 1
   newsVolumeSpike?: boolean;
   daysUntilEarnings?: number | null;
+  postEarningsDrift?: boolean;  // in 3-14d post-beat drift window
   macroBias?: number;           // -1 (risk_off) to +1 (risk_on)
   sectorRank?: number;          // 1 = leader, 11 = laggard
 }
@@ -744,6 +783,11 @@ export function layerCatalyst(cat: CatalystInput): LayerResult {
     } else if (cat.daysUntilEarnings <= 10 && cat.daysUntilEarnings >= 4) {
       score += 3;  // "Run into earnings" has some edge
     }
+  }
+
+  // NEW: Post-earnings drift bonus — well-documented positive drift in 3-14 days after a beat
+  if (cat.postEarningsDrift) {
+    score += 12; flags.push('post_earnings_drift');
   }
 
   if (cat.macroBias !== undefined) score += cat.macroBias * 5;

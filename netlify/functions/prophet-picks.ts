@@ -14,6 +14,7 @@
 import type { Handler } from '@netlify/functions';
 import { UNIVERSE, inIndex, SECTOR_ETFS, SPY, findEntry } from './shared/universe';
 import { getDailyBars, getFundamentals, getUpcomingEarnings } from './shared/data-provider';
+import { getEarningsIntel } from './shared/earnings-intel';
 import { getInsiderActivity } from './shared/insider-provider';
 import { getPoliticalActivity } from './shared/political-provider';
 import { getGovContractActivity } from './shared/govcontracts-provider';
@@ -48,6 +49,17 @@ interface ProphetPick extends ProphetScore {
   price: number;
   priceChangePct: number;
   narrative?: string;
+  earnings?: {
+    epsGrowthYoY?: number;
+    revenueGrowthYoY?: number;
+    epsAcceleration?: number;
+    beatsLast4?: number;
+    avgSurpriseMagnitude?: number;
+    streak?: 'beats' | 'misses' | 'mixed';
+    nextEarningsDate?: string;
+    daysUntilEarnings?: number;
+    postEarningsDrift?: boolean;
+  };
 }
 
 // Module-level cache. Aggressive scans reuse this across invocations (in warm containers)
@@ -224,10 +236,10 @@ async function scoreTicker(
   sectorRank: number,
   macroBias: number,
 ): Promise<ProphetPick | null> {
-  const [bars, fund, earnings, insider, political, contracts, patents] = await Promise.all([
+  const [bars, fund, intel, insider, political, contracts, patents] = await Promise.all([
     getDailyBars(entry.ticker, from, to),
     getFundamentals(entry.ticker).catch(() => null),
-    getUpcomingEarnings(entry.ticker, 30).catch(() => null),
+    getEarningsIntel(entry.ticker).catch(() => null),
     getInsiderActivity(entry.ticker, 90).catch(() => null),
     getPoliticalActivity(entry.ticker, 180).catch(() => null),
     getGovContractActivity(entry.ticker, 180).catch(() => null),
@@ -248,11 +260,15 @@ async function scoreTicker(
     operatingMargin: fund?.operatingMargin,
     grossMargin: fund?.grossMargin,
     pe, peg,
+    // NEW: pass earnings intel into fundamental layer
+    epsSurpriseBeats: intel?.beatsLast4,
+    epsAcceleration: intel?.epsAcceleration,
+    avgSurpriseMagnitude: intel?.avgSurpriseMagnitude,
+    postEarningsDrift: intel?.postEarningsDrift,
+    streak: intel?.streak,
   };
 
-  const daysUntilEarnings = earnings?.date
-    ? Math.round((new Date(earnings.date).getTime() - Date.now()) / 86400000)
-    : null;
+  const daysUntilEarnings = intel?.daysUntilEarnings ?? null;
 
   const catInput: CatalystInput = {
     insiderScore: insider ? scoreInsider(insider) : undefined,
@@ -265,6 +281,7 @@ async function scoreTicker(
     patentScore: patents ? scorePatents(patents) : undefined,
     patentVelocity: patents ? (patents.velocityChangePct / 100) : undefined,
     daysUntilEarnings,
+    postEarningsDrift: intel?.postEarningsDrift,  // NEW
     macroBias,
     sectorRank,
   };
@@ -291,6 +308,17 @@ async function scoreTicker(
     priceChangePct,
     layers,
     ...composed,
+    earnings: intel ? {
+      epsGrowthYoY: intel.epsGrowthYoY,
+      revenueGrowthYoY: intel.revenueGrowthYoY,
+      epsAcceleration: intel.epsAcceleration,
+      beatsLast4: intel.beatsLast4,
+      avgSurpriseMagnitude: intel.avgSurpriseMagnitude,
+      streak: intel.streak,
+      nextEarningsDate: intel.nextEarningsDate,
+      daysUntilEarnings: intel.daysUntilEarnings,
+      postEarningsDrift: intel.postEarningsDrift,
+    } : undefined,
   };
 }
 
