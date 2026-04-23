@@ -35,7 +35,7 @@ const MODEL = 'claude-sonnet-4-6';
 const SCAN_BUDGET_MS = 20_000;
 const NARRATIVE_BUDGET_MS = 4_000;
 
-const headers = { 'Content-Type': 'application/json' };
+const headers = { 'Content-Type': 'application/json; charset=utf-8' };
 const json = (code: number, body: unknown) => ({
   statusCode: code,
   headers,
@@ -210,14 +210,23 @@ export const handler: Handler = async (event) => {
   }
 };
 
-// Strip control characters and normalize whitespace so narratives can't break JSON
-// encoding. Claude output is generally clean but rare unicode edge cases (U+2028,
-// lone surrogates from models running in different contexts) can truncate responses.
+// Strip control characters, fold smart punctuation to ASCII so the response
+// is safe to parse regardless of client-side charset handling (iOS Safari is
+// particularly strict with unicode in JSON when Content-Type lacks an explicit
+// charset declaration).
 function sanitizeForJson(s: string): string {
   return s
     // Remove all ASCII control chars except newline/tab
     .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '')
-    // Remove U+2028 and U+2029 which break JSON.parse in some browsers
+    // Fold em-dash and en-dash to ASCII hyphen
+    .replace(/[\u2013\u2014\u2015]/g, '-')
+    // Fold smart single quotes to apostrophe
+    .replace(/[\u2018\u2019\u201A\u201B]/g, "'")
+    // Fold smart double quotes to straight quote
+    .replace(/[\u201C\u201D\u201E\u201F]/g, '"')
+    // Fold ellipsis to three dots
+    .replace(/\u2026/g, '...')
+    // Remove U+2028 and U+2029 line/paragraph separators
     .replace(/[\u2028\u2029]/g, ' ')
     // Cap length
     .slice(0, 1500)
