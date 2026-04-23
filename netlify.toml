@@ -13,6 +13,10 @@
 [functions."prophet-picks"]
   timeout = 26
 
+# Target board now supports full-index scans (sp500, russell2k, etc.) — needs budget too
+[functions."target-board"]
+  timeout = 26
+
 # ==========================================================================
 # API redirects — rewrite /api/<endpoint> to /.netlify/functions/<endpoint>
 # ==========================================================================

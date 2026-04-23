@@ -21,7 +21,7 @@ import { LogButton } from './components/LogButton.jsx';
 import { UniverseSelector, UNIVERSE_AWARE_VIEWS } from './components/UniverseSelector.jsx';
 import { readLog, logTrade, removeTrade, computeForwardReturns } from './tradeLog.js';
 
-const APP_VERSION = '0.7.9-alpha';
+const APP_VERSION = '0.7.10-alpha';
 
 // ======================================================================
 // MOCK DATA — replaced by /api/target-board and Firestore subscriptions
@@ -527,30 +527,34 @@ const TargetCard = ({ target, onOpen }) => {
   );
 };
 
-const LiveTargetBoard = ({ onOpenTarget }) => {
+const LiveTargetBoard = ({ onOpenTarget, universe = 'all' }) => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [data, setData] = useState(null);
+  const requestIdRef = React.useRef(0);
 
   const load = async () => {
+    const myId = ++requestIdRef.current;
     setLoading(true);
     setError(null);
     try {
-      const r = await fetch('/api/target-board?limit=50');
+      const r = await fetch(`/api/target-board?limit=50&universe=${universe}`);
       const json = await r.json();
+      // Drop stale response if user has since tapped a different universe
+      if (myId !== requestIdRef.current) return;
       if (!r.ok || json.error) {
         setError(json.error || `HTTP ${r.status}`);
       } else {
         setData(json);
       }
     } catch (err) {
-      setError(err.message);
+      if (myId === requestIdRef.current) setError(err.message);
     } finally {
-      setLoading(false);
+      if (myId === requestIdRef.current) setLoading(false);
     }
   };
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(); /* eslint-disable-next-line */ }, [universe]);
 
   if (loading && !data) {
     return (
@@ -629,6 +633,24 @@ const TargetBoardView = ({ targets, onOpenTarget }) => {
             {filtered.length} <span className="text-neutral-500 italic font-light">targets ranked</span>
           </h1>
           <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-3 text-[11px] font-mono text-neutral-400">
+            {data?.universe && (
+              <div>
+                <span className="text-neutral-500 uppercase tracking-widest mr-2">Scope</span>
+                <span className="text-neutral-200 font-semibold">
+                  {data.universe === 'core' ? 'Core (33)' :
+                    data.universe === 'sp500' ? 'S&P 500' :
+                    data.universe === 'ndx' ? 'Nasdaq 100' :
+                    data.universe === 'dow' ? 'Dow 30' :
+                    (data.universe === 'russell' || data.universe === 'russell2k') ? 'Russell 2K' :
+                    'All Indices'}
+                </span>
+                {data.tickersScanned !== undefined && (
+                  <span className="text-neutral-500 ml-1">
+                    · {data.tickersScanned}/{data.universeSize ?? data.tickersScanned} scanned
+                  </span>
+                )}
+              </div>
+            )}
             <div>
               <span className="text-neutral-500 uppercase tracking-widest mr-2">A-grade</span>
               <span className="text-emerald-400 font-semibold">{breakdown.A}</span>
