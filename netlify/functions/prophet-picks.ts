@@ -207,14 +207,14 @@ async function scoreTicker(
 
   const catInput: CatalystInput = {
     insiderScore: insider ? scoreInsider(insider) : undefined,
-    insiderCluster: insider && insider.clusters.length > 0,
-    cSuiteBuy: insider?.transactions.some((t) => /CEO|CFO|CHIEF|PRESIDENT|CHAIR/i.test(t.position)),
+    insiderCluster: !!(insider && insider.clusters.length > 0),
+    cSuiteBuy: !!insider?.transactions.some((t) => /CEO|CFO|CHIEF|PRESIDENT|CHAIR/i.test(t.position)),
     firstBuyInYear: insider?.firstBuyInAYear,
     politicalScore: political ? scorePolitical(political) : undefined,
-    bipartisanPolitical: political && (political.bipartisanTrading ?? false),
+    bipartisanPolitical: political?.bipartisan ?? false,
     govContractScore: contracts ? scoreContracts(contracts) : undefined,
     patentScore: patents ? scorePatents(patents) : undefined,
-    patentVelocity: patents?.velocityChange,
+    patentVelocity: patents ? (patents.velocityChangePct / 100) : undefined,
     daysUntilEarnings,
     macroBias,
     sectorRank,
@@ -260,15 +260,15 @@ function scoreInsider(a: any): number {
 }
 
 function scorePolitical(p: any): number {
-  const net = (p.senateNetBuys ?? 0) + (p.houseNetBuys ?? 0);
-  const lobbyChange = p.lobbyingVelocityChange ?? 0;
-  let raw = net * 5 + (p.bipartisanTrading ? 15 : 0) + (lobbyChange > 0 ? 10 : 0);
+  const net = p.netTrades ?? 0;
+  const lobbyChange = (p.lobbyingVelocityPct ?? 0) / 100;
+  let raw = net * 5 + (p.bipartisan ? 15 : 0) + (lobbyChange > 0.2 ? 10 : 0);
   return Math.max(0, Math.min(100, 50 + Math.max(-30, Math.min(40, raw))));
 }
 
 function scoreContracts(c: any): number {
-  const total = c.totalValue ?? 0;
-  const diversity = c.agencyDiversity ?? 0;
+  const total = c.totalDollars ?? 0;
+  const diversity = c.topAgencies?.length ?? 0;
   let raw = 0;
   if (total > 100_000_000) raw += 30;
   else if (total > 10_000_000) raw += 18;
