@@ -21,7 +21,7 @@ import { LogButton } from './components/LogButton.jsx';
 import { UniverseSelector, UNIVERSE_AWARE_VIEWS } from './components/UniverseSelector.jsx';
 import { readLog, logTrade, removeTrade, computeForwardReturns } from './tradeLog.js';
 
-const APP_VERSION = '0.7.0-alpha';
+const APP_VERSION = '0.7.3-alpha';
 
 // ======================================================================
 // MOCK DATA — replaced by /api/target-board and Firestore subscriptions
@@ -284,32 +284,67 @@ const MOBILE_NAV_VIEWS = [
   { id: 'settings', label: 'Settings', icon: Settings },
 ];
 
-const MobileBottomNav = ({ activeView, setActiveView }) => (
-  <nav
-    className="sm:hidden fixed bottom-0 left-0 right-0 z-50 border-t border-neutral-800/80 bg-[#0a0b0d]/95 backdrop-blur-xl"
-    style={{ paddingBottom: 'env(safe-area-inset-bottom, 0px)' }}
-  >
-    <div className="flex w-full">
-      {MOBILE_NAV_VIEWS.map(v => {
-        const active = activeView === v.id;
-        return (
-          <button
-            key={v.id}
-            onClick={() => setActiveView(v.id)}
-            className={`flex-1 min-w-0 flex flex-col items-center justify-center gap-0.5 h-14 px-1 transition-colors ${
-              active
-                ? 'text-emerald-400'
-                : 'text-neutral-500 active:text-neutral-300'
-            }`}
-          >
-            <v.icon className={`h-[18px] w-[18px] flex-shrink-0 ${active ? 'stroke-[2.2]' : ''}`} />
-            <span className="text-[9px] font-medium tracking-tight truncate max-w-full">{v.label}</span>
-          </button>
-        );
-      })}
-    </div>
-  </nav>
-);
+const MobileBottomNav = ({ activeView, setActiveView }) => {
+  const scrollerRef = React.useRef(null);
+  const buttonRefs = React.useRef({});
+
+  // Auto-scroll the active tab into view (center it) whenever activeView changes.
+  // Runs on mount too so the first render lands on the right spot.
+  React.useEffect(() => {
+    const btn = buttonRefs.current[activeView];
+    if (btn && btn.scrollIntoView) {
+      btn.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
+    }
+  }, [activeView]);
+
+  return (
+    <nav
+      className="sm:hidden fixed bottom-0 left-0 right-0 z-50 border-t border-neutral-800/80 bg-[#0a0b0d]/95 backdrop-blur-xl"
+      style={{ paddingBottom: 'env(safe-area-inset-bottom, 0px)' }}
+    >
+      {/* Edge fades to signal horizontal scrollability */}
+      <div className="absolute left-0 top-0 bottom-0 w-6 pointer-events-none z-10 bg-gradient-to-r from-[#0a0b0d] to-transparent" />
+      <div className="absolute right-0 top-0 bottom-0 w-6 pointer-events-none z-10 bg-gradient-to-l from-[#0a0b0d] to-transparent" />
+
+      <div
+        ref={scrollerRef}
+        className="flex w-full overflow-x-auto snap-x snap-mandatory"
+        style={{
+          scrollbarWidth: 'none',
+          msOverflowStyle: 'none',
+          WebkitOverflowScrolling: 'touch',
+          scrollPaddingInline: '24px',
+        }}
+      >
+        {/* Hide webkit scrollbar */}
+        <style>{`nav > div::-webkit-scrollbar{display:none}`}</style>
+
+        {MOBILE_NAV_VIEWS.map(v => {
+          const active = activeView === v.id;
+          return (
+            <button
+              key={v.id}
+              ref={(el) => { buttonRefs.current[v.id] = el; }}
+              onClick={() => setActiveView(v.id)}
+              className={`relative shrink-0 w-[68px] snap-center flex flex-col items-center justify-center gap-0.5 h-14 px-1 transition-colors ${
+                active
+                  ? 'text-emerald-400'
+                  : 'text-neutral-500 active:text-neutral-300'
+              }`}
+            >
+              {/* Top-edge active indicator — visible regardless of color contrast */}
+              {active && (
+                <span className="absolute top-0 left-1/2 -translate-x-1/2 h-[2px] w-7 bg-emerald-400 rounded-b-full" />
+              )}
+              <v.icon className={`h-[18px] w-[18px] flex-shrink-0 ${active ? 'stroke-[2.2]' : ''}`} />
+              <span className="text-[10px] font-medium tracking-tight">{v.label}</span>
+            </button>
+          );
+        })}
+      </div>
+    </nav>
+  );
+};
 
 const TopBar = ({ activeView, setActiveView, regime, universeStats }) => {
   const views = [
