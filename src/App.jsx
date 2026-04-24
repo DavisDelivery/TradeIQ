@@ -20,8 +20,9 @@ import { ProphetView } from './ProphetView.jsx';
 import { LogButton } from './components/LogButton.jsx';
 import { UniverseSelector, UNIVERSE_AWARE_VIEWS } from './components/UniverseSelector.jsx';
 import { readLog, logTrade, removeTrade, computeForwardReturns } from './tradeLog.js';
+import { validate, SHAPES } from './lib/validateResponse.js';
 
-const APP_VERSION = '0.7.14-alpha';
+const APP_VERSION = '0.7.15-alpha';
 
 // ======================================================================
 // ERROR BOUNDARY — catches React render errors in any child subtree and
@@ -576,7 +577,7 @@ const LiveTargetBoard = ({ onOpenTarget, universe = 'all' }) => {
       if (!r.ok || json.error) {
         setError(json.error || `HTTP ${r.status}`);
       } else {
-        setData(json);
+        setData(validate(json, SHAPES.targetBoard, "target-board"));
       }
     } catch (err) {
       if (myId === requestIdRef.current) setError(err.message);
@@ -869,7 +870,7 @@ const TargetDetail = ({ target, onClose }) => {
                         </div>
                         <span className={`font-mono text-[12px] w-8 text-right ${color}`}>{c.score}</span>
                       </div>
-                      <span className="font-mono text-[10px] text-neutral-500 w-10 text-right uppercase">{(c.weight * 100).toFixed(0)}%</span>
+                      <span className="font-mono text-[10px] text-neutral-500 w-10 text-right uppercase">{Number.isFinite(c.weight) ? `${(c.weight * 100).toFixed(0)}%` : '—'}</span>
                     </div>
                   );
                 })}
@@ -883,8 +884,8 @@ const TargetDetail = ({ target, onClose }) => {
             <div className="flex flex-wrap gap-2">
               {target.topSignals?.map((s, i) => (
                 <div key={i} className="border border-neutral-800 px-3 py-2 bg-neutral-950/50">
-                  <div className="font-mono text-[11px] text-neutral-400">{s.type.replace(/_/g, ' ')}</div>
-                  <div className="font-mono text-sm text-neutral-100 mt-0.5">{s.score}</div>
+                  <div className="font-mono text-[11px] text-neutral-400">{(s.type ?? 'signal').replace(/_/g, ' ')}</div>
+                  <div className="font-mono text-sm text-neutral-100 mt-0.5">{s.score ?? '—'}</div>
                 </div>
               ))}
             </div>
@@ -917,15 +918,27 @@ const RegimeView = ({ regime }) => {
     vix: 14 + Math.sin(i / 5) * 4 + Math.random() * 2,
   }));
 
+  if (!regime || !regime.regime) {
+    return (
+      <div className="px-3 py-4 sm:p-6 max-w-[1600px] mx-auto">
+        <div className="border border-neutral-800 p-8 text-center text-neutral-500 font-mono text-sm">
+          Regime data unavailable.
+        </div>
+      </div>
+    );
+  }
+
+  const regimeLabel = (regime.regime ?? 'neutral').replace(/_/g, ' ');
+
   return (
     <div className="px-3 py-4 sm:p-6 max-w-[1600px] mx-auto">
       <div className="mb-6">
         <div className="text-[10px] uppercase tracking-[0.2em] text-neutral-500 font-mono mb-2">Macro Regime</div>
         <h1 className="font-serif text-3xl font-bold tracking-tight">
           <span className={regime.regime === 'risk_on' ? 'text-emerald-400' : regime.regime === 'risk_off' ? 'text-rose-400' : 'text-neutral-300'}>
-            {regime.regime.replace('_', ' ')}
+            {regimeLabel}
           </span>
-          <span className="text-neutral-500 italic font-light ml-3">({regime.conviction} conviction)</span>
+          <span className="text-neutral-500 italic font-light ml-3">({regime.conviction ?? 'unknown'} conviction)</span>
         </h1>
         <p className="text-neutral-400 mt-2 max-w-3xl">{regime.rationale}</p>
       </div>
@@ -1449,8 +1462,8 @@ const EngineTestView = () => {
                   <div key={s.etf} className="flex items-center justify-between text-[12px] font-mono border border-neutral-800/60 px-2 py-1">
                     <span className="text-neutral-500">#{s.rank}</span>
                     <span className="text-neutral-200">{s.etf}</span>
-                    <span className={s.composite >= 0 ? 'text-emerald-400' : 'text-rose-400'}>
-                      {s.composite >= 0 ? '+' : ''}{(s.composite * 100).toFixed(1)}%
+                    <span className={(s.composite ?? 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'}>
+                      {Number.isFinite(s.composite) ? `${s.composite >= 0 ? '+' : ''}${(s.composite * 100).toFixed(1)}%` : '—'}
                     </span>
                   </div>
                 ))}
@@ -1550,7 +1563,7 @@ const EarningsPlaysView = () => {
       if (!r.ok || json.error) {
         setError(json.error || `HTTP ${r.status}`);
       } else {
-        setData(json);
+        setData(validate(json, SHAPES.earningsBoard, "earnings-board"));
       }
     } catch (err) {
       setError(err.message);
@@ -1837,7 +1850,7 @@ const OptionsPlaysView = () => {
       if (!r.ok || json.error) {
         setError(json.error || `HTTP ${r.status}`);
       } else {
-        setData(json);
+        setData(validate(json, SHAPES.optionsFlow, "options-flow"));
       }
     } catch (err) {
       setError(err.message);
@@ -2087,7 +2100,7 @@ const BacktestView = () => {
       const r = await fetch(`/api/backtest?lookbackDays=${days}&tickers=${tickers}&sampleEvery=5`);
       const json = await r.json();
       if (!r.ok || !json.ok) throw new Error(json.error || `HTTP ${r.status}`);
-      setData(json);
+      setData(validate(json, SHAPES.backtest, "backtest"));
     } catch (err) {
       setError(err.message);
     } finally {
@@ -2118,25 +2131,39 @@ const BacktestView = () => {
     );
   }
 
+  // Shape safety — even if server returns partial data, each piece defaults to empty
+  if (!data || !data.summary) {
+    return (
+      <div className="px-3 py-4 sm:p-6 max-w-[1400px] mx-auto">
+        <div className="border border-neutral-800 p-8 text-center text-neutral-500 font-mono text-sm">
+          Backtest data unavailable.
+          <button onClick={() => load()} className="ml-4 underline">retry</button>
+        </div>
+      </div>
+    );
+  }
+
   const summary = data.summary;
   const windowKey = `fwd${window}`;
   const overall = summary[windowKey] || {};
 
   // Chart data: tier win rate + avg return
+  const byTier = data.byTier || {};
+  const byDirection = data.byDirection || {};
   const tierChartData = ['A', 'B', 'C'].map(tier => {
-    const s = data.byTier[tier]?.[windowKey] || {};
+    const s = byTier[tier]?.[windowKey] || {};
     return {
       tier: `Tier ${tier}`,
       winRate: ((s.winRate || 0) * 100),
       avgReturn: ((s.avgReturn || 0) * 100),
       alpha: ((s.avgAlphaVsSPY || 0) * 100),
-      n: data.byTier[tier]?.n || 0,
+      n: byTier[tier]?.n || 0,
     };
   });
 
   // Direction comparison
   const dirChartData = ['long', 'short'].map(dir => {
-    const s = data.byDirection[dir]?.[windowKey] || {};
+    const s = byDirection[dir]?.[windowKey] || {};
     return {
       direction: dir === 'long' ? 'Long' : 'Short',
       winRate: ((s.winRate || 0) * 100),
@@ -2186,10 +2213,10 @@ const BacktestView = () => {
         <div>
           <div className="text-[10px] uppercase tracking-[0.2em] text-neutral-500 font-mono mb-2">Backtest</div>
           <h1 className="font-serif text-2xl sm:text-3xl font-bold tracking-tight">
-            {summary.n} <span className="text-neutral-500 italic font-light">historical trades</span>
+            {summary.n ?? 0} <span className="text-neutral-500 italic font-light">historical trades</span>
           </h1>
           <div className="text-[11px] font-mono text-neutral-500 mt-2">
-            {data.config.from} → {data.config.to} · 10 mega-caps · sampled every {data.config.sampleEvery}d
+            {data.config?.from ?? '—'} → {data.config?.to ?? '—'} · 10 mega-caps · sampled every {data.config?.sampleEvery ?? '—'}d
           </div>
         </div>
 

@@ -9,6 +9,7 @@ import {
   ReferenceLine, Tooltip, CartesianGrid,
 } from 'recharts';
 import { LogButton } from './components/LogButton.jsx';
+import { validate, SHAPES } from './lib/validateResponse.js';
 
 const UNIVERSE_OPTIONS = [
   { id: 'largecap', label: 'Large Cap', desc: 'S&P 500 + NDX + Dow (~230)' },
@@ -83,7 +84,7 @@ export const ProphetView = () => {
         console.log('[prophet] response universe mismatch, dropping', json.universe, 'vs', universe);
         return;
       }
-      setData(json);
+      setData(validate(json, SHAPES.prophet, "prophet"));
     } catch (e) {
       // Only surface errors for the latest request
       if (myRequestId === requestIdRef.current) setError(e.message);

@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { TrendingUp, TrendingDown, Shield } from 'lucide-react';
 import { LogButton } from './components/LogButton.jsx';
+import { validate, SHAPES } from './lib/validateResponse.js';
 
 export const LynchView = ({ universe = 'sp500' }) => {
   const [loading, setLoading] = useState(true);
@@ -13,7 +14,7 @@ export const LynchView = ({ universe = 'sp500' }) => {
       const r = await fetch(`/api/lynch-board?index=${universe}&limit=30`);
       const json = await r.json();
       if (!r.ok || !json.ok) throw new Error(json.error || `HTTP ${r.status}`);
-      setData(json);
+      setData(validate(json, SHAPES.lynch, "lynch"));
     } catch (e) {
       setError(e.message);
     } finally {

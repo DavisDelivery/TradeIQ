@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { TrendingUp, TrendingDown, Activity, Zap } from 'lucide-react';
 import { LogButton } from './components/LogButton.jsx';
+import { validate, SHAPES } from './lib/validateResponse.js';
 
 const SIDE_OPTIONS = [
   { id: 'both', label: 'Both' },
@@ -20,7 +21,7 @@ export const WilliamsView = ({ universe = 'sp500' }) => {
       const r = await fetch(`/api/williams-board?index=${universe}&side=${side}&limit=30`);
       const json = await r.json();
       if (!r.ok || !json.ok) throw new Error(json.error || `HTTP ${r.status}`);
-      setData(json);
+      setData(validate(json, SHAPES.williams, "williams"));
     } catch (e) {
       setError(e.message);
     } finally {

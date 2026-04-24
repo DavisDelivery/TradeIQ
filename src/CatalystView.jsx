@@ -5,6 +5,7 @@ import {
 } from 'lucide-react';
 import { CatalystBadges, ConvictionChip, CatalystChip } from './components/CatalystBadges.jsx';
 import { LogButton } from './components/LogButton.jsx';
+import { validate, SHAPES } from './lib/validateResponse.js';
 
 const FILTER_OPTIONS = [
   { id: 'all', label: 'Any catalyst', desc: 'Any signal active' },
@@ -41,7 +42,7 @@ export const CatalystView = ({ universe = 'sp500' }) => {
       }
       const json = await r.json();
       if (!r.ok || !json.ok) throw new Error(json.error || `HTTP ${r.status}`);
-      setData(json);
+      setData(validate(json, SHAPES.catalyst, "catalyst"));
     } catch (e) {
       setError(e.message);
     } finally {

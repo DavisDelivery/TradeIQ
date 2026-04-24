@@ -9,6 +9,7 @@ import {
   Brain, Zap, AlertCircle, Search, RefreshCw,
 } from 'lucide-react';
 import { LogButton } from './components/LogButton.jsx';
+import { validate, SHAPES } from './lib/validateResponse.js';
 
 const QUICK_TICKERS = ['NVDA', 'AAPL', 'MSFT', 'TSLA', 'META', 'GOOGL', 'AMZN', 'SPY'];
 
@@ -27,7 +28,7 @@ export const ChartView = () => {
       if (!ctype.includes('json')) throw new Error(`Server returned ${r.status}`);
       const json = await r.json();
       if (!r.ok || !json.ok) throw new Error(json.error || `HTTP ${r.status}`);
-      setData(json);
+      setData(validate(json, SHAPES.chartAnalysis, "chart-analysis"));
     } catch (e) {
       setError(e.message);
     } finally { setLoading(false); }
