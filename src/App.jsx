@@ -4,7 +4,7 @@ import {
   AlertTriangle, ChevronRight, CircleCheck, CircleX, Circle, Gauge,
   BarChart3, Brain, Newspaper, Globe2, Eye, Target, Clock, ArrowUpRight,
   ArrowDownRight, Minus, Shield, Cpu, LineChart as LineChartIcon, Filter, X,
-  Inbox, Bell, ExternalLink, Info, BookMarked, Sparkles
+  Inbox, Bell, ExternalLink, Info, BookMarked, Sparkles, Landmark, FlaskConical
 } from 'lucide-react';
 import {
   AreaChart, Area, LineChart, Line, BarChart, Bar, RadarChart,
@@ -22,7 +22,7 @@ import { UniverseSelector, UNIVERSE_AWARE_VIEWS } from './components/UniverseSel
 import { readLog, logTrade, removeTrade, computeForwardReturns } from './tradeLog.js';
 import { validate, SHAPES } from './lib/validateResponse.js';
 
-const APP_VERSION = '0.7.16-alpha';
+const APP_VERSION = '0.7.17-alpha';
 
 // ======================================================================
 // ERROR BOUNDARY — catches React render errors in any child subtree and
@@ -258,6 +258,9 @@ const analystIcon = {
   'earnings-analyst': Zap,
   'geopolitical-analyst': Globe2,
   'macro-regime': Gauge,
+  'political-analyst': Landmark,
+  'insider-analyst': Eye,
+  'patent-analyst': FlaskConical,
 };
 
 const analystLabel = {
@@ -269,6 +272,9 @@ const analystLabel = {
   'earnings-analyst': 'Earnings',
   'geopolitical-analyst': 'Geo',
   'macro-regime': 'Macro',
+  'political-analyst': 'Political',
+  'insider-analyst': 'Insider',
+  'patent-analyst': 'Patents',
 };
 
 // ======================================================================
