@@ -22,7 +22,7 @@ import { UniverseSelector, UNIVERSE_AWARE_VIEWS } from './components/UniverseSel
 import { readLog, logTrade, removeTrade, computeForwardReturns } from './tradeLog.js';
 import { validate, SHAPES } from './lib/validateResponse.js';
 
-const APP_VERSION = '0.7.15-alpha';
+const APP_VERSION = '0.7.16-alpha';
 
 // ======================================================================
 // ERROR BOUNDARY — catches React render errors in any child subtree and
@@ -589,12 +589,22 @@ const LiveTargetBoard = ({ onOpenTarget, universe = 'all' }) => {
   useEffect(() => { load(); /* eslint-disable-next-line */ }, [universe]);
 
   if (loading && !data) {
+    const universeMeta = {
+      core: { label: 'core watchlist', size: 33, time: '10-15s' },
+      sp500: { label: 'S&P 500', size: 500, time: '20-35s, two-pass' },
+      ndx: { label: 'Nasdaq 100', size: 100, time: '15-25s' },
+      dow: { label: 'Dow 30', size: 30, time: '10-15s' },
+      russell: { label: 'Russell 2000', size: 2000, time: '30-50s, two-pass' },
+      russell2k: { label: 'Russell 2000', size: 2000, time: '30-50s, two-pass' },
+      all: { label: 'all indices', size: 2500, time: '40-60s, two-pass' },
+    };
+    const m = universeMeta[universe] || universeMeta.all;
     return (
       <div className="p-4 sm:p-6 max-w-[1400px] mx-auto">
         <div className="border border-neutral-800 p-8 text-center">
           <div className="inline-block h-6 w-6 border-2 border-emerald-500/30 border-t-emerald-500 rounded-full animate-spin mb-3" />
-          <div className="text-neutral-400 text-sm">Running analysts across 30-ticker watchlist…</div>
-          <div className="text-neutral-600 text-[11px] mt-1 font-mono">First load takes 15-30 seconds (Polygon bars + sector rotation + aggregation)</div>
+          <div className="text-neutral-400 text-sm">Scanning {m.label} ({m.size.toLocaleString()} tickers)…</div>
+          <div className="text-neutral-600 text-[11px] mt-1 font-mono">{m.time} · Polygon bars + sector rotation + aggregation</div>
         </div>
       </div>
     );
