@@ -21,7 +21,7 @@ import { LogButton } from './components/LogButton.jsx';
 import { UniverseSelector, UNIVERSE_AWARE_VIEWS } from './components/UniverseSelector.jsx';
 import { readLog, logTrade, removeTrade, computeForwardReturns } from './tradeLog.js';
 
-const APP_VERSION = '0.7.13-alpha';
+const APP_VERSION = '0.7.14-alpha';
 
 // ======================================================================
 // ERROR BOUNDARY — catches React render errors in any child subtree and
@@ -332,30 +332,29 @@ const DirectionPill = ({ direction }) => {
 // TOP BAR
 // ======================================================================
 
-const MOBILE_NAV_VIEWS = [
-  { id: 'board', label: 'Board', icon: Target },
-  { id: 'prophet', label: 'Prophet', icon: Sparkles },
-  { id: 'catalyst', label: 'Catalyst', icon: Zap },
-  { id: 'williams', label: 'Williams', icon: Activity },
-  { id: 'lynch', label: 'Lynch', icon: Shield },
-  { id: 'earnings', label: 'Earnings', icon: Zap },
-  { id: 'options', label: 'Options', icon: Cpu },
-  { id: 'engine', label: 'Engine', icon: Activity },
-  { id: 'backtest', label: 'Backtest', icon: BarChart3 },
-  { id: 'chart', label: 'Chart', icon: LineChartIcon },
-  { id: 'regime', label: 'Regime', icon: Gauge },
-  { id: 'analysts', label: 'Analysts', icon: Brain },
-  { id: 'alerts', label: 'Alerts', icon: Bell },
-  { id: 'journal', label: 'Journal', icon: BookMarked },
-  { id: 'settings', label: 'Settings', icon: Settings },
-];
-
-const MobileBottomNav = ({ activeView, setActiveView }) => {
+const TopBar = ({ activeView, setActiveView, regime, universeStats }) => {
   const scrollerRef = React.useRef(null);
   const buttonRefs = React.useRef({});
 
-  // Auto-scroll the active tab into view (center it) whenever activeView changes.
-  // Runs on mount too so the first render lands on the right spot.
+  const views = [
+    { id: 'board', label: 'Target Board', shortLabel: 'Board', icon: Target },
+    { id: 'prophet', label: 'Prophet', shortLabel: 'Prophet', icon: Sparkles },
+    { id: 'catalyst', label: 'Catalyst', shortLabel: 'Catalyst', icon: Zap },
+    { id: 'williams', label: 'Williams', shortLabel: 'Williams', icon: Activity },
+    { id: 'lynch', label: 'Lynch', shortLabel: 'Lynch', icon: Shield },
+    { id: 'earnings', label: 'Earnings', shortLabel: 'Earnings', icon: Zap },
+    { id: 'options', label: 'Options Flow', shortLabel: 'Options', icon: Cpu },
+    { id: 'engine', label: 'Engine Test', shortLabel: 'Engine', icon: Activity },
+    { id: 'backtest', label: 'Backtest', shortLabel: 'Backtest', icon: BarChart3 },
+    { id: 'chart', label: 'Chart', shortLabel: 'Chart', icon: LineChartIcon },
+    { id: 'regime', label: 'Regime', shortLabel: 'Regime', icon: Gauge },
+    { id: 'analysts', label: 'Analysts', shortLabel: 'Analysts', icon: Brain },
+    { id: 'alerts', label: 'Alerts', shortLabel: 'Alerts', icon: Bell },
+    { id: 'journal', label: 'Journal', shortLabel: 'Journal', icon: BookMarked },
+    { id: 'settings', label: 'Settings', shortLabel: 'Settings', icon: Settings },
+  ];
+
+  // Auto-scroll the active tab into view (center it) whenever activeView changes
   React.useEffect(() => {
     const btn = buttonRefs.current[activeView];
     if (btn && btn.scrollIntoView) {
@@ -363,80 +362,14 @@ const MobileBottomNav = ({ activeView, setActiveView }) => {
     }
   }, [activeView]);
 
-  return (
-    <nav
-      className="sm:hidden fixed bottom-0 left-0 right-0 z-50 border-t border-neutral-800/80 bg-[#0a0b0d]/95 backdrop-blur-xl"
-      style={{ paddingBottom: 'env(safe-area-inset-bottom, 0px)' }}
-    >
-      {/* Edge fades to signal horizontal scrollability */}
-      <div className="absolute left-0 top-0 bottom-0 w-6 pointer-events-none z-10 bg-gradient-to-r from-[#0a0b0d] to-transparent" />
-      <div className="absolute right-0 top-0 bottom-0 w-6 pointer-events-none z-10 bg-gradient-to-l from-[#0a0b0d] to-transparent" />
-
-      <div
-        ref={scrollerRef}
-        className="flex w-full overflow-x-auto snap-x snap-mandatory"
-        style={{
-          scrollbarWidth: 'none',
-          msOverflowStyle: 'none',
-          WebkitOverflowScrolling: 'touch',
-          scrollPaddingInline: '24px',
-        }}
-      >
-        {/* Hide webkit scrollbar */}
-        <style>{`nav > div::-webkit-scrollbar{display:none}`}</style>
-
-        {MOBILE_NAV_VIEWS.map(v => {
-          const active = activeView === v.id;
-          return (
-            <button
-              key={v.id}
-              ref={(el) => { buttonRefs.current[v.id] = el; }}
-              onClick={() => setActiveView(v.id)}
-              className={`relative shrink-0 w-[68px] snap-center flex flex-col items-center justify-center gap-0.5 h-14 px-1 transition-colors ${
-                active
-                  ? 'text-emerald-400'
-                  : 'text-neutral-500 active:text-neutral-300'
-              }`}
-            >
-              {/* Top-edge active indicator — visible regardless of color contrast */}
-              {active && (
-                <span className="absolute top-0 left-1/2 -translate-x-1/2 h-[2px] w-7 bg-emerald-400 rounded-b-full" />
-              )}
-              <v.icon className={`h-[18px] w-[18px] flex-shrink-0 ${active ? 'stroke-[2.2]' : ''}`} />
-              <span className="text-[10px] font-medium tracking-tight">{v.label}</span>
-            </button>
-          );
-        })}
-      </div>
-    </nav>
-  );
-};
-
-const TopBar = ({ activeView, setActiveView, regime, universeStats }) => {
-  const views = [
-    { id: 'board', label: 'Target Board', icon: Target },
-    { id: 'prophet', label: 'Prophet', icon: Sparkles },
-    { id: 'catalyst', label: 'Catalyst', icon: Zap },
-    { id: 'williams', label: 'Williams', icon: Activity },
-    { id: 'lynch', label: 'Lynch', icon: Shield },
-    { id: 'earnings', label: 'Earnings', icon: Zap },
-    { id: 'options', label: 'Options Flow', icon: Cpu },
-    { id: 'engine', label: 'Engine Test', icon: Activity },
-    { id: 'backtest', label: 'Backtest', icon: BarChart3 },
-    { id: 'chart', label: 'Chart', icon: LineChartIcon },
-    { id: 'regime', label: 'Regime', icon: Gauge },
-    { id: 'analysts', label: 'Analysts', icon: Brain },
-    { id: 'alerts', label: 'Alerts', icon: Bell },
-    { id: 'journal', label: 'Journal', icon: BookMarked },
-    { id: 'settings', label: 'Settings', icon: Settings },
-  ];
+  const regimeLabel = (regime?.regime ?? 'neutral').replace(/_/g, ' ').toUpperCase();
 
   return (
     <header className="sticky top-0 z-40 border-b border-neutral-800/80 bg-[#0a0b0d]/95 backdrop-blur-xl">
-      <div className="flex items-center h-12 sm:h-[52px] px-3 sm:px-6 gap-3">
+      {/* Row 1: Logo (mobile-sized) */}
+      <div className="flex items-center h-10 sm:h-[52px] px-3 sm:px-6 gap-3 border-b border-neutral-800/40 sm:border-b-0">
         <Logo />
-
-        {/* Desktop / tablet nav (hidden on small screens — mobile uses bottom bar) */}
+        {/* Desktop: inline nav (tabs fit on one row) */}
         <nav className="hidden sm:block flex-1 min-w-0 overflow-x-auto scrollbar-hide">
           <div className="flex items-center justify-end gap-1 whitespace-nowrap">
             {views.map(v => (
@@ -455,12 +388,44 @@ const TopBar = ({ activeView, setActiveView, regime, universeStats }) => {
             ))}
           </div>
         </nav>
+      </div>
 
-        {/* Mobile: current view label on the right of the top bar */}
-        <div className="sm:hidden flex-1 flex justify-end items-center">
-          <div className="text-[12px] font-medium text-emerald-400 uppercase tracking-wider">
-            {views.find(v => v.id === activeView)?.label || ''}
-          </div>
+      {/* Row 2 (mobile only): horizontal scroll-snap tabs — same pattern as old bottom nav */}
+      <div className="sm:hidden relative">
+        <div className="absolute left-0 top-0 bottom-0 w-5 pointer-events-none z-10 bg-gradient-to-r from-[#0a0b0d] to-transparent" />
+        <div className="absolute right-0 top-0 bottom-0 w-5 pointer-events-none z-10 bg-gradient-to-l from-[#0a0b0d] to-transparent" />
+        <div
+          ref={scrollerRef}
+          className="flex w-full overflow-x-auto snap-x snap-mandatory"
+          style={{
+            scrollbarWidth: 'none',
+            msOverflowStyle: 'none',
+            WebkitOverflowScrolling: 'touch',
+            scrollPaddingInline: '20px',
+          }}
+        >
+          <style>{`header > div > div::-webkit-scrollbar{display:none}`}</style>
+          {views.map(v => {
+            const active = activeView === v.id;
+            return (
+              <button
+                key={v.id}
+                ref={(el) => { buttonRefs.current[v.id] = el; }}
+                onClick={() => setActiveView(v.id)}
+                className={`relative shrink-0 snap-center flex items-center justify-center gap-1.5 h-11 px-3.5 transition-colors ${
+                  active
+                    ? 'text-emerald-400'
+                    : 'text-neutral-500 active:text-neutral-300'
+                }`}
+              >
+                {active && (
+                  <span className="absolute bottom-0 left-1/2 -translate-x-1/2 h-[2px] w-7 bg-emerald-400 rounded-t-full" />
+                )}
+                <v.icon className={`h-[14px] w-[14px] flex-shrink-0 ${active ? 'stroke-[2.2]' : ''}`} />
+                <span className="text-[12px] font-medium tracking-tight whitespace-nowrap">{v.shortLabel}</span>
+              </button>
+            );
+          })}
         </div>
       </div>
 
@@ -468,21 +433,21 @@ const TopBar = ({ activeView, setActiveView, regime, universeStats }) => {
       <div className="h-8 border-t border-neutral-800/60 bg-[#090a0c] text-[11px] font-mono overflow-x-auto scrollbar-hide">
         <div className="flex items-center h-full gap-3 sm:gap-6 px-3 sm:px-6 text-neutral-400 whitespace-nowrap min-w-max">
           <div className="flex items-center gap-2">
-            <StatusDot status={regime.regime === 'risk_off' ? 'warning' : 'healthy'} />
+            <StatusDot status={regime?.regime === 'risk_off' ? 'warning' : 'healthy'} />
             <span className="uppercase tracking-wider">Regime</span>
             <span className={`font-medium ${
-              regime.regime === 'risk_on' ? 'text-emerald-400' :
-              regime.regime === 'risk_off' ? 'text-rose-400' : 'text-neutral-300'
+              regime?.regime === 'risk_on' ? 'text-emerald-400' :
+              regime?.regime === 'risk_off' ? 'text-rose-400' : 'text-neutral-300'
             }`}>
-              {regime.regime.replace('_', ' ').toUpperCase()}
+              {regimeLabel}
             </span>
           </div>
           <span className="text-neutral-700">│</span>
-          <div>VIX <span className="text-neutral-200">{regime.vol?.level?.toFixed(1)}</span></div>
+          <div>VIX <span className="text-neutral-200">{regime?.vol?.level?.toFixed(1) ?? '—'}</span></div>
           <span className="text-neutral-700">│</span>
-          <div>10Y <span className="text-neutral-200">{regime.rates?.tenYear?.toFixed(2)}%</span></div>
+          <div>10Y <span className="text-neutral-200">{regime?.rates?.tenYear?.toFixed(2) ?? '—'}%</span></div>
           <span className="text-neutral-700">│</span>
-          <div>2Y10Y <span className="text-neutral-200">{regime.rates?.twoTenSpread}bp</span> <span className="text-neutral-500">{regime.rates?.curveRegime}</span></div>
+          <div>2Y10Y <span className="text-neutral-200">{regime?.rates?.twoTenSpread ?? '—'}bp</span> <span className="text-neutral-500">{regime?.rates?.curveRegime ?? ''}</span></div>
           <span className="text-neutral-700">│</span>
           <div>
             <span className="uppercase tracking-wider">Universe</span>
@@ -1106,16 +1071,16 @@ const AnalystsView = ({ analysts }) => (
               <div>
                 <div className="text-[10px] uppercase tracking-widest text-neutral-500 font-mono">Accuracy 7d</div>
                 <div className={`font-mono text-lg mt-1 ${
-                  a.accuracy7d === null ? 'text-neutral-600' :
+                  !Number.isFinite(a.accuracy7d) ? 'text-neutral-600' :
                   a.accuracy7d >= 0.65 ? 'text-emerald-400' :
                   a.accuracy7d >= 0.55 ? 'text-sky-400' : 'text-amber-400'
                 }`}>
-                  {a.accuracy7d === null ? '—' : `${(a.accuracy7d * 100).toFixed(0)}%`}
+                  {Number.isFinite(a.accuracy7d) ? `${(a.accuracy7d * 100).toFixed(0)}%` : '—'}
                 </div>
               </div>
               <div>
                 <div className="text-[10px] uppercase tracking-widest text-neutral-500 font-mono">Cost 24h</div>
-                <div className="font-mono text-lg text-neutral-100 mt-1">${a.cost.toFixed(2)}</div>
+                <div className="font-mono text-lg text-neutral-100 mt-1">{Number.isFinite(a.cost) ? `$${a.cost.toFixed(2)}` : '—'}</div>
               </div>
             </div>
           </div>
@@ -1599,7 +1564,7 @@ const EarningsPlaysView = () => {
   const setups = data?.setups || [];
   const filtered = setups
     .filter(e => filter === 'all' || e.bias === filter)
-    .sort((a, b) => b.composite - a.composite);
+    .sort((a, b) => (b.composite ?? 0) - (a.composite ?? 0));
 
   return (
     <div className="p-4 sm:p-6 max-w-[1400px] mx-auto">
@@ -1678,10 +1643,11 @@ const EarningsPlaysView = () => {
             put_debit_spread: 'Put Debit Spread',
           }[e.strategy] || e.strategy;
           const biasColor = e.bias === 'sell_premium' ? '#4dbaf2' : '#14e89a';
-          const cardKey = e.ticker + e.reportDate;
+          const biasLabel = (e.bias ?? 'unknown').replace(/_/g, ' ');
+          const cardKey = `${e.ticker ?? '?'}|${e.reportDate ?? '?'}`;
           const isOpen = expandedKey === cardKey;
           const alreadyLogged = loggedIds.has(cardKey);
-          const moveRatio = (e.avgPriorMove !== null && e.expectedMove > 0)
+          const moveRatio = (Number.isFinite(e.avgPriorMove) && Number.isFinite(e.expectedMove) && e.expectedMove > 0)
             ? e.avgPriorMove / e.expectedMove : null;
           const handleLog = (ev) => {
             ev.stopPropagation();
@@ -1724,7 +1690,7 @@ const EarningsPlaysView = () => {
                   <div className="mt-2 flex items-center gap-2">
                     <span className="inline-flex items-center px-2 py-0.5 text-[10px] font-mono uppercase tracking-widest border"
                       style={{ color: biasColor, borderColor: biasColor + '55', background: biasColor + '15' }}>
-                      {e.bias.replace('_', ' ')}
+                      {biasLabel}
                     </span>
                     <span className="text-[12px] text-neutral-300">{strategyLabel}</span>
                     {alreadyLogged && (
@@ -1756,7 +1722,7 @@ const EarningsPlaysView = () => {
                 <div>
                   <div className="text-neutral-500 uppercase tracking-widest text-[9px]">Avg Prior Move</div>
                   <div className="text-neutral-200 text-sm">
-                    {e.avgPriorMove !== null ? e.avgPriorMove.toFixed(1) + '%' : '—'}
+                    {Number.isFinite(e.avgPriorMove) ? e.avgPriorMove.toFixed(1) + '%' : '—'}
                   </div>
                 </div>
               </div>
@@ -1782,8 +1748,8 @@ const EarningsPlaysView = () => {
                   <div className="text-[11px] text-neutral-400 leading-relaxed bg-neutral-900/40 border border-neutral-800 p-3">
                     <div className="font-mono uppercase tracking-widest text-[9px] text-neutral-500 mb-1">Strategy read</div>
                     {e.bias === 'sell_premium'
-                      ? `Iron Condor profits if ${e.ticker} stays within ±${e.expectedMove?.toFixed(1)}% of current price through ${e.reportDate}. Prior average move (${e.avgPriorMove !== null ? e.avgPriorMove.toFixed(1) + '%' : 'unknown'}) ${moveRatio !== null && moveRatio < 0.8 ? 'suggests overpriced IV — good setup' : moveRatio !== null && moveRatio > 1.2 ? 'suggests IV might be underpriced — caution' : 'is mixed'}. Size small — a single bad print eats several winners.`
-                      : `Long Straddle profits if ${e.ticker} moves MORE than ±${e.expectedMove?.toFixed(1)}% through ${e.reportDate}. Prior average move (${e.avgPriorMove !== null ? e.avgPriorMove.toFixed(1) + '%' : 'unknown'}) ${moveRatio !== null && moveRatio > 1.2 ? 'suggests realized moves typically exceed expected — edge intact' : moveRatio !== null && moveRatio < 0.8 ? 'suggests underwhelming prior reactions — risk of theta decay' : 'is mixed'}. Time the exit for day-of-print or day-after.`
+                      ? `Iron Condor profits if ${e.ticker} stays within ±${e.expectedMove?.toFixed(1)}% of current price through ${e.reportDate}. Prior average move (${Number.isFinite(e.avgPriorMove) ? e.avgPriorMove.toFixed(1) + '%' : 'unknown'}) ${moveRatio !== null && moveRatio < 0.8 ? 'suggests overpriced IV — good setup' : moveRatio !== null && moveRatio > 1.2 ? 'suggests IV might be underpriced — caution' : 'is mixed'}. Size small — a single bad print eats several winners.`
+                      : `Long Straddle profits if ${e.ticker} moves MORE than ±${e.expectedMove?.toFixed(1)}% through ${e.reportDate}. Prior average move (${Number.isFinite(e.avgPriorMove) ? e.avgPriorMove.toFixed(1) + '%' : 'unknown'}) ${moveRatio !== null && moveRatio > 1.2 ? 'suggests realized moves typically exceed expected — edge intact' : moveRatio !== null && moveRatio < 0.8 ? 'suggests underwhelming prior reactions — risk of theta decay' : 'is mixed'}. Time the exit for day-of-print or day-after.`
                     }
                   </div>
 
@@ -1955,7 +1921,7 @@ const OptionsPlaysView = () => {
             </button>
           ))}
           <span className="ml-auto text-neutral-600 text-[10px]">
-            {data.universeChecked} checked · {new Date(data.generatedAt).toLocaleTimeString()}
+            {data.universeChecked} checked · {(() => { const d = data.generatedAt ? new Date(data.generatedAt) : null; return d && !isNaN(d.getTime()) ? d.toLocaleTimeString() : '—'; })()}
           </span>
         </div>
       )}
@@ -2548,7 +2514,7 @@ export default function App() {
   }, []);
 
   return (
-    <div className="min-h-screen bg-[#050607] text-neutral-200 pb-16 sm:pb-0 overflow-x-hidden" style={{
+    <div className="min-h-screen bg-[#050607] text-neutral-200 overflow-x-hidden" style={{
       fontFamily: '"Sora", system-ui, sans-serif',
       backgroundImage: `
         radial-gradient(ellipse at top, rgba(20, 232, 154, 0.04) 0%, transparent 45%),
@@ -2601,8 +2567,6 @@ export default function App() {
       </main>
 
       <TargetDetail target={selectedTarget} onClose={() => setSelectedTarget(null)} />
-
-      <MobileBottomNav activeView={activeView} setActiveView={setActiveView} />
 
       <footer className="mt-16 py-6 border-t border-neutral-900 text-center">
         <div className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600">
