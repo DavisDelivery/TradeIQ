@@ -22,7 +22,7 @@ import { UniverseSelector, UNIVERSE_AWARE_VIEWS } from './components/UniverseSel
 import { readLog, logTrade, removeTrade, computeForwardReturns } from './tradeLog.js';
 import { validate, SHAPES } from './lib/validateResponse.js';
 
-const APP_VERSION = '0.7.17-alpha';
+const APP_VERSION = '0.7.18-alpha';
 
 // ======================================================================
 // ERROR BOUNDARY — catches React render errors in any child subtree and

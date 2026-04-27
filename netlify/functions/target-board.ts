@@ -22,7 +22,7 @@ import type { Bar } from './shared/data-provider';
 
 const PASS1_MAX = 80;
 const PASS2_MAX = 20;
-const SCAN_BUDGET_MS = 22_000;
+const SCAN_BUDGET_MS = 24_000;
 
 const resultCache = new Map<string, { data: any; at: number }>();
 const CACHE_TTL_MS = 10 * 60 * 1000;
@@ -81,12 +81,19 @@ export const handler: Handler = async (event) => {
     }
 
     const results: Target[] = [];
-    for (const t of survivors) {
+    // Run analysts in parallel chunks of 5 — each runAnalystsForTicker fans
+    // out to ~6 analysts but they share the bar cache, so most are fast.
+    // Sequential was the real bottleneck (1.5s × 20 tickers = 30s, blew our budget).
+    const ANALYST_CONCURRENCY = 5;
+    for (let i = 0; i < survivors.length; i += ANALYST_CONCURRENCY) {
       if (Date.now() - scanStart > SCAN_BUDGET_MS) break;
-      try {
-        const r = await runAnalystsForTicker({ ticker: t, barCache, macroBias });
-        if (r.target) results.push(r.target);
-      } catch { /* skip */ }
+      const chunk = survivors.slice(i, i + ANALYST_CONCURRENCY);
+      const settled = await Promise.allSettled(
+        chunk.map((t) => runAnalystsForTicker({ ticker: t, barCache, macroBias }))
+      );
+      for (const s of settled) {
+        if (s.status === 'fulfilled' && s.value.target) results.push(s.value.target);
+      }
     }
 
     results.sort((a, b) => b.composite - a.composite);
@@ -102,7 +109,11 @@ export const handler: Handler = async (event) => {
       cached: false,
     };
 
-    resultCache.set(cacheKey, { data: response, at: Date.now() });
+    // Only cache successful scans — don't poison the cache with empty results
+    // from cold-start timeouts that would lock us into 0 targets for 10 min.
+    if (results.length > 0) {
+      resultCache.set(cacheKey, { data: response, at: Date.now() });
+    }
     return json(200, response);
   } catch (err: any) {
     if (cached) return json(200, { ...cached.data, cached: true, stale: true, warning: String(err?.message ?? err) });
