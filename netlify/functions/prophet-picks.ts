@@ -32,8 +32,8 @@ const MODEL = 'claude-sonnet-4-6';
 
 // Hard time budget for the scan loop. Netlify function timeout is 26s; we need
 // buffer for response serialization + narrative calls on top.
-const SCAN_BUDGET_MS = 20_000;
-const NARRATIVE_BUDGET_MS = 4_000;
+const SCAN_BUDGET_MS = 18_000;
+const NARRATIVE_BUDGET_MS = 3_000;
 
 const headers = { 'Content-Type': 'application/json; charset=utf-8' };
 const json = (code: number, body: unknown) => ({
@@ -123,10 +123,9 @@ export const handler: Handler = async (event) => {
     sectorReturns.forEach((s, i) => { sectorRank[s.sector] = i + 1; });
 
     const picks: ProphetPick[] = [];
-    // Lower concurrency prevents the function's internal DNS resolver from saturating.
-    // Each ticker fires ~7 concurrent HTTPS calls (bars, fund, earnings, insider, political, gov, patent).
-    // At concurrency=10 that's 70 in-flight sockets, which triggers "DNS cache overflow" on Netlify.
-    const concurrency = 5;
+    // Concurrency 7 — sweet spot. At 5 we don't saturate; at 10+ we get DNS cache
+    // overflow on Netlify (each ticker fires ~7 concurrent HTTPS calls = 70 sockets).
+    const concurrency = 7;
     let tickersScanned = 0;
     let partial = false;
 
@@ -176,7 +175,12 @@ export const handler: Handler = async (event) => {
     }
 
     const generatedAt = new Date().toISOString();
-    resultCache.set(cacheKey, { picks, generatedAt, universeSize: scanUniverse.length, partial });
+    // Only cache successful scans — caching empty results poisons subsequent
+    // requests for the full TTL (20 min), locking users into 0 picks even after
+    // the cold-start penalty clears.
+    if (picks.length > 0) {
+      resultCache.set(cacheKey, { picks, generatedAt, universeSize: scanUniverse.length, partial });
+    }
 
     return json(200, {
       ok: true,
