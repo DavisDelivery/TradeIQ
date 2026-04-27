@@ -20,9 +20,9 @@ import { ProphetView } from './ProphetView.jsx';
 import { LogButton } from './components/LogButton.jsx';
 import { UniverseSelector, UNIVERSE_AWARE_VIEWS } from './components/UniverseSelector.jsx';
 import { readLog, logTrade, removeTrade, computeForwardReturns } from './tradeLog.js';
-import { validate, SHAPES } from './lib/validateResponse.js';
+import { validate, SHAPES, fetchWithRetry } from './lib/validateResponse.js';
 
-const APP_VERSION = '0.7.19-alpha';
+const APP_VERSION = '0.7.20-alpha';
 
 // ======================================================================
 // ERROR BOUNDARY — catches React render errors in any child subtree and
@@ -576,7 +576,7 @@ const LiveTargetBoard = ({ onOpenTarget, universe = 'all' }) => {
     setLoading(true);
     setError(null);
     try {
-      const r = await fetch(`/api/target-board?limit=50&universe=${universe}`);
+      const r = await fetchWithRetry(`/api/target-board?limit=50&universe=${universe}`);
       const json = await r.json();
       // Drop stale response if user has since tapped a different universe
       if (myId !== requestIdRef.current) return;

@@ -170,3 +170,39 @@ export async function fetchAndValidate(url, shape, endpoint) {
     return { data: null, error: err.message || 'fetch failed' };
   }
 }
+
+// Retry wrapper for transient Netlify edge errors. Specifically targets the
+// "DNS cache overflow" / 503 / 502 patterns that hit during cold-start of
+// large-universe scans. The function itself is healthy — Netlify's edge
+// proxy is just saying "try again in a sec."
+//
+// Strategy: 3 attempts total, exponential backoff (1s, 2.5s), only retries
+// on 502/503/504 or network errors. 4xx and 200-with-error-body are NOT
+// retried because they're real failures, not transient.
+export async function fetchWithRetry(url, { maxAttempts = 3, signal } = {}) {
+  let lastErr = null;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      const r = await fetch(url, { signal });
+      // 502/503/504 = retry; everything else (including 4xx) returns to caller
+      if ([502, 503, 504].includes(r.status) && attempt < maxAttempts) {
+        const wait = attempt === 1 ? 1000 : 2500;
+        console.warn(`[fetchWithRetry] ${url} got ${r.status}, retrying in ${wait}ms (${attempt}/${maxAttempts})`);
+        await new Promise((resolve) => setTimeout(resolve, wait));
+        continue;
+      }
+      return r;
+    } catch (err) {
+      lastErr = err;
+      // Network error — retry unless aborted
+      if (err.name === 'AbortError') throw err;
+      if (attempt < maxAttempts) {
+        const wait = attempt === 1 ? 1000 : 2500;
+        console.warn(`[fetchWithRetry] ${url} network error, retrying in ${wait}ms (${attempt}/${maxAttempts}):`, err.message);
+        await new Promise((resolve) => setTimeout(resolve, wait));
+        continue;
+      }
+    }
+  }
+  throw lastErr || new Error('fetchWithRetry exhausted retries');
+}

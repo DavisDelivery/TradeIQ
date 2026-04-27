@@ -9,7 +9,7 @@ import {
   ReferenceLine, Tooltip, CartesianGrid,
 } from 'recharts';
 import { LogButton } from './components/LogButton.jsx';
-import { validate, SHAPES } from './lib/validateResponse.js';
+import { validate, SHAPES, fetchWithRetry } from './lib/validateResponse.js';
 
 const UNIVERSE_OPTIONS = [
   { id: 'largecap', label: 'Large Cap', desc: 'S&P 500 + NDX + Dow (~230)' },
@@ -48,7 +48,7 @@ export const ProphetView = () => {
     setLoading(true); setError(null);
     try {
       const url = `/api/prophet-picks?universe=${universe}&minConviction=${minConviction}&limit=30`;
-      const r = await fetch(url);
+      const r = await fetchWithRetry(url);
       const ctype = r.headers.get('content-type') ?? '';
       if (!ctype.includes('json')) {
         const text = await r.text();
