@@ -18,6 +18,7 @@
 import type { Handler } from '@netlify/functions';
 import { UNIVERSE, inIndex, type IndexTag } from './shared/universe';
 import { getFinnhubInsiderTransactions } from './shared/data-provider';
+import { lookupInsiderRole } from './shared/edgar-roles';
 import type { InsiderBoardResponse, InsiderBoardRow } from './shared/types';
 
 const ALLOWED_WINDOWS = [30, 60, 90, 180] as const;
@@ -172,6 +173,30 @@ export const handler: Handler = async (event) => {
       return b.awardDollars - a.awardDollars;
     });
     const trimmed = rows.slice(0, limit);
+
+    // EDGAR enrichment — fill in topBuyer.role for visible rows only.
+    // Bounded to ~40 lookups per scan (limit caps at 200 but most queries
+    // request the default 100 rows and most rows don't have a topBuyer).
+    // Cached aggressively per (ticker, name) pair so repeat scans cost
+    // nothing. Falls through to the existing '—' placeholder on timeout
+    // or no-match. Never blocks the response — bounded by the per-lookup
+    // 1500ms timeout × concurrency 5.
+    const ROLE_ENRICHMENT_BUDGET_MS = 6000;
+    const roleStartedAt = Date.now();
+    const enrichTargets = trimmed.filter((r) => r.topBuyer !== null);
+    for (let i = 0; i < enrichTargets.length; i += 5) {
+      if (Date.now() - roleStartedAt > ROLE_ENRICHMENT_BUDGET_MS) break;
+      const chunk = enrichTargets.slice(i, i + 5);
+      const roles = await Promise.all(
+        chunk.map((r) => lookupInsiderRole(r.topBuyer!.name, r.ticker).catch(() => null))
+      );
+      for (let j = 0; j < chunk.length; j++) {
+        const role = roles[j];
+        if (role && chunk[j].topBuyer) {
+          chunk[j].topBuyer = { ...chunk[j].topBuyer!, role };
+        }
+      }
+    }
 
     const response: InsiderBoardResponse = {
       rows: trimmed,

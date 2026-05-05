@@ -25,6 +25,10 @@
 [functions."earnings-board"]
   timeout = 26
 
+# Catalyst board scans 100 tickers × 4 providers per cold call
+[functions."catalyst-board"]
+  timeout = 26
+
 # ==========================================================================
 # API redirects — rewrite /api/<endpoint> to /.netlify/functions/<endpoint>
 # ==========================================================================

@@ -56,12 +56,30 @@ export interface CatalystScoreInput {
   setups: TechnicalSetup[];
 }
 
+// IMPORTANT — weights rebalanced in v0.7.23 because Quiver's `allpatents`
+// dataset is subscription-gated on this account (returns 403). The patent
+// component therefore always returns score 50 / confidence 0.1, contributing
+// effectively nothing. Old weights summed to 1.0 with patent at 0.15; new
+// weights redistribute that 0.15 across the live signals proportionally to
+// their original allocation strength:
+//   - insider gets +0.07 (already the strongest signal; cluster-buy alpha
+//     is the most-replicated finding in this stack)
+//   - setup gets +0.05 (it's the timing layer that converts thesis into
+//     entries; doubling down on it tightens entry quality)
+//   - political gets +0.03 (the second-strongest data-backed signal —
+//     congressional senate alpha + lobbying-to-regulation studies)
+//   - contracts unchanged at 0.10 (the data is good but signal is sector-
+//     concentrated in defense/cloud/biotech and doesn't deserve more weight
+//     than insider/setup/political across the general market)
+//   - patent stays in the math at 0.0 — keeping it as a structural zero so
+//     re-enabling it later (Quiver tier upgrade or EDGAR direct) is one
+//     line, not a refactor
 const WEIGHTS = {
-  insider: 0.35,
-  patent: 0.15,
-  political: 0.15,
-  contracts: 0.10,
-  setup: 0.25,
+  insider: 0.42,    // was 0.35 — primary signal
+  setup: 0.30,      // was 0.25 — timing amplifier
+  political: 0.18,  // was 0.15
+  contracts: 0.10,  // unchanged
+  patent: 0.00,     // was 0.15, dataset gated
 };
 
 export function scoreCatalysts(input: CatalystScoreInput): CatalystScore {

@@ -17,6 +17,7 @@
 // and net-dollars signals which Finnhub does carry cleanly.
 
 import { getFinnhubInsiderTransactions, type FinnhubInsiderTx } from './data-provider';
+import { lookupInsiderRole } from './edgar-roles';
 
 export interface InsiderTransaction {
   name: string; share: number; change: number;
@@ -81,6 +82,39 @@ export async function getInsiderActivity(
     const buyDollars = buys.reduce((a, t) => a + t.share * t.transactionPrice, 0);
     const sellDollars = sells.reduce((a, t) => a + Math.abs(t.share) * t.transactionPrice, 0);
     const uniqueBuyers = new Set(buys.map((t) => t.name)).size;
+
+    // EDGAR role enrichment — fills in the `position` field on each buy
+    // so scoreInsiderActivity's C-suite detection (regex match on position)
+    // can fire. Bounded by a tight 2s budget to keep catalyst-board's
+    // per-ticker scan fast. Falls through silently on timeout — the
+    // unenriched path still produces a valid score, just without the
+    // C-suite +15 bonus.
+    if (buys.length > 0 && buys.length <= 10) {
+      try {
+        const uniqueNames = Array.from(new Set(buys.map((b) => b.name)));
+        const ENRICH_BUDGET_MS = 2000;
+        const enrichStarted = Date.now();
+        const roleByName = new Map<string, string | null>();
+        // Limit to 5 unique names per ticker to bound the work — the top 5
+        // by frequency are the ones most likely to be C-suite anyway.
+        const namesToLookup = uniqueNames.slice(0, 5);
+        await Promise.all(
+          namesToLookup.map(async (n) => {
+            if (Date.now() - enrichStarted > ENRICH_BUDGET_MS) return;
+            const role = await lookupInsiderRole(n, ticker).catch(() => null);
+            if (role) roleByName.set(n, role);
+          }),
+        );
+        // Fill enriched roles back onto the buy transactions
+        for (const b of buys) {
+          const r = roleByName.get(b.name);
+          if (r) b.position = r;
+        }
+      } catch {
+        // Swallow — score still works without role data
+      }
+    }
+
     const clusters = detectClusters(buys);
 
     const latest = buys.length
