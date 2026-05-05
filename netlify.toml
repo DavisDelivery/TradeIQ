@@ -17,6 +17,14 @@
 [functions."target-board"]
   timeout = 26
 
+# Insider board scans up to 120 tickers via Quiver — give it room
+[functions."insider-board"]
+  timeout = 26
+
+# Earnings board fetches Finnhub calendar + per-ticker bars + history
+[functions."earnings-board"]
+  timeout = 26
+
 # ==========================================================================
 # API redirects — rewrite /api/<endpoint> to /.netlify/functions/<endpoint>
 # ==========================================================================
@@ -69,6 +77,11 @@
 [[redirects]]
   from = "/api/catalyst-board"
   to = "/.netlify/functions/catalyst-board"
+  status = 200
+
+[[redirects]]
+  from = "/api/insider-board"
+  to = "/.netlify/functions/insider-board"
   status = 200
 
 [[redirects]]
