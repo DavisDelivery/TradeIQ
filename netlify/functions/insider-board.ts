@@ -43,8 +43,11 @@ export const handler: Handler = async (event) => {
     const tickers = indexFilter === 'all' ? UNIVERSE : inIndex(indexFilter);
     if (tickers.length === 0) return json(400, { error: `unknown index: ${indexFilter}` });
 
-    // Cap at 120 tickers per scan to fit the 26s budget.
-    const scanList = tickers.slice(0, Math.min(tickers.length, 120));
+    // Cap at 80 tickers per scan. Finnhub's free-tier limit is 60 req/min and
+    // earnings-board may also be hitting Finnhub from the same user session;
+    // 80 here + 25 from earnings-board calendar+history leaves margin under
+    // the 60/min ceiling once concurrency staggers requests.
+    const scanList = tickers.slice(0, Math.min(tickers.length, 80));
     const now = Date.now();
     const cutoffTs = now - windowDays * 86400000;
 

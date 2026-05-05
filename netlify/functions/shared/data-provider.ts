@@ -234,7 +234,15 @@ export async function getEarningsCalendarRange(
     const to = new Date(Date.now() + daysAhead * 86400000).toISOString().slice(0, 10);
     const url = `${FINNHUB}/calendar/earnings?from=${from}&to=${to}&token=${finnhubKey()}`;
     const res = await fetch(url);
-    if (!res.ok) return [];
+    if (!res.ok) {
+      // 429 from Finnhub means the per-minute limit was hit by an adjacent
+      // function in the same cold-start. Log it so deploys surface this in
+      // function logs instead of silently returning empty.
+      if (res.status === 429) {
+        console.warn('[earnings-cal] Finnhub 429 rate-limited; returning empty so caller skips cache');
+      }
+      return [];
+    }
     const data = (await res.json()) as { earningsCalendar?: any[] };
     return (data.earningsCalendar ?? []).map((e) => ({
       ticker: e.symbol,
@@ -304,7 +312,12 @@ export async function getFinnhubInsiderTransactions(
     const to = new Date().toISOString().slice(0, 10);
     const url = `${FINNHUB}/stock/insider-transactions?symbol=${encodeURIComponent(ticker)}&from=${from}&to=${to}&token=${finnhubKey()}`;
     const res = await fetch(url);
-    if (!res.ok) return [];
+    if (!res.ok) {
+      if (res.status === 429) {
+        console.warn(`[insider-tx] Finnhub 429 on ${ticker}; returning empty`);
+      }
+      return [];
+    }
     const data = (await res.json()) as { data?: any[] };
     const rows = Array.isArray(data?.data) ? data.data : [];
     return rows
