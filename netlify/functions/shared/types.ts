@@ -94,10 +94,44 @@ export type EarningsPlayType =
 
 export interface PlayTriggers {
   entry: string;        // "above pre-earnings high on volume"
-  stop: number | null;  // dollar level
+  stop: number | null;  // dollar level (stock price; meaningful for directional/PEAD/reversal)
   targets: { t1: number | null; t2: number | null; t3: number | null };
   riskReward: number | null;
   positionSizePct: number; // 0.5% for vol, 1% for directional
+  // v0.7.24+ options-aware fields (populated for long_volatility / short_volatility)
+  options?: OptionsPlay;
+  // v0.7.24+ broker-mechanic step-by-step execution guide
+  executionSteps?: ExecutionStep[];
+}
+
+export interface OptionsLeg {
+  action: 'buy' | 'sell';
+  optionType: 'call' | 'put';
+  strike: number;
+  // Quantity is computed client-side from account size; server provides
+  // the leg ratio (always 1:1 in our setups, but kept for future combos).
+  ratio: number;
+}
+
+export interface OptionsPlay {
+  structure: 'long_straddle' | 'long_strangle' | 'iron_condor';
+  expiry: string;          // ISO date — recommended expiry (nearest weekly post-earnings)
+  legs: OptionsLeg[];
+  // Estimated economics. These come from the IV-based EM and our scoring;
+  // actual fills will differ. Frontend should show "est." prefix.
+  estDebitPerContract?: number | null;   // long_volatility: amount paid per straddle/strangle
+  estCreditPerContract?: number | null;  // short_volatility: credit collected per IC
+  wingWidth?: number | null;             // iron_condor only: distance between short and long strikes
+  maxProfitPerContract: number | null;
+  maxLossPerContract: number | null;
+  breakevens: number[];                  // 1 for directional, 2 for IC/straddle
+  profitTakeAt: number;                  // % of max profit to close (0.5 = 50%)
+}
+
+export interface ExecutionStep {
+  n: number;
+  title: string;       // short, e.g. "Set up combo order"
+  detail: string;      // 1-2 sentence broker-agnostic instruction
 }
 
 export interface HistoricalEdge {

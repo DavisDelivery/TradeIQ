@@ -14,7 +14,7 @@ import { getEarningsCalendarRange, getDailyBars, getEarningsHistory, getUpcoming
 import { CORE_WATCHLIST, UNIVERSE } from './shared/universe';
 import type {
   EarningsBoardResponse, EarningsSetup, EarningsPlayType,
-  PlayTriggers, HistoricalEdge,
+  PlayTriggers, HistoricalEdge, ExecutionStep,
 } from './shared/types';
 
 // Per-window result cache. Key is windowDays.
@@ -219,7 +219,7 @@ export const handler: Handler = async (event) => {
             composite = Math.max(0, Math.min(100, composite));
 
             // ---- Triggers, stops, targets ----
-            const triggers = computeTriggers(playType, latest.c, expectedMove, bars);
+            const triggers = computeTriggers(playType, latest.c, expectedMove, bars, e.date);
 
             // ---- Historical edge ----
             const historicalEdge = computeHistoricalEdge(playType, history, priorMovesSigned);
@@ -296,6 +296,7 @@ function computeTriggers(
   price: number,
   expectedMove: number,
   bars: { o: number; h: number; l: number; c: number; t: number; v?: number }[],
+  reportDateIso: string,
 ): PlayTriggers {
   const last20 = bars.slice(-20);
   const high20 = last20.length ? Math.max(...last20.map((b) => b.h)) : price;
@@ -308,24 +309,158 @@ function computeTriggers(
   let t2: number | null = null;
   let t3: number | null = null;
   let positionSizePct = 0.5;
+  let options: PlayTriggers['options'];
+  let executionSteps: PlayTriggers['executionSteps'];
+
+  // Recommended expiry: nearest weekly Friday after the report date. If
+  // we can't parse the report date cleanly, fall back to "+8 days".
+  const expiry = nearestPostEarningsExpiry(reportDateIso);
 
   switch (playType) {
     case 'long_volatility': {
       entry = `Buy ATM straddle 1-3d before print`;
-      stop = +(price * (1 - emPct * 0.6)).toFixed(2);
-      t1 = +(price * (1 + emPct * 1.2)).toFixed(2);
-      t2 = +(price * (1 + emPct * 1.6)).toFixed(2);
-      t3 = +(price * (1 + emPct * 2.0)).toFixed(2);
+      // For vol plays, stock-price stop/T1-T3 don't represent real PnL
+      // (the option's value is what matters, not the underlying's price).
+      // Leave them null so the UI doesn't show misleading numbers.
       positionSizePct = 0.5;
+
+      const atmStrike = roundStrike(price);
+      // Estimated debit: rough approximation, ATM straddle ≈ 0.8 × EM × price
+      // for short-dated options (Black-Scholes ATM IV approximation).
+      const estDebit = +(0.8 * emPct * price).toFixed(2);
+      const beUp = +(atmStrike + estDebit).toFixed(2);
+      const beDn = +(atmStrike - estDebit).toFixed(2);
+
+      options = {
+        structure: 'long_straddle',
+        expiry,
+        legs: [
+          { action: 'buy', optionType: 'call', strike: atmStrike, ratio: 1 },
+          { action: 'buy', optionType: 'put', strike: atmStrike, ratio: 1 },
+        ],
+        estDebitPerContract: estDebit,
+        estCreditPerContract: null,
+        wingWidth: null,
+        // Long straddle: max profit unbounded (capped at huge stock move),
+        // max loss = debit paid.
+        maxProfitPerContract: null, // unbounded
+        maxLossPerContract: +(estDebit * 100).toFixed(0),
+        breakevens: [beDn, beUp],
+        profitTakeAt: 0.5, // close at +50% on debit
+      };
+
+      executionSteps = [
+        {
+          n: 1,
+          title: 'Confirm timing',
+          detail: `Place this trade 1-2 trading days BEFORE the ${reportDateIso} report. Avoid same-day entries — IV will already be peaking and your fill will be poor.`,
+        },
+        {
+          n: 2,
+          title: 'Pick expiry',
+          detail: `Use the weekly expiring ${expiry} (the first Friday after the report). This captures the IV crush you're trying to avoid by being long.`,
+        },
+        {
+          n: 3,
+          title: 'Build the straddle',
+          detail: `In your broker's option chain, buy 1 ATM call AT $${atmStrike.toFixed(2)} strike and 1 ATM put AT $${atmStrike.toFixed(2)} strike, same expiry. Use a single combo/multi-leg ticket if available.`,
+        },
+        {
+          n: 4,
+          title: 'Order type',
+          detail: `Limit order at the mid (between bid and ask). If not filled in 30s, walk the price up by $0.05 increments. Estimated debit: ~$${estDebit.toFixed(2)} per straddle (= $${(estDebit * 100).toFixed(0)} per contract).`,
+        },
+        {
+          n: 5,
+          title: 'Size the position',
+          detail: `Risk no more than 0.5% of account on this trade. Max loss per straddle is the debit ($${(estDebit * 100).toFixed(0)}). Number of contracts = floor(account × 0.5% ÷ $${(estDebit * 100).toFixed(0)}).`,
+        },
+        {
+          n: 6,
+          title: 'Set exits',
+          detail: `Plan A: close at +50% on the debit (sell straddle for ~$${(estDebit * 1.5).toFixed(2)}). Plan B: stop out if either leg loses ≥40% before earnings — that means IV is collapsing without a move, exit fast. Plan C: close 1 day after earnings regardless — you don't want to hold theta decay into the weekend.`,
+        },
+        {
+          n: 7,
+          title: 'Breakevens',
+          detail: `Stock needs to move outside $${beDn.toFixed(2)} - $${beUp.toFixed(2)} (±$${estDebit.toFixed(2)} from $${atmStrike.toFixed(2)}) at expiry to be in profit. History suggests it will (long vol is the play here because expected move underprices realized).`,
+        },
+      ];
       break;
     }
     case 'short_volatility': {
-      entry = `Sell iron condor wings at \u00b1${(emPct * 1.2 * 100).toFixed(0)}% strikes, 1d before print`;
-      stop = +(price * (1 + emPct * 1.5)).toFixed(2);
-      t1 = +(price * (1 - emPct * 0.3)).toFixed(2);
-      t2 = price;
-      t3 = +(price * (1 + emPct * 0.3)).toFixed(2);
+      entry = `Sell iron condor at \u00b1${(emPct * 1.2 * 100).toFixed(0)}% strikes, 1d before print`;
       positionSizePct = 0.5;
+
+      // IC strikes: short legs ±1.2× EM, long legs ±1.7× EM (wing width ~0.5× EM)
+      const shortPutStrike = roundStrike(price * (1 - emPct * 1.2));
+      const shortCallStrike = roundStrike(price * (1 + emPct * 1.2));
+      const longPutStrike = roundStrike(price * (1 - emPct * 1.7));
+      const longCallStrike = roundStrike(price * (1 + emPct * 1.7));
+      const wingWidth = +(shortPutStrike - longPutStrike).toFixed(2);
+      // Estimated credit ~ 25% of wing width for short-dated ICs around earnings
+      // (with rich IV — typical IC at 1SD shorts collects 25-35% of width).
+      const estCredit = +(wingWidth * 0.30).toFixed(2);
+      const maxProfit = +(estCredit * 100).toFixed(0);
+      const maxLoss = +((wingWidth - estCredit) * 100).toFixed(0);
+      const beLow = +(shortPutStrike - estCredit).toFixed(2);
+      const beHigh = +(shortCallStrike + estCredit).toFixed(2);
+
+      options = {
+        structure: 'iron_condor',
+        expiry,
+        legs: [
+          { action: 'buy', optionType: 'put', strike: longPutStrike, ratio: 1 },
+          { action: 'sell', optionType: 'put', strike: shortPutStrike, ratio: 1 },
+          { action: 'sell', optionType: 'call', strike: shortCallStrike, ratio: 1 },
+          { action: 'buy', optionType: 'call', strike: longCallStrike, ratio: 1 },
+        ],
+        estDebitPerContract: null,
+        estCreditPerContract: estCredit,
+        wingWidth,
+        maxProfitPerContract: maxProfit,
+        maxLossPerContract: maxLoss,
+        breakevens: [beLow, beHigh],
+        profitTakeAt: 0.5,
+      };
+
+      executionSteps = [
+        {
+          n: 1,
+          title: 'Confirm timing',
+          detail: `Place this trade 1 trading day BEFORE the ${reportDateIso} report close. IV will be at its peak that afternoon — the credit you collect is what justifies this whole trade.`,
+        },
+        {
+          n: 2,
+          title: 'Pick expiry',
+          detail: `Use the weekly expiring ${expiry} (the first Friday after the report). The IV crush at open the next day is what generates your profit.`,
+        },
+        {
+          n: 3,
+          title: 'Build the iron condor (4 legs, single ticket)',
+          detail: `In your broker's option chain, build a 4-leg combo: BUY 1 put $${longPutStrike.toFixed(2)} / SELL 1 put $${shortPutStrike.toFixed(2)} / SELL 1 call $${shortCallStrike.toFixed(2)} / BUY 1 call $${longCallStrike.toFixed(2)}. All same expiry. Most brokers (TastyTrade, IBKR, ToS, Fidelity ATP) have an "Iron Condor" preset.`,
+        },
+        {
+          n: 4,
+          title: 'Order type & target credit',
+          detail: `Limit order at the mid. Aim for a credit of ~$${estCredit.toFixed(2)} per IC (=$${maxProfit} max profit per contract). Walk the price down by $0.05 if not filled in 30s. Don't accept less than 1/4 of wing width ($${(wingWidth * 0.25).toFixed(2)}) — if IV isn't rich enough to give you that, the trade thesis is invalid.`,
+        },
+        {
+          n: 5,
+          title: 'Size the position',
+          detail: `Risk no more than 0.5% of account. Max loss per IC = $${maxLoss}. Number of contracts = floor(account × 0.5% ÷ $${maxLoss}). Margin requirement is the max loss × contracts.`,
+        },
+        {
+          n: 6,
+          title: 'Set exits',
+          detail: `Plan A: close at 50% of max profit (buy back the IC for ~$${(estCredit * 0.5).toFixed(2)} debit) — usually achievable the morning after earnings. Plan B: close immediately if stock breaks $${shortPutStrike.toFixed(2)} or $${shortCallStrike.toFixed(2)} (the short strikes) — don't let it run to your long strikes. Plan C: close at expiry if it's coasting toward zero.`,
+        },
+        {
+          n: 7,
+          title: 'Breakevens & risk zone',
+          detail: `Profitable if stock stays between $${beLow.toFixed(2)} - $${beHigh.toFixed(2)} at expiry. Max loss ($${maxLoss}) hits if stock closes outside $${longPutStrike.toFixed(2)} - $${longCallStrike.toFixed(2)}. R:R is intentionally lopsided (you risk $${(maxLoss/maxProfit).toFixed(1)}× to make 1×) — the edge is win rate, not payoff size.`,
+        },
+      ];
       break;
     }
     case 'directional_long': {
@@ -335,6 +470,7 @@ function computeTriggers(
       t2 = +(price * 1.10).toFixed(2);
       t3 = +(price * 1.18).toFixed(2);
       positionSizePct = 1.0;
+      executionSteps = directionalSteps('long', price, stop, t1, t2, t3, high20, reportDateIso);
       break;
     }
     case 'directional_short': {
@@ -344,6 +480,7 @@ function computeTriggers(
       t2 = +(price * 0.90).toFixed(2);
       t3 = +(price * 0.82).toFixed(2);
       positionSizePct = 1.0;
+      executionSteps = directionalSteps('short', price, stop, t1, t2, t3, low20, reportDateIso);
       break;
     }
     case 'pead_long': {
@@ -353,6 +490,7 @@ function computeTriggers(
       t2 = +(price * 1.12).toFixed(2);
       t3 = +(price * 1.20).toFixed(2);
       positionSizePct = 1.0;
+      executionSteps = peadSteps('long', price, stop, t1, t2, t3);
       break;
     }
     case 'pead_short': {
@@ -362,6 +500,7 @@ function computeTriggers(
       t2 = +(price * 0.88).toFixed(2);
       t3 = +(price * 0.80).toFixed(2);
       positionSizePct = 1.0;
+      executionSteps = peadSteps('short', price, stop, t1, t2, t3);
       break;
     }
     case 'reversal': {
@@ -371,6 +510,7 @@ function computeTriggers(
       t2 = +(price * 0.94).toFixed(2);
       t3 = +(price * 0.90).toFixed(2);
       positionSizePct = 0.5;
+      executionSteps = reversalSteps(price, stop, t1, t2, t3);
       break;
     }
     default: {
@@ -379,14 +519,192 @@ function computeTriggers(
     }
   }
 
+  // R:R only meaningful for directional/PEAD/reversal where stop and t1 are
+  // stock prices. For options plays, R:R lives in options.maxProfit/maxLoss
+  // and is intentionally not surfaced here (would be misleading).
   let riskReward: number | null = null;
-  if (stop !== null && t1 !== null && stop !== price) {
+  if (!options && stop !== null && t1 !== null && stop !== price) {
     const reward = Math.abs(t1 - price);
     const risk = Math.abs(price - stop);
     riskReward = risk > 0 ? +(reward / risk).toFixed(2) : null;
   }
 
-  return { entry, stop, targets: { t1, t2, t3 }, riskReward, positionSizePct };
+  return {
+    entry,
+    stop,
+    targets: { t1, t2, t3 },
+    riskReward,
+    positionSizePct,
+    options,
+    executionSteps,
+  };
+}
+
+// Strikes round to common increments. $0.50 spacing under $25, $1 under $200,
+// $2.50 above. Reasonable approximation; actual chains may differ.
+function roundStrike(price: number): number {
+  if (price < 25) return Math.round(price * 2) / 2;       // $0.50
+  if (price < 200) return Math.round(price);              // $1.00
+  return Math.round(price / 2.5) * 2.5;                   // $2.50
+}
+
+// Find the nearest Friday strictly after the report date. Earnings post AMC
+// will print after-hours that day; the next Friday's weekly captures the move.
+// Falls back to report-date + 8 days if parsing fails.
+function nearestPostEarningsExpiry(reportDateIso: string): string {
+  try {
+    const d = new Date(reportDateIso);
+    if (Number.isNaN(d.getTime())) throw new Error('bad date');
+    // Walk forward to the next Friday (UTC day 5)
+    do {
+      d.setUTCDate(d.getUTCDate() + 1);
+    } while (d.getUTCDay() !== 5);
+    return d.toISOString().slice(0, 10);
+  } catch {
+    const d = new Date(Date.now() + 8 * 86400000);
+    return d.toISOString().slice(0, 10);
+  }
+}
+
+function directionalSteps(
+  side: 'long' | 'short',
+  price: number,
+  stop: number,
+  t1: number,
+  t2: number,
+  t3: number,
+  trigger: number,
+  reportDateIso: string,
+): ExecutionStep[] {
+  const verb = side === 'long' ? 'BUY' : 'SHORT';
+  const direction = side === 'long' ? 'rises above' : 'breaks below';
+  const stopWord = side === 'long' ? 'falls below' : 'rises above';
+  return [
+    {
+      n: 1,
+      title: 'Wait for the trigger',
+      detail: `Don't enter pre-emptively. Place a stop-${side === 'long' ? 'buy' : 'sell'} order so you're only filled if the stock ${direction} $${trigger.toFixed(2)} on volume (≥1.3× 20-day average).`,
+    },
+    {
+      n: 2,
+      title: 'Confirm with volume',
+      detail: `Once the trigger fires, check that the breakout candle has higher volume than the prior 5 sessions. Low-volume breaks fail ~60% of the time.`,
+    },
+    {
+      n: 3,
+      title: 'Enter the position',
+      detail: `${verb} shares at market or with a tight limit. Earnings is ${reportDateIso} — if the trade fires within 1-2 days of that, also consider buying ATM calls (long) / puts (short) to add convex exposure to the move.`,
+    },
+    {
+      n: 4,
+      title: 'Size the position',
+      detail: `Risk no more than 1% of account. Max loss per share = $${Math.abs(price - stop).toFixed(2)} (entry to stop). Shares = floor(account × 1% ÷ $${Math.abs(price - stop).toFixed(2)}).`,
+    },
+    {
+      n: 5,
+      title: 'Set the stop',
+      detail: `Hard stop at $${stop.toFixed(2)} (${side === 'long' ? '20d low' : '20d high'} — beyond this, the breakout thesis is invalid). Use a stop-${side === 'long' ? 'sell' : 'buy'} order, not a mental stop.`,
+    },
+    {
+      n: 6,
+      title: 'Scale out at targets',
+      detail: `Sell 1/3 at $${t1.toFixed(2)} (T1, +5% / -5%). Sell another 1/3 at $${t2.toFixed(2)} (T2). Trail the final 1/3 with a stop ${side === 'long' ? 'below' : 'above'} the prior swing low/high until it stops out, ideally near $${t3.toFixed(2)}.`,
+    },
+    {
+      n: 7,
+      title: 'Time horizon',
+      detail: `This is a 5-15 day swing. If the trade hasn't moved 2× ATR by day 5, exit — momentum has stalled and the edge has decayed.`,
+    },
+  ];
+}
+
+function peadSteps(
+  side: 'long' | 'short',
+  price: number,
+  stop: number,
+  t1: number,
+  t2: number,
+  t3: number,
+): ExecutionStep[] {
+  const verb = side === 'long' ? 'BUY' : 'SHORT';
+  return [
+    {
+      n: 1,
+      title: 'Wait for the post-print pullback',
+      detail: `Don't chase the gap on day 1. Wait 2-5 trading days for the stock to retest the post-print breakout (long) or breakdown (short) level. PEAD works because the drift is slow and persistent — patience is a feature.`,
+    },
+    {
+      n: 2,
+      title: 'Confirm the retest holds',
+      detail: `Look for a candle that touches the breakout level and closes ${side === 'long' ? 'above' : 'below'} it on rising volume. That's the entry signal.`,
+    },
+    {
+      n: 3,
+      title: 'Enter the position',
+      detail: `${verb} shares at market. For larger positions, scale in: 1/2 at the retest, 1/2 on confirmation 1-2 days later. Calls/puts work too but PEAD is a 30-60d trade and theta will eat short-dated options — use 60+ DTE if going options.`,
+    },
+    {
+      n: 4,
+      title: 'Size the position',
+      detail: `Risk no more than 1% of account. Max loss per share = $${Math.abs(price - stop).toFixed(2)}. Shares = floor(account × 1% ÷ $${Math.abs(price - stop).toFixed(2)}).`,
+    },
+    {
+      n: 5,
+      title: 'Set the stop',
+      detail: `Hard stop at $${stop.toFixed(2)} (a 6% adverse move is a "the gap was a fake" signal). PEAD that fails, fails fast — don't hold beyond the stop.`,
+    },
+    {
+      n: 6,
+      title: 'Scale out at targets',
+      detail: `Sell 1/3 at $${t1.toFixed(2)} (≈+/-6%). Sell 1/3 at $${t2.toFixed(2)} (≈+/-12%). Trail the rest with a stop ${side === 'long' ? 'below' : 'above'} the 20d MA.`,
+    },
+    {
+      n: 7,
+      title: 'Time horizon',
+      detail: `30-60 trading days max. If it hasn't reached T1 in 30 days, the drift signal has decayed — exit and free up the capital.`,
+    },
+  ];
+}
+
+function reversalSteps(
+  price: number,
+  stop: number,
+  t1: number,
+  t2: number,
+  t3: number,
+): ExecutionStep[] {
+  return [
+    {
+      n: 1,
+      title: 'Wait for day 2-3 reversal candle',
+      detail: `Don't fade day 1 of an earnings gap. Wait for day 2 or 3 — look for a candle that opens at the prior day's close, runs up, then closes weak (long upper wick on a gap-up). That's the exhaustion signal.`,
+    },
+    {
+      n: 2,
+      title: 'Enter on confirmation',
+      detail: `SHORT shares (or buy short-dated puts at ATM strike, ~5-10 DTE) once the reversal candle prints. Don't wait for the next session — gaps fade fastest in the first few days.`,
+    },
+    {
+      n: 3,
+      title: 'Size the position',
+      detail: `Risk 0.5% of account (smaller than directional plays — reversals are higher-variance). Max loss per share = $${Math.abs(price - stop).toFixed(2)}. Shares = floor(account × 0.5% ÷ $${Math.abs(price - stop).toFixed(2)}).`,
+    },
+    {
+      n: 4,
+      title: 'Set the stop',
+      detail: `Hard stop at $${stop.toFixed(2)} (4% beyond entry). If the gap continues, the trade is wrong and the bull/bear trap thesis is invalid.`,
+    },
+    {
+      n: 5,
+      title: 'Scale out aggressively',
+      detail: `Take 1/2 at $${t1.toFixed(2)} (-3%) — this is the high-probability target. Take 1/4 at $${t2.toFixed(2)} (-6%). Let the last 1/4 run toward $${t3.toFixed(2)} with a trailing stop. Don't be greedy — gap fades complete in 5-10 days.`,
+    },
+    {
+      n: 6,
+      title: 'Time horizon',
+      detail: `5-10 trading days. If price hasn't moved toward T1 within 5 days, exit at break-even — the fade thesis has expired.`,
+    },
+  ];
 }
 
 function computeHistoricalEdge(
