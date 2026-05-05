@@ -23,7 +23,22 @@ export async function quiverGet<T = any>(
     const res = await fetch(url, {
       headers: { Accept: 'application/json', Authorization: `Token ${quiverKey()}` },
     });
-    if (!res.ok) { cache.set(url, { data: null, at: Date.now() }); return null; }
+    if (!res.ok) {
+      // Tier-gated datasets (the account's plan doesn't include this endpoint)
+      // return 403 with body {"detail": "Upgrade your subscription plan..."}.
+      // Path-not-found returns 404. Log both — silent null returns made it
+      // impossible to tell why the catalyst board's insider scoring was zero
+      // for a year before we caught it. Logging is per-cold-start (cached
+      // null below means we don't spam).
+      if (res.status === 403) {
+        console.warn(`[quiver] 403 (subscription gate) on ${path} — dataset not available on this plan`);
+      } else if (res.status === 404) {
+        console.warn(`[quiver] 404 on ${path} — endpoint path may have changed`);
+      } else if (res.status === 429) {
+        console.warn(`[quiver] 429 rate-limited on ${path}`);
+      }
+      cache.set(url, { data: null, at: Date.now() }); return null;
+    }
     const ctype = res.headers.get('content-type') ?? '';
     if (!ctype.toLowerCase().includes('json')) {
       cache.set(url, { data: null, at: Date.now() }); return null;

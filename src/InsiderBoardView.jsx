@@ -169,6 +169,7 @@ export const InsiderBoardView = ({ universe = 'all' }) => {
                 <th className="text-left px-3 py-2.5 w-10"></th>
                 <SortableTh sortKey={sortKey} sortDir={sortDir} sortBy={sortBy} field="ticker" align="left">Ticker</SortableTh>
                 <SortableTh sortKey={sortKey} sortDir={sortDir} sortBy={sortBy} field="buyDollars" align="right">$ Bought</SortableTh>
+                <SortableTh sortKey={sortKey} sortDir={sortDir} sortBy={sortBy} field="awardDollars" align="right">$ Awards</SortableTh>
                 <SortableTh sortKey={sortKey} sortDir={sortDir} sortBy={sortBy} field="sellDollars" align="right">$ Sold</SortableTh>
                 <SortableTh sortKey={sortKey} sortDir={sortDir} sortBy={sortBy} field="netDollars" align="right">Net</SortableTh>
                 <SortableTh sortKey={sortKey} sortDir={sortDir} sortBy={sortBy} field="buyerCount" align="right">Buyers</SortableTh>
@@ -191,6 +192,7 @@ export const InsiderBoardView = ({ universe = 'all' }) => {
                       </td>
                       <td className="px-3 py-2.5 font-serif text-neutral-100 font-bold text-[13px]">{r.ticker}</td>
                       <td className="px-3 py-2.5 text-right tabular-nums text-emerald-400">{fmtUsd(r.buyDollars)}</td>
+                      <td className="px-3 py-2.5 text-right tabular-nums text-sky-400/80">{fmtUsd(r.awardDollars)}</td>
                       <td className="px-3 py-2.5 text-right tabular-nums text-rose-400">{fmtUsd(r.sellDollars)}</td>
                       <td className={`px-3 py-2.5 text-right tabular-nums ${netColor}`}>{fmtUsd(r.netDollars)}</td>
                       <td className="px-3 py-2.5 text-right tabular-nums text-neutral-300">{r.buyerCount}</td>
@@ -209,7 +211,7 @@ export const InsiderBoardView = ({ universe = 'all' }) => {
                     </tr>
                     {isOpen && (
                       <tr className="border-t border-neutral-800/60 bg-neutral-950/60">
-                        <td colSpan={8} className="p-0">
+                        <td colSpan={9} className="p-0">
                           <FilingsTable filings={r.filings} />
                         </td>
                       </tr>
@@ -224,11 +226,15 @@ export const InsiderBoardView = ({ universe = 'all' }) => {
 
       {/* Footer note */}
       <div className="mt-6 border border-neutral-800/60 bg-neutral-950/40 p-3 text-[11px] text-neutral-500 leading-relaxed">
-        Source: Finnhub Form 4 feed. Cluster buys (3+ insiders, 14d window) often
-        precede unusual moves. Sells are noisier — many are 10b5-1 scheduled exits, not
-        signals. Watch for buys outside scheduled plans, especially when net dollars
-        are strongly positive on the same ticker. Insider role/title is not exposed
-        by this data source.
+        Source: Finnhub Form 4 feed.
+        <span className="text-emerald-400 font-medium"> $ Bought</span> shows
+        open-market purchases (Form 4 code P) — the high-conviction signal.
+        <span className="text-sky-400/80 font-medium"> $ Awards</span> shows
+        scheduled grants and RSU vests (code A); these are tracked separately
+        because they reflect comp-committee decisions, not insider conviction,
+        and aren't included in Net or Buyers count. Cluster buys (3+ insiders
+        in 14d on P-code) often precede unusual moves. Insider role/title is
+        not exposed by this data source.
       </div>
     </div>
   );
@@ -253,16 +259,18 @@ const FilingsTable = ({ filings }) => {
         </thead>
         <tbody>
           {filings.map((f, i) => {
-            const isBuy = (f.code === 'P' || f.code === 'A') && f.shares > 0;
-            const isSell = (f.code === 'S' || f.code === 'D') || f.shares < 0;
+            const isBuy = f.code === 'P' && f.shares > 0;
+            const isAward = f.code === 'A' && f.shares > 0;
+            const isSell = (f.code === 'S' || f.code === 'D') && f.shares < 0;
             const Icon = isBuy ? TrendingUp : isSell ? TrendingDown : null;
-            const tone = isBuy ? 'text-emerald-400' : isSell ? 'text-rose-400' : 'text-neutral-400';
+            const tone = isBuy ? 'text-emerald-400' : isSell ? 'text-rose-400' : isAward ? 'text-sky-400' : 'text-neutral-400';
+            const actionLabel = isBuy ? 'BUY' : isSell ? 'SELL' : isAward ? 'AWARD' : (f.code || '—');
             return (
               <tr key={i} className="border-t border-neutral-800/40">
                 <td className="px-4 py-1.5 text-neutral-200 max-w-[260px] truncate" title={f.name}>{f.name}</td>
                 <td className={`px-3 py-1.5 text-right ${tone}`}>
                   {Icon && <Icon className="h-3 w-3 inline-block mr-1" />}
-                  {isBuy ? 'BUY' : isSell ? 'SELL' : f.code || '—'}
+                  {actionLabel}
                 </td>
                 <td className={`px-3 py-1.5 text-right tabular-nums ${tone}`}>
                   {Math.abs(f.shares).toLocaleString()}

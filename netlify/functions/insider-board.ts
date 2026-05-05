@@ -96,14 +96,23 @@ export const handler: Handler = async (event) => {
               .sort((a, b) => a.daysSince - b.daysSince);
 
             // Aggregates
-            let buyDollars = 0;
-            let sellDollars = 0;
+            let buyDollars = 0;     // code P only — open-market purchases (signal)
+            let awardDollars = 0;   // code A — RSU vests / grants (mechanical, no signal)
+            let sellDollars = 0;    // code S/D — sales / dispositions
             let totalBuys = 0;
+            let totalAwards = 0;
             let totalSells = 0;
             const buyers = new Set<string>();
             const buyerTotals = new Map<string, { name: string; role: string; dollars: number }>();
             for (const f of filings) {
-              const isBuy = f.shares > 0 && (f.code === 'P' || f.code === 'A');
+              // Only code 'P' (open-market purchase) is a signal-bearing buy.
+              // Code 'A' (award/grant) is RSU vesting / stock comp — scheduled
+              // by the comp committee, not chosen by the insider, so it's
+              // tracked separately and excluded from buyDollars / topBuyer /
+              // buyerCount. The frontend shows an 'AWARD' chip distinct from
+              // 'BUY' so the user can see the distinction at a glance.
+              const isBuy = f.shares > 0 && f.code === 'P';
+              const isAward = f.shares > 0 && f.code === 'A';
               const isSell = f.shares < 0 && (f.code === 'S' || f.code === 'D');
               if (isBuy) {
                 buyDollars += f.dollars;
@@ -112,14 +121,18 @@ export const handler: Handler = async (event) => {
                 const cur = buyerTotals.get(f.name) ?? { name: f.name, role: f.role, dollars: 0 };
                 cur.dollars += f.dollars;
                 buyerTotals.set(f.name, cur);
+              } else if (isAward) {
+                awardDollars += f.dollars;
+                totalAwards += 1;
               } else if (isSell) {
                 sellDollars += f.dollars;
                 totalSells += 1;
               }
             }
 
-            // No activity at all (e.g. only derivative or unrecognized codes) — skip.
-            if (totalBuys === 0 && totalSells === 0) return null;
+            // Include ticker if it has any of: open-market buys, awards, or sells.
+            // Pure-derivative or unrecognized-code rows are still excluded above.
+            if (totalBuys === 0 && totalAwards === 0 && totalSells === 0) return null;
 
             const topBuyer = buyerTotals.size > 0
               ? Array.from(buyerTotals.values()).sort((a, b) => b.dollars - a.dollars)[0]
@@ -131,10 +144,12 @@ export const handler: Handler = async (event) => {
             const row: InsiderBoardRow = {
               ticker: t.ticker,
               buyDollars: +buyDollars.toFixed(0),
+              awardDollars: +awardDollars.toFixed(0),
               sellDollars: +sellDollars.toFixed(0),
               netDollars: +(buyDollars - sellDollars).toFixed(0),
               buyerCount: buyers.size,
               totalBuys,
+              totalAwards,
               totalSells,
               topBuyer,
               latestFilingDate,
@@ -150,7 +165,12 @@ export const handler: Handler = async (event) => {
       for (const r of batch) if (r) rows.push(r);
     }
 
-    rows.sort((a, b) => b.buyDollars - a.buyDollars);
+    // Sort: real open-market buys first, then by award size (so tickers with
+    // any P-buy always rank above pure-A tickers regardless of award size).
+    rows.sort((a, b) => {
+      if (a.buyDollars !== b.buyDollars) return b.buyDollars - a.buyDollars;
+      return b.awardDollars - a.awardDollars;
+    });
     const trimmed = rows.slice(0, limit);
 
     const response: InsiderBoardResponse = {

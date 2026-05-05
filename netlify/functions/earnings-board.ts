@@ -55,7 +55,11 @@ export const handler: Handler = async (event) => {
     }
 
     const to = new Date().toISOString().slice(0, 10);
-    const from = new Date(Date.now() - 180 * 86400000).toISOString().slice(0, 10);
+    // 400d of bars covers ~5 quarterly prints — enough that historicalEdge
+    // can score against 3+ prior earnings reactions for the typical ticker.
+    // 180d (the prior value) only caught 0-1 prior prints, leaving
+    // historicalEdge null on virtually every setup.
+    const from = new Date(Date.now() - 400 * 86400000).toISOString().slice(0, 10);
 
     const setups: EarningsSetup[] = [];
     const concurrency = 10;
@@ -103,7 +107,7 @@ export const handler: Handler = async (event) => {
             // ---- Prior earnings reactions: T-1 → T+1 close-to-close move ----
             const priorMoves: number[] = [];
             const priorMovesSigned: number[] = [];
-            for (const h of history.slice(0, 4)) {
+            for (const h of history.slice(0, 6)) {
               const hd = new Date(h.date).getTime();
               const barIdx = bars.findIndex((b) => Math.abs(b.t - hd) < 3 * 86400000);
               if (barIdx > 0 && barIdx < bars.length - 1) {

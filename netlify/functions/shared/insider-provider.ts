@@ -1,5 +1,22 @@
-// Insider activity provider — Quiver-backed.
-import { quiverGet, q, qn, qdate } from './quiver-client';
+// Insider activity provider — Finnhub-backed.
+//
+// Quiver's /live/insiders endpoint is gated to a higher subscription tier
+// on this account (returns 403 "Upgrade your subscription"). Finnhub's
+// /stock/insider-transactions exposes the same SEC Form 4 data on the plan
+// we already use, so we route through there instead.
+//
+// API contract for the rest of the codebase is unchanged — same exported
+// types (InsiderActivity / InsiderCluster / InsiderTransaction), same
+// scoring function, same caller signatures. Catalyst board, Prophet,
+// and analyst-runner are unaffected (they all just import getInsiderActivity).
+//
+// Caveat vs Quiver: Finnhub does not expose the insider's role/title
+// (CEO/CFO/Director). The `position` field on InsiderTransaction will be
+// empty, and the C-suite-buy bonus in scoreInsiderActivity is therefore
+// unreachable. We compensate by leaning more weight onto the buyer-count
+// and net-dollars signals which Finnhub does carry cleanly.
+
+import { getFinnhubInsiderTransactions, type FinnhubInsiderTx } from './data-provider';
 
 export interface InsiderTransaction {
   name: string; share: number; change: number;
@@ -39,21 +56,25 @@ export async function getInsiderActivity(
   };
 
   try {
-    const raw = await quiverGet<any>(`/live/insiders?ticker=${encodeURIComponent(ticker)}`);
-    const rows: any[] = Array.isArray(raw)
-      ? raw
-      : Array.isArray(raw?.data) ? raw.data
-      : Array.isArray(raw?.records) ? raw.records
-      : [];
-    if (rows.length === 0) return empty;
+    // Pull lookback + 365d so firstBuyInAYear has reference data.
+    const fetchDays = lookbackDays + 365;
+    const raw = await getFinnhubInsiderTransactions(ticker, fetchDays);
+    if (raw.length === 0) return empty;
 
-    const all = rows.map(normalizeTx).filter(Boolean) as InsiderTransaction[];
+    const all = raw.map(normalizeFinnhubTx).filter(Boolean) as InsiderTransaction[];
     const fromIso = new Date(Date.now() - lookbackDays * 86400000).toISOString().slice(0, 10);
     const priorYearIso = new Date(Date.now() - (lookbackDays + 365) * 86400000).toISOString().slice(0, 10);
 
     const inWindow = all.filter((t) => t.transactionDate >= fromIso);
     const priorYearWindow = all.filter((t) => t.transactionDate >= priorYearIso && t.transactionDate < fromIso);
 
+    // NOTE: code 'P' (open-market purchase) is the high-signal signal. Code
+    // 'A' (award/grant — RSUs, stock comp) is mechanically a holding increase
+    // but carries near-zero signal because executives don't choose to receive
+    // grants on a particular date — they're scheduled. We exclude 'A' from
+    // buys to keep the score signal-clean. Same logic as the new insider-board
+    // dedicated tab. Sells: 'S' = open-market sale (mostly noisy due to 10b5-1
+    // plans, but at least real economic exits).
     const buys = inWindow.filter((t) => t.transactionCode === 'P' && t.share > 0);
     const sells = inWindow.filter((t) => t.transactionCode === 'S' && t.share < 0);
 
@@ -87,25 +108,23 @@ export async function getInsiderActivity(
   } catch { return empty; }
 }
 
-function normalizeTx(raw: any): InsiderTransaction | null {
-  if (!raw) return null;
-  const name = String(q(raw, 'Name', 'name', 'Reporter') ?? '').trim();
-  const share = qn(raw, 'Shares', 'shares', 'Amount', 'amount') ?? 0;
-  const price = qn(raw, 'PricePerShare', 'Price', 'pricePerShare', 'price') ?? 0;
-  const rawCode = String(q(raw, 'TransactionCode', 'transactionCode', 'Code', 'code') ?? '').trim().toUpperCase();
-  const ad = String(q(raw, 'AcquiredDisposedCode', 'AcquistionOrDisposition', 'AD') ?? '').trim().toUpperCase();
-  const code = rawCode || (ad === 'A' ? 'P' : ad === 'D' ? 'S' : '');
-
-  if (!name || !Number.isFinite(share)) return null;
+function normalizeFinnhubTx(raw: FinnhubInsiderTx): InsiderTransaction | null {
+  if (!raw || !raw.name || !raw.transactionDate) return null;
+  // Finnhub's `change` is the signed delta. `share` in their schema is the
+  // post-transaction holding count, which we don't need here. We use change
+  // as the count (with sign) because the consumers below check sign for
+  // direction (share > 0 = buy, share < 0 = sell).
+  if (!Number.isFinite(raw.change)) return null;
 
   return {
-    name, share,
-    change: qn(raw, 'SharesOwnedFollowingTransaction', 'Change', 'change') ?? 0,
-    filingDate: qdate(raw, 'FilingDate', 'filingDate'),
-    transactionDate: qdate(raw, 'Date', 'TransactionDate', 'transactionDate'),
-    transactionPrice: price,
-    transactionCode: code,
-    position: String(q(raw, 'Title', 'Position', 'position') ?? '').trim(),
+    name: raw.name,
+    share: raw.change,                     // signed delta — direction-bearing
+    change: raw.change,                    // keep both for future-proofing
+    filingDate: raw.filingDate || raw.transactionDate,
+    transactionDate: raw.transactionDate,
+    transactionPrice: raw.transactionPrice,
+    transactionCode: raw.transactionCode,
+    position: '',                          // not exposed by Finnhub
   };
 }
 
@@ -164,12 +183,19 @@ export function scoreInsiderActivity(a: InsiderActivity): {
     parts.push(`${biggest.buyerCount} insiders bought within 14d ($${fmtK(biggest.totalDollarValue)})`);
   }
 
+  // C-suite detection only fires if a downstream caller fills `position`.
+  // Finnhub doesn't, so this branch effectively returns false on the new path.
+  // We keep the check (rather than removing) so that if Quiver/EDGAR sources
+  // are added later with role data, the bonus reactivates automatically.
   const leadershipBuy = a.transactions.some((t) => /(CEO|CFO|CHIEF|PRESIDENT|CHAIR)/i.test(t.position));
   if (leadershipBuy) { raw += 15; tags.push('C-suite buy'); parts.push('C-suite buying'); }
 
-  if (a.netDollars > 5_000_000) { raw += 20; parts.push(`$${fmtK(a.netDollars)} net buys`); }
-  else if (a.netDollars > 1_000_000) { raw += 12; parts.push(`$${fmtK(a.netDollars)} net buys`); }
-  else if (a.netDollars > 250_000) { raw += 6; parts.push(`$${fmtK(a.netDollars)} net buys`); }
+  // Compensate for the lost C-suite bonus by giving slightly more weight to
+  // raw-dollar size. Without role data, a $5M buy by 'an insider' is the
+  // most actionable signal we have.
+  if (a.netDollars > 5_000_000) { raw += 22; parts.push(`$${fmtK(a.netDollars)} net buys`); }
+  else if (a.netDollars > 1_000_000) { raw += 14; parts.push(`$${fmtK(a.netDollars)} net buys`); }
+  else if (a.netDollars > 250_000) { raw += 7; parts.push(`$${fmtK(a.netDollars)} net buys`); }
   else if (a.netDollars < -5_000_000) { raw -= 10; parts.push(`$${fmtK(Math.abs(a.netDollars))} net sells`); }
 
   if (a.firstBuyInAYear) {

@@ -141,11 +141,13 @@ export interface EarningsBoardResponse {
 // Insider Board — aggregate insider activity per ticker
 export interface InsiderBoardRow {
   ticker: string;
-  buyDollars: number;
+  buyDollars: number;       // code P only — open-market purchases
+  awardDollars: number;     // code A — RSU vests / grants (tracked separately)
   sellDollars: number;
-  netDollars: number;
-  buyerCount: number;
-  totalBuys: number;
+  netDollars: number;       // buyDollars - sellDollars (awards excluded)
+  buyerCount: number;       // unique names with P-code buys
+  totalBuys: number;        // count of P-code transactions
+  totalAwards: number;      // count of A-code transactions
   totalSells: number;
   topBuyer: { name: string; role: string; dollars: number } | null;
   latestFilingDate: string | null;
@@ -157,7 +159,7 @@ export interface InsiderBoardRow {
     dollars: number;
     filingDate: string;
     transactionDate: string;
-    code: 'P' | 'S' | string;
+    code: 'P' | 'S' | 'A' | 'D' | string;
     daysSince: number;
   }>;
 }
