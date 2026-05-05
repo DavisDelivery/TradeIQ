@@ -276,6 +276,62 @@ export async function getEarningsHistory(ticker: string, limit = 8): Promise<Ear
 }
 
 // ---------------------------------------------------------------------------
+// Finnhub insider transactions — Form 4 feed
+// Quiver's /live/insiders endpoint is gated behind a higher subscription tier
+// (returns 403 "Upgrade your subscription"). Finnhub exposes the same SEC
+// Form 4 data on plans we already pay for. Used by insider-board.ts.
+// ---------------------------------------------------------------------------
+
+export interface FinnhubInsiderTx {
+  name: string;
+  share: number;          // share count after transaction
+  change: number;         // signed delta (negative = sale, positive = buy)
+  filingDate: string;     // YYYY-MM-DD
+  transactionDate: string;
+  transactionPrice: number;
+  transactionCode: string; // P=purchase, S=sale, etc.
+  isDerivative: boolean;
+  source: string;
+  currency: string;
+}
+
+export async function getFinnhubInsiderTransactions(
+  ticker: string,
+  daysBack: number = 180,
+): Promise<FinnhubInsiderTx[]> {
+  try {
+    const from = new Date(Date.now() - daysBack * 86400000).toISOString().slice(0, 10);
+    const to = new Date().toISOString().slice(0, 10);
+    const url = `${FINNHUB}/stock/insider-transactions?symbol=${encodeURIComponent(ticker)}&from=${from}&to=${to}&token=${finnhubKey()}`;
+    const res = await fetch(url);
+    if (!res.ok) return [];
+    const data = (await res.json()) as { data?: any[] };
+    const rows = Array.isArray(data?.data) ? data.data : [];
+    return rows
+      .map((r) => ({
+        name: String(r.name ?? '').trim(),
+        share: Number(r.share ?? 0),
+        change: Number(r.change ?? 0),
+        filingDate: String(r.filingDate ?? '').slice(0, 10),
+        transactionDate: String(r.transactionDate ?? '').slice(0, 10),
+        transactionPrice: Number(r.transactionPrice ?? 0),
+        transactionCode: String(r.transactionCode ?? '').trim(),
+        isDerivative: Boolean(r.isDerivative),
+        source: String(r.source ?? ''),
+        currency: String(r.currency ?? ''),
+      }))
+      .filter((r) =>
+        r.name &&
+        r.transactionDate &&
+        Number.isFinite(r.change) &&
+        Number.isFinite(r.transactionPrice)
+      );
+  } catch {
+    return [];
+  }
+}
+
+// ---------------------------------------------------------------------------
 // FRED macro
 // ---------------------------------------------------------------------------
 

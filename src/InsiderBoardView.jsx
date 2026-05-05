@@ -196,9 +196,8 @@ export const InsiderBoardView = ({ universe = 'all' }) => {
                       <td className="px-3 py-2.5 text-right tabular-nums text-neutral-300">{r.buyerCount}</td>
                       <td className="px-3 py-2.5 text-neutral-300 max-w-[180px] truncate">
                         {r.topBuyer ? (
-                          <span title={`${r.topBuyer.name} · ${r.topBuyer.role}`}>
+                          <span title={r.topBuyer.name}>
                             <span className="text-neutral-200">{r.topBuyer.name}</span>
-                            <span className="text-neutral-600 ml-1.5">· {r.topBuyer.role}</span>
                           </span>
                         ) : (
                           <span className="text-neutral-600">—</span>
@@ -225,10 +224,11 @@ export const InsiderBoardView = ({ universe = 'all' }) => {
 
       {/* Footer note */}
       <div className="mt-6 border border-neutral-800/60 bg-neutral-950/40 p-3 text-[11px] text-neutral-500 leading-relaxed">
-        Source: QuiverQuant Form 4 feed. Cluster buys (3+ insiders, 14d window) often
+        Source: Finnhub Form 4 feed. Cluster buys (3+ insiders, 14d window) often
         precede unusual moves. Sells are noisier — many are 10b5-1 scheduled exits, not
-        signals. Watch for buys outside scheduled plans, especially CEO/CFO purchases
-        with options expiring &gt;1yr.
+        signals. Watch for buys outside scheduled plans, especially when net dollars
+        are strongly positive on the same ticker. Insider role/title is not exposed
+        by this data source.
       </div>
     </div>
   );
@@ -244,7 +244,6 @@ const FilingsTable = ({ filings }) => {
         <thead className="bg-neutral-900/40 text-[9px] uppercase tracking-widest text-neutral-600">
           <tr>
             <th className="text-left px-4 py-1.5">Insider</th>
-            <th className="text-left px-3 py-1.5">Role</th>
             <th className="text-right px-3 py-1.5">Action</th>
             <th className="text-right px-3 py-1.5">Shares</th>
             <th className="text-right px-3 py-1.5">$ Value</th>
@@ -254,14 +253,13 @@ const FilingsTable = ({ filings }) => {
         </thead>
         <tbody>
           {filings.map((f, i) => {
-            const isBuy = f.code === 'P' && f.shares > 0;
-            const isSell = f.code === 'S' || f.shares < 0;
+            const isBuy = (f.code === 'P' || f.code === 'A') && f.shares > 0;
+            const isSell = (f.code === 'S' || f.code === 'D') || f.shares < 0;
             const Icon = isBuy ? TrendingUp : isSell ? TrendingDown : null;
             const tone = isBuy ? 'text-emerald-400' : isSell ? 'text-rose-400' : 'text-neutral-400';
             return (
               <tr key={i} className="border-t border-neutral-800/40">
-                <td className="px-4 py-1.5 text-neutral-200 max-w-[200px] truncate" title={f.name}>{f.name}</td>
-                <td className="px-3 py-1.5 text-neutral-400 max-w-[160px] truncate" title={f.role}>{f.role}</td>
+                <td className="px-4 py-1.5 text-neutral-200 max-w-[260px] truncate" title={f.name}>{f.name}</td>
                 <td className={`px-3 py-1.5 text-right ${tone}`}>
                   {Icon && <Icon className="h-3 w-3 inline-block mr-1" />}
                   {isBuy ? 'BUY' : isSell ? 'SELL' : f.code || '—'}
