@@ -81,6 +81,32 @@ export interface AnalystOutput {
 }
 
 // Earnings board
+// Earnings play categories — pre-print and post-print
+export type EarningsPlayType =
+  | 'long_volatility'   // straddle/strangle: low IV + history of big moves
+  | 'short_volatility'  // iron condor: high IV + history of contained moves
+  | 'directional_long'  // pre-print drift bullish
+  | 'directional_short' // pre-print drift bearish
+  | 'pead_long'         // post-beat continuation
+  | 'pead_short'        // post-miss continuation
+  | 'reversal'          // gap-and-fade
+  | 'skip';             // mixed data, unpredictable
+
+export interface PlayTriggers {
+  entry: string;        // "above pre-earnings high on volume"
+  stop: number | null;  // dollar level
+  targets: { t1: number | null; t2: number | null; t3: number | null };
+  riskReward: number | null;
+  positionSizePct: number; // 0.5% for vol, 1% for directional
+}
+
+export interface HistoricalEdge {
+  hits: number;       // setup-similar past prints that worked
+  total: number;      // total comparable prints
+  ratePct: number;    // hits/total*100
+  description: string;
+}
+
 export interface EarningsSetup {
   ticker: string;
   price: number;
@@ -94,12 +120,54 @@ export interface EarningsSetup {
   expectedMove: number;
   avgPriorMove: number | null;
   rationale: string;
+  // v0.7.21+ pro-grade play fields (all optional for backward compat)
+  playType?: EarningsPlayType;
+  moveRatio?: number | null;
+  triggers?: PlayTriggers;
+  historicalEdge?: HistoricalEdge | null;
+  prePrintDrift?: { signalCount: number; lean: 'long' | 'short' | 'mixed'; details: string[] };
+  postPrint?: boolean; // true if reportDate is in the past (PEAD/reversal)
 }
 
 export interface EarningsBoardResponse {
   setups: EarningsSetup[];
   universeChecked: number;
   generatedAt: string;
+  windowDays?: number;
+  cached?: boolean;
+  error?: string;
+}
+
+// Insider Board — aggregate insider activity per ticker
+export interface InsiderBoardRow {
+  ticker: string;
+  buyDollars: number;
+  sellDollars: number;
+  netDollars: number;
+  buyerCount: number;
+  totalBuys: number;
+  totalSells: number;
+  topBuyer: { name: string; role: string; dollars: number } | null;
+  latestFilingDate: string | null;
+  daysSinceLatest: number | null;
+  filings: Array<{
+    name: string;
+    role: string;
+    shares: number;
+    dollars: number;
+    filingDate: string;
+    transactionDate: string;
+    code: 'P' | 'S' | string;
+    daysSince: number;
+  }>;
+}
+
+export interface InsiderBoardResponse {
+  rows: InsiderBoardRow[];
+  universeChecked: number;
+  windowDays: number;
+  generatedAt: string;
+  cached?: boolean;
   error?: string;
 }
 

@@ -22,7 +22,7 @@ const CONVICTION_OPTIONS = [
   { id: 'high', label: 'High only' },
 ];
 
-export const CatalystView = ({ universe = 'sp500' }) => {
+export const CatalystView = ({ universe = 'sp500', onNavigate }) => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [data, setData] = useState(null);
@@ -70,6 +70,17 @@ export const CatalystView = ({ universe = 'sp500' }) => {
       <div className="space-y-2 mb-4">
         <FilterRow label="Signal" options={FILTER_OPTIONS} value={filter} onChange={setFilter} />
         <FilterRow label="Conviction" options={CONVICTION_OPTIONS} value={minConviction} onChange={setMinConviction} />
+        {filter === 'cluster' && onNavigate && (
+          <div className="pl-[88px]">
+            <button
+              onClick={() => onNavigate('insiders')}
+              className="text-[11px] text-emerald-400 hover:text-emerald-300 inline-flex items-center gap-1 underline-offset-2 hover:underline"
+            >
+              <Users className="h-3 w-3" />
+              Open full insider board →
+            </button>
+          </div>
+        )}
       </div>
 
       {data && !loading && (

@@ -17,12 +17,14 @@ import { CatalystView } from './CatalystView.jsx';
 import { ChartView } from './ChartView.jsx';
 import { JournalView } from './JournalView.jsx';
 import { ProphetView } from './ProphetView.jsx';
+import { InsiderBoardView } from './InsiderBoardView.jsx';
 import { LogButton } from './components/LogButton.jsx';
 import { UniverseSelector, UNIVERSE_AWARE_VIEWS } from './components/UniverseSelector.jsx';
 import { readLog, logTrade, removeTrade, computeForwardReturns } from './tradeLog.js';
 import { validate, SHAPES, fetchWithRetry } from './lib/validateResponse.js';
+import { useSortable, SortableTh } from './lib/useSortable.jsx';
 
-const APP_VERSION = '0.7.20-alpha';
+const APP_VERSION = '0.7.21-alpha';
 
 // ======================================================================
 // ERROR BOUNDARY — catches React render errors in any child subtree and
@@ -347,6 +349,7 @@ const TopBar = ({ activeView, setActiveView, regime, universeStats }) => {
     { id: 'board', label: 'Target Board', shortLabel: 'Board', icon: Target },
     { id: 'prophet', label: 'Prophet', shortLabel: 'Prophet', icon: Sparkles },
     { id: 'catalyst', label: 'Catalyst', shortLabel: 'Catalyst', icon: Zap },
+    { id: 'insiders', label: 'Insiders', shortLabel: 'Insiders', icon: Eye },
     { id: 'williams', label: 'Williams', shortLabel: 'Williams', icon: Activity },
     { id: 'lynch', label: 'Lynch', shortLabel: 'Lynch', icon: Shield },
     { id: 'earnings', label: 'Earnings', shortLabel: 'Earnings', icon: Zap },
@@ -1562,7 +1565,44 @@ const MOCK_EARNINGS = [
   },
 ];
 
+const EARNINGS_WINDOWS = [3, 7, 14, 30];
+
+const PLAY_TYPE_LABELS = {
+  long_volatility: 'Long Vol',
+  short_volatility: 'Short Vol',
+  directional_long: 'Directional ↑',
+  directional_short: 'Directional ↓',
+  pead_long: 'PEAD ↑',
+  pead_short: 'PEAD ↓',
+  reversal: 'Reversal',
+  skip: 'Skip',
+};
+
+const PLAY_TYPE_COLORS = {
+  long_volatility: '#a78bfa',
+  short_volatility: '#4dbaf2',
+  directional_long: '#14e89a',
+  directional_short: '#f87171',
+  pead_long: '#34d399',
+  pead_short: '#fb7185',
+  reversal: '#fbbf24',
+  skip: '#737373',
+};
+
+const fmtUsdEarnings = (n) => {
+  if (!Number.isFinite(n)) return '—';
+  return `$${n.toFixed(2)}`;
+};
+
 const EarningsPlaysView = () => {
+  const [windowDays, setWindowDays] = useState(() => {
+    if (typeof window !== 'undefined') {
+      const u = new URL(window.location.href);
+      const d = Number(u.searchParams.get('earningsDays'));
+      if (EARNINGS_WINDOWS.includes(d)) return d;
+    }
+    return 7;
+  });
   const [filter, setFilter] = useState('all');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -1570,11 +1610,13 @@ const EarningsPlaysView = () => {
   const [expandedKey, setExpandedKey] = useState(null);
   const [loggedIds, setLoggedIds] = useState(() => new Set(readLog().filter((t) => t.source === 'earnings').map((t) => t.ticker + '|' + t.reportDate)));
 
+  const { sortKey, sortDir, sortBy, sortRows } = useSortable('composite', 'desc');
+
   const load = async () => {
     setLoading(true);
     setError(null);
     try {
-      const r = await fetch('/api/earnings-board');
+      const r = await fetchWithRetry(`/api/earnings-board?days=${windowDays}`);
       const json = await r.json();
       if (!r.ok || json.error) {
         setError(json.error || `HTTP ${r.status}`);
@@ -1588,16 +1630,28 @@ const EarningsPlaysView = () => {
     }
   };
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(); /* eslint-disable-next-line */ }, [windowDays]);
 
-  const setups = data?.setups || [];
-  const filtered = setups
-    .filter(e => filter === 'all' || e.bias === filter)
-    .sort((a, b) => (b.composite ?? 0) - (a.composite ?? 0));
+  // Sync window selection to URL for bookmarkability
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const u = new URL(window.location.href);
+    u.searchParams.set('earningsDays', String(windowDays));
+    window.history.replaceState({}, '', u.toString());
+  }, [windowDays]);
+
+  const setups = data?.setups ?? [];
+  const filtered = setups.filter((e) => {
+    if (filter === 'all') return true;
+    if (filter === 'pre') return !e.postPrint;
+    if (filter === 'post') return e.postPrint;
+    return e.bias === filter;
+  });
+  const sorted = useMemo(() => sortRows(filtered), [filtered, sortKey, sortDir, sortRows]);
 
   return (
     <div className="p-4 sm:p-6 max-w-[1400px] mx-auto">
-      <div className="mb-6 flex items-start justify-between gap-3">
+      <div className="mb-6 flex items-start justify-between gap-3 flex-wrap">
         <div>
           <div className="text-[10px] uppercase tracking-[0.2em] text-neutral-500 font-mono mb-2">Earnings Setups</div>
           <h1 className="font-serif text-2xl sm:text-3xl font-bold tracking-tight">
@@ -1605,19 +1659,43 @@ const EarningsPlaysView = () => {
               <span className="text-neutral-500 italic font-light">loading…</span>
             ) : (
               <>
-                <span className="text-emerald-400">{filtered.length}</span> <span className="text-neutral-500 italic font-light">earnings plays within 14 days</span>
+                <span className="text-emerald-400">{sorted.length}</span>{' '}
+                <span className="text-neutral-500 italic font-light">
+                  earnings plays in {windowDays}d window
+                </span>
               </>
             )}
           </h1>
           <p className="text-neutral-400 text-sm mt-2 max-w-2xl">
-            Live scoring across IVR proxy, expected move, prior reactions, and timing.
-            Pulls Finnhub calendar → enriches with Polygon bars → scores each setup.
+            Pre-print volatility & directional plays + post-print PEAD/reversal setups.
+            Each card shows entry trigger, stop, targets, sizing, and historical edge.
           </p>
         </div>
-        <button onClick={load} disabled={loading}
-          className="h-8 px-3 border border-neutral-800 text-[11px] font-mono uppercase tracking-widest text-neutral-400 hover:text-neutral-200 disabled:opacity-50 flex-shrink-0">
+        <button
+          onClick={load}
+          disabled={loading}
+          className="h-8 px-3 border border-neutral-800 text-[11px] font-mono uppercase tracking-widest text-neutral-400 hover:text-neutral-200 disabled:opacity-50 flex-shrink-0"
+        >
           {loading ? '…' : '↻ Refresh'}
         </button>
+      </div>
+
+      {/* Window + filter row */}
+      <div className="flex items-center gap-1 text-[11px] font-mono mb-3 flex-wrap">
+        <span className="text-neutral-500 mr-2 uppercase tracking-widest">Window</span>
+        {EARNINGS_WINDOWS.map((d) => (
+          <button
+            key={d}
+            onClick={() => setWindowDays(d)}
+            className={`px-2.5 h-7 transition-colors ${
+              windowDays === d
+                ? 'bg-emerald-500/15 text-emerald-300 border border-emerald-500/40'
+                : 'text-neutral-500 border border-neutral-800 hover:border-neutral-600'
+            }`}
+          >
+            {d}d
+          </button>
+        ))}
       </div>
 
       {error && (
@@ -1633,179 +1711,133 @@ const EarningsPlaysView = () => {
         <div className="border border-neutral-800 p-8 text-center">
           <div className="inline-block h-6 w-6 border-2 border-emerald-500/30 border-t-emerald-500 rounded-full animate-spin mb-3" />
           <div className="text-neutral-400 text-sm">Loading earnings calendar and computing IV proxies…</div>
-          <div className="text-neutral-600 text-[11px] mt-1 font-mono">This takes 10-20 seconds (pulls ~25 tickers of bars)</div>
+          <div className="text-neutral-600 text-[11px] mt-1 font-mono">15-22 seconds for fresh scan</div>
         </div>
       )}
 
       {data && (
-        <div className="flex items-center gap-1 text-[11px] font-mono mb-5">
-          <span className="text-neutral-500 mr-2 uppercase tracking-widest">Bias</span>
+        <div className="flex items-center gap-1 text-[11px] font-mono mb-5 flex-wrap">
+          <span className="text-neutral-500 mr-2 uppercase tracking-widest">Filter</span>
           {[
             ['all', 'ALL'],
-            ['sell_premium', 'SELL'],
-            ['buy_premium', 'BUY'],
+            ['pre', 'PRE-PRINT'],
+            ['post', 'POST-PRINT'],
+            ['sell_premium', 'SELL VOL'],
+            ['buy_premium', 'BUY VOL'],
           ].map(([key, label]) => (
             <button key={key} onClick={() => setFilter(key)}
-              className={`px-2 h-7 ${filter === key ? 'bg-neutral-800 text-neutral-100' : 'text-neutral-500'}`}>
+              className={`px-2 h-7 transition-colors ${filter === key ? 'bg-neutral-800 text-neutral-100' : 'text-neutral-500 hover:text-neutral-300'}`}>
               {label}
             </button>
           ))}
           <span className="ml-auto text-neutral-600 text-[10px]">
-            Checked {data.universeChecked} · Generated {new Date(data.generatedAt).toLocaleTimeString()}
+            Checked {data.universeChecked ?? '—'} · Generated {data.generatedAt ? new Date(data.generatedAt).toLocaleTimeString() : '—'}
           </span>
         </div>
       )}
 
-      {filtered.length === 0 && data && !loading && (
+      {sorted.length === 0 && data && !loading && (
         <div className="border border-neutral-800 p-6 text-center text-neutral-500 text-sm">
-          No qualifying earnings plays right now. {data.universeChecked} tickers have earnings in the next 14 days but none hit the scoring threshold.
+          No qualifying earnings plays in this window.
         </div>
       )}
 
-      <div className="space-y-3">
-        {filtered.map(e => {
-          const strategyLabel = {
-            iron_condor: 'Iron Condor',
-            short_strangle: 'Short Strangle',
-            long_straddle: 'Long Straddle',
-            call_debit_spread: 'Call Debit Spread',
-            put_debit_spread: 'Put Debit Spread',
-          }[e.strategy] || e.strategy;
-          const biasColor = e.bias === 'sell_premium' ? '#4dbaf2' : '#14e89a';
-          const biasLabel = (e.bias ?? 'unknown').replace(/_/g, ' ');
-          const cardKey = `${e.ticker ?? '?'}|${e.reportDate ?? '?'}`;
-          const isOpen = expandedKey === cardKey;
-          const alreadyLogged = loggedIds.has(cardKey);
-          const moveRatio = (Number.isFinite(e.avgPriorMove) && Number.isFinite(e.expectedMove) && e.expectedMove > 0)
-            ? e.avgPriorMove / e.expectedMove : null;
-          const handleLog = (ev) => {
-            ev.stopPropagation();
-            if (alreadyLogged) return;
-            logTrade({
-              ticker: e.ticker,
-              source: 'earnings',
-              loggedPrice: e.price,
-              strategy: strategyLabel,
-              bias: e.bias,
-              reportDate: e.reportDate,
-              reportTime: e.reportTime,
-              daysUntilAtLog: e.daysUntil,
-              expectedMove: e.expectedMove,
-              ivr: e.ivr,
-              avgPriorMove: e.avgPriorMove,
-              composite: e.composite,
-              rationale: e.rationale,
-            });
-            setLoggedIds(new Set([...loggedIds, cardKey]));
-          };
-          return (
-            <div
-              key={cardKey}
-              onClick={() => setExpandedKey(isOpen ? null : cardKey)}
-              className={`border bg-neutral-950/40 p-4 sm:p-5 cursor-pointer transition-colors ${isOpen ? 'border-neutral-600' : 'border-neutral-800 hover:border-neutral-700'}`}
-            >
-              <div className="flex items-start justify-between mb-3 gap-3">
-                <div>
-                  <div className="flex items-baseline gap-3 flex-wrap">
-                    <span className="font-serif font-bold text-xl">{e.ticker}</span>
-                    {e.price && <span className="text-[12px] font-mono text-neutral-400">${e.price.toFixed(2)}</span>}
-                    <span className="text-[11px] font-mono text-neutral-400">
-                      {e.reportDate} · {e.reportTime}
-                    </span>
-                    <span className={`text-[11px] font-mono ${e.daysUntil < 0 ? 'text-neutral-500' : e.daysUntil <= 3 ? 'text-amber-400' : 'text-neutral-400'}`}>
-                      {e.daysUntil < 0 ? `reported ${Math.abs(e.daysUntil)}d ago` : `in ${e.daysUntil}d`}
-                    </span>
-                  </div>
-                  <div className="mt-2 flex items-center gap-2">
-                    <span className="inline-flex items-center px-2 py-0.5 text-[10px] font-mono uppercase tracking-widest border"
-                      style={{ color: biasColor, borderColor: biasColor + '55', background: biasColor + '15' }}>
-                      {biasLabel}
-                    </span>
-                    <span className="text-[12px] text-neutral-300">{strategyLabel}</span>
-                    {alreadyLogged && (
-                      <span className="text-[10px] font-mono text-emerald-400 border border-emerald-500/40 px-1.5 py-0.5">
-                        LOGGED
-                      </span>
-                    )}
-                  </div>
-                </div>
-                <div className="text-right">
-                  <div className="font-mono tabular-nums text-2xl font-bold" style={{ color: e.composite >= 80 ? '#14e89a' : '#4dbaf2' }}>
-                    {e.composite}
-                  </div>
-                  <div className="text-[9px] text-neutral-500 uppercase tracking-widest">score</div>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-3 gap-3 mb-3 text-[11px] font-mono">
-                <div>
-                  <div className="text-neutral-500 uppercase tracking-widest text-[9px]">IV Proxy</div>
-                  <div className={`text-sm ${e.ivr >= 60 ? 'text-emerald-400' : e.ivr <= 30 ? 'text-amber-400' : 'text-neutral-300'}`}>
-                    {e.ivr}
-                  </div>
-                </div>
-                <div>
-                  <div className="text-neutral-500 uppercase tracking-widest text-[9px]">Expected Move</div>
-                  <div className="text-neutral-200 text-sm">±{e.expectedMove?.toFixed(1)}%</div>
-                </div>
-                <div>
-                  <div className="text-neutral-500 uppercase tracking-widest text-[9px]">Avg Prior Move</div>
-                  <div className="text-neutral-200 text-sm">
-                    {Number.isFinite(e.avgPriorMove) ? e.avgPriorMove.toFixed(1) + '%' : '—'}
-                  </div>
-                </div>
-              </div>
-
-              <p className="text-[12px] text-neutral-400 leading-relaxed">{e.rationale}</p>
-
-              {isOpen && (
-                <div className="mt-4 pt-4 border-t border-neutral-800 space-y-3" onClick={(ev) => ev.stopPropagation()}>
-                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-[11px]">
-                    <DetailStat label="Report Time" value={e.reportTime?.toUpperCase() || '—'} />
-                    <DetailStat label="Days Until" value={`${e.daysUntil}d`} />
-                    <DetailStat
-                      label="Prior / Expected"
-                      value={moveRatio !== null ? `${moveRatio.toFixed(2)}x` : '—'}
-                      color={moveRatio === null ? undefined : (
-                        (e.bias === 'sell_premium' && moveRatio < 0.8) ||
-                        (e.bias === 'buy_premium' && moveRatio > 1.2)
-                      ) ? '#14e89a' : '#f59e0b'}
-                    />
-                    <DetailStat label="Score" value={e.composite} color={e.composite >= 80 ? '#14e89a' : '#4dbaf2'} />
-                  </div>
-
-                  <div className="text-[11px] text-neutral-400 leading-relaxed bg-neutral-900/40 border border-neutral-800 p-3">
-                    <div className="font-mono uppercase tracking-widest text-[9px] text-neutral-500 mb-1">Strategy read</div>
-                    {e.bias === 'sell_premium'
-                      ? `Iron Condor profits if ${e.ticker} stays within ±${e.expectedMove?.toFixed(1)}% of current price through ${e.reportDate}. Prior average move (${Number.isFinite(e.avgPriorMove) ? e.avgPriorMove.toFixed(1) + '%' : 'unknown'}) ${moveRatio !== null && moveRatio < 0.8 ? 'suggests overpriced IV — good setup' : moveRatio !== null && moveRatio > 1.2 ? 'suggests IV might be underpriced — caution' : 'is mixed'}. Size small — a single bad print eats several winners.`
-                      : `Long Straddle profits if ${e.ticker} moves MORE than ±${e.expectedMove?.toFixed(1)}% through ${e.reportDate}. Prior average move (${Number.isFinite(e.avgPriorMove) ? e.avgPriorMove.toFixed(1) + '%' : 'unknown'}) ${moveRatio !== null && moveRatio > 1.2 ? 'suggests realized moves typically exceed expected — edge intact' : moveRatio !== null && moveRatio < 0.8 ? 'suggests underwhelming prior reactions — risk of theta decay' : 'is mixed'}. Time the exit for day-of-print or day-after.`
-                    }
-                  </div>
-
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <button
-                      onClick={handleLog}
-                      disabled={alreadyLogged}
-                      className={`px-3 py-1.5 text-[11px] font-mono uppercase tracking-widest border transition-colors ${
-                        alreadyLogged
-                          ? 'text-emerald-400 border-emerald-500/40 bg-emerald-500/10 cursor-default'
-                          : 'text-emerald-400 border-emerald-500/40 bg-emerald-500/5 hover:bg-emerald-500/15'
-                      }`}
+      {/* Sortable summary table */}
+      {sorted.length > 0 && (
+        <div className="border border-neutral-800 overflow-x-auto mb-4">
+          <table className="w-full text-[12px] font-mono">
+            <thead className="bg-neutral-900/40 text-[10px] uppercase tracking-widest text-neutral-500">
+              <tr>
+                <SortableTh sortKey={sortKey} sortDir={sortDir} sortBy={sortBy} field="ticker" align="left">Ticker</SortableTh>
+                <SortableTh sortKey={sortKey} sortDir={sortDir} sortBy={sortBy} field="composite" align="right">Score</SortableTh>
+                <SortableTh sortKey={sortKey} sortDir={sortDir} sortBy={sortBy} field="daysUntil" align="right">Days</SortableTh>
+                <SortableTh sortKey={sortKey} sortDir={sortDir} sortBy={sortBy} field="playType" align="left">Play Type</SortableTh>
+                <SortableTh sortKey={sortKey} sortDir={sortDir} sortBy={sortBy} field="expectedMove" align="right">Exp Move</SortableTh>
+                <SortableTh sortKey={sortKey} sortDir={sortDir} sortBy={sortBy} field="avgPriorMove" align="right">Avg Prior</SortableTh>
+                <SortableTh sortKey={sortKey} sortDir={sortDir} sortBy={sortBy} field="moveRatio" align="right">Ratio</SortableTh>
+                <SortableTh sortKey={sortKey} sortDir={sortDir} sortBy={sortBy} field="ivr" align="right">IVR</SortableTh>
+                <SortableTh sortKey={sortKey} sortDir={sortDir} sortBy={sortBy} field="bias" align="left">Bias</SortableTh>
+              </tr>
+            </thead>
+            <tbody>
+              {sorted.map((e) => {
+                const cardKey = `${e.ticker ?? '?'}|${e.reportDate ?? '?'}`;
+                const isOpen = expandedKey === cardKey;
+                const ptColor = PLAY_TYPE_COLORS[e.playType] || '#737373';
+                const ptLabel = PLAY_TYPE_LABELS[e.playType] || e.playType || '—';
+                const compColor = e.composite >= 80 ? '#14e89a' : e.composite >= 70 ? '#4dbaf2' : '#a3a3a3';
+                return (
+                  <React.Fragment key={cardKey}>
+                    <tr
+                      onClick={() => setExpandedKey(isOpen ? null : cardKey)}
+                      className={`border-t border-neutral-800/60 cursor-pointer transition-colors ${isOpen ? 'bg-neutral-900/40' : 'hover:bg-neutral-900/20'}`}
                     >
-                      {alreadyLogged ? '✓ Logged' : '+ Log Trade'}
-                    </button>
-                    <span className="text-[10px] text-neutral-600 font-mono">
-                      {alreadyLogged ? 'See Journal tab for forward returns' : 'Tracks 5d/20d/30d/60d/90d returns in Journal'}
-                    </span>
-                  </div>
-                </div>
-              )}
-            </div>
-          );
-        })}
-      </div>
+                      <td className="px-3 py-2.5 font-serif font-bold text-neutral-100 text-[13px]">{e.ticker}</td>
+                      <td className="px-3 py-2.5 text-right tabular-nums font-bold" style={{ color: compColor }}>{e.composite ?? '—'}</td>
+                      <td className="px-3 py-2.5 text-right tabular-nums text-neutral-300">
+                        {Number.isFinite(e.daysUntil) ? (e.daysUntil < 0 ? `${Math.abs(e.daysUntil)}d ago` : `${e.daysUntil}d`) : '—'}
+                      </td>
+                      <td className="px-3 py-2.5">
+                        <span className="px-1.5 py-0.5 text-[10px] uppercase tracking-widest border" style={{ color: ptColor, borderColor: ptColor + '55', background: ptColor + '15' }}>
+                          {ptLabel}
+                        </span>
+                      </td>
+                      <td className="px-3 py-2.5 text-right tabular-nums text-neutral-300">
+                        {Number.isFinite(e.expectedMove) ? `±${e.expectedMove.toFixed(1)}%` : '—'}
+                      </td>
+                      <td className="px-3 py-2.5 text-right tabular-nums text-neutral-300">
+                        {Number.isFinite(e.avgPriorMove) ? `${e.avgPriorMove.toFixed(1)}%` : '—'}
+                      </td>
+                      <td className="px-3 py-2.5 text-right tabular-nums text-neutral-300">
+                        {Number.isFinite(e.moveRatio) ? `${e.moveRatio.toFixed(2)}x` : '—'}
+                      </td>
+                      <td className="px-3 py-2.5 text-right tabular-nums text-neutral-300">
+                        {Number.isFinite(e.ivr) ? e.ivr : '—'}
+                      </td>
+                      <td className="px-3 py-2.5 text-neutral-400 text-[11px]">
+                        {(e.bias ?? '—').replace(/_/g, ' ')}
+                      </td>
+                    </tr>
+                    {isOpen && (
+                      <tr className="border-t border-neutral-800/60 bg-neutral-950/60">
+                        <td colSpan={9} className="p-0">
+                          <EarningsSetupDetail
+                            setup={e}
+                            alreadyLogged={loggedIds.has(cardKey)}
+                            onLog={() => {
+                              logTrade({
+                                ticker: e.ticker,
+                                source: 'earnings',
+                                loggedPrice: e.price,
+                                strategy: e.strategy,
+                                bias: e.bias,
+                                playType: e.playType,
+                                reportDate: e.reportDate,
+                                reportTime: e.reportTime,
+                                daysUntilAtLog: e.daysUntil,
+                                expectedMove: e.expectedMove,
+                                ivr: e.ivr,
+                                avgPriorMove: e.avgPriorMove,
+                                moveRatio: e.moveRatio,
+                                composite: e.composite,
+                                rationale: e.rationale,
+                                triggers: e.triggers,
+                              });
+                              setLoggedIds(new Set([...loggedIds, cardKey]));
+                            }}
+                          />
+                        </td>
+                      </tr>
+                    )}
+                  </React.Fragment>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
 
-      <div className="mt-6 border border-amber-500/20 bg-amber-500/5 p-4 flex items-start gap-3">
+      <div className="border border-amber-500/20 bg-amber-500/5 p-4 flex items-start gap-3">
         <AlertTriangle className="h-5 w-5 text-amber-400 flex-shrink-0 mt-0.5" />
         <div>
           <div className="font-serif text-base text-neutral-200">IV crush risk on every earnings trade</div>
@@ -1815,6 +1847,93 @@ const EarningsPlaysView = () => {
             realized move matches the expected move. Size tiny until you have 20+ closed earnings trades.
           </p>
         </div>
+      </div>
+    </div>
+  );
+};
+
+const EarningsSetupDetail = ({ setup: e, alreadyLogged, onLog }) => {
+  const ptColor = PLAY_TYPE_COLORS[e.playType] || '#737373';
+  const t = e.triggers ?? null;
+  const edge = e.historicalEdge ?? null;
+  return (
+    <div className="p-4 space-y-4 text-[12px]">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <DetailStat label="Strategy" value={e.strategy ?? '—'} color={ptColor} />
+        <DetailStat label="Report" value={`${e.reportDate ?? '—'} · ${(e.reportTime ?? '').toUpperCase() || 'DMH'}`} />
+        <DetailStat
+          label="Position size"
+          value={t?.positionSizePct ? `${t.positionSizePct.toFixed(1)}% acct` : '—'}
+        />
+        <DetailStat
+          label="R:R"
+          value={t?.riskReward ? `${t.riskReward.toFixed(2)}` : '—'}
+          color={t?.riskReward && t.riskReward >= 2 ? '#14e89a' : t?.riskReward && t.riskReward < 1 ? '#f59e0b' : undefined}
+        />
+      </div>
+
+      {/* Triggers */}
+      {t && (
+        <div className="border border-neutral-800 bg-neutral-900/30 p-3">
+          <div className="font-mono uppercase tracking-widest text-[9px] text-neutral-500 mb-2">Trade Plan</div>
+          <div className="space-y-1.5">
+            <div>
+              <span className="text-neutral-500 text-[10px] uppercase tracking-widest mr-2">Entry:</span>
+              <span className="text-neutral-200">{t.entry}</span>
+            </div>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-2">
+              <DetailStat label="Stop" value={t.stop ? fmtUsdEarnings(t.stop) : '—'} color="#f87171" />
+              <DetailStat label="T1" value={t.targets?.t1 ? fmtUsdEarnings(t.targets.t1) : '—'} color="#14e89a" />
+              <DetailStat label="T2" value={t.targets?.t2 ? fmtUsdEarnings(t.targets.t2) : '—'} color="#14e89a" />
+              <DetailStat label="T3" value={t.targets?.t3 ? fmtUsdEarnings(t.targets.t3) : '—'} color="#14e89a" />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Historical edge */}
+      {edge && (
+        <div className="border border-neutral-800 bg-neutral-900/30 p-3">
+          <div className="font-mono uppercase tracking-widest text-[9px] text-neutral-500 mb-1">Historical Edge</div>
+          <div className="flex items-center gap-3">
+            <div className="font-mono text-2xl font-bold" style={{ color: edge.ratePct >= 60 ? '#14e89a' : edge.ratePct >= 40 ? '#4dbaf2' : '#f59e0b' }}>
+              {edge.ratePct}%
+            </div>
+            <div className="text-[12px] text-neutral-400">{edge.description}</div>
+          </div>
+        </div>
+      )}
+
+      {/* Pre-print drift signals */}
+      {e.prePrintDrift && e.prePrintDrift.lean !== 'mixed' && (
+        <div className="border border-neutral-800 bg-neutral-900/30 p-3">
+          <div className="font-mono uppercase tracking-widest text-[9px] text-neutral-500 mb-1">Pre-Print Drift</div>
+          <div className="text-[12px] text-neutral-300">
+            <span className={e.prePrintDrift.lean === 'long' ? 'text-emerald-400' : 'text-rose-400'}>
+              Lean {e.prePrintDrift.lean}
+            </span>
+            <span className="text-neutral-500 ml-2">{e.prePrintDrift.details.join(' · ')}</span>
+          </div>
+        </div>
+      )}
+
+      <p className="text-[12px] text-neutral-400 leading-relaxed">{e.rationale}</p>
+
+      <div className="flex items-center gap-2 flex-wrap">
+        <button
+          onClick={(ev) => { ev.stopPropagation(); if (!alreadyLogged) onLog(); }}
+          disabled={alreadyLogged}
+          className={`px-3 py-1.5 text-[11px] font-mono uppercase tracking-widest border transition-colors ${
+            alreadyLogged
+              ? 'text-emerald-400 border-emerald-500/40 bg-emerald-500/10 cursor-default'
+              : 'text-emerald-400 border-emerald-500/40 bg-emerald-500/5 hover:bg-emerald-500/15'
+          }`}
+        >
+          {alreadyLogged ? '✓ Logged' : '+ Log Trade'}
+        </button>
+        <span className="text-[10px] text-neutral-600 font-mono">
+          {alreadyLogged ? 'See Journal tab for forward returns' : 'Tracks 5d/20d/30d/60d/90d returns in Journal'}
+        </span>
       </div>
     </div>
   );
@@ -2594,7 +2713,8 @@ export default function App() {
       <main>
         {activeView === 'board' && <ErrorBoundary label="Board"><LiveTargetBoard onOpenTarget={setSelectedTarget} universe={universe} /></ErrorBoundary>}
         {activeView === 'prophet' && <ErrorBoundary label="Prophet"><ProphetView /></ErrorBoundary>}
-        {activeView === 'catalyst' && <ErrorBoundary label="Catalyst"><CatalystView universe={universe} /></ErrorBoundary>}
+        {activeView === 'catalyst' && <ErrorBoundary label="Catalyst"><CatalystView universe={universe} onNavigate={setActiveView} /></ErrorBoundary>}
+        {activeView === 'insiders' && <ErrorBoundary label="Insiders"><InsiderBoardView universe={universe} /></ErrorBoundary>}
         {activeView === 'williams' && <ErrorBoundary label="Williams"><WilliamsView universe={universe} /></ErrorBoundary>}
         {activeView === 'lynch' && <ErrorBoundary label="Lynch"><LynchView universe={universe} /></ErrorBoundary>}
         {activeView === 'earnings' && <ErrorBoundary label="Earnings"><EarningsPlaysView universe={universe} /></ErrorBoundary>}

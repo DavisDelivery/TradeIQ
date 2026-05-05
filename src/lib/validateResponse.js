@@ -40,6 +40,16 @@ export const SHAPES = {
   },
   earningsBoard: {
     setups: [],
+    universeChecked: 0,
+    windowDays: 7,
+    cached: false,
+    generatedAt: null,
+  },
+  insiderBoard: {
+    rows: [],
+    universeChecked: 0,
+    windowDays: 90,
+    cached: false,
     generatedAt: null,
   },
   optionsFlow: {

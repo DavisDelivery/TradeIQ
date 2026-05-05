@@ -227,9 +227,10 @@ export async function getUpcomingEarnings(
 
 export async function getEarningsCalendarRange(
   daysAhead = 14,
+  daysBack = 0,
 ): Promise<UpcomingEarning[]> {
   try {
-    const from = new Date().toISOString().slice(0, 10);
+    const from = new Date(Date.now() - Math.max(0, daysBack) * 86400000).toISOString().slice(0, 10);
     const to = new Date(Date.now() + daysAhead * 86400000).toISOString().slice(0, 10);
     const url = `${FINNHUB}/calendar/earnings?from=${from}&to=${to}&token=${finnhubKey()}`;
     const res = await fetch(url);
