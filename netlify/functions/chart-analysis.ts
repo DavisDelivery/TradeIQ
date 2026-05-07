@@ -7,7 +7,7 @@ import { getDailyBars } from './shared/data-provider';
 import { detectSetups, scoreSetups } from './shared/technical-setups';
 
 const ANTHROPIC_API = 'https://api.anthropic.com/v1/messages';
-const MODEL = 'claude-sonnet-4-6';
+const MODEL = 'claude-opus-4-7';
 
 const headers = { 'Content-Type': 'application/json; charset=utf-8' };
 const json = (code: number, body: unknown) => ({

@@ -28,7 +28,7 @@ import {
 import type { Bar } from './shared/data-provider';
 
 const ANTHROPIC_API = 'https://api.anthropic.com/v1/messages';
-const MODEL = 'claude-sonnet-4-6';
+const MODEL = 'claude-opus-4-7';
 
 // Hard time budget for the scan loop. Netlify function timeout is 26s; we need
 // buffer for response serialization + narrative calls on top.

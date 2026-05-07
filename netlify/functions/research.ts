@@ -6,7 +6,7 @@ import { getNews, getPreviousClose } from './shared/data-provider';
 import type { ResearchResponse, ResearchBrief } from './shared/types';
 
 const ANTHROPIC_API = 'https://api.anthropic.com/v1/messages';
-const MODEL = 'claude-sonnet-4-6';
+const MODEL = 'claude-opus-4-7';
 
 // In-memory cache; Netlify function instances live ~15-60 min, good enough for this
 const cache = new Map<string, { at: number; brief: ResearchBrief; newsCount: number }>();
