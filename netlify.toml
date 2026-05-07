@@ -44,6 +44,16 @@
   timeout = 900
   schedule = "0,30 13-21 * * 1-5"
 
+[functions."scheduled/scan-catalyst"]
+  timeout = 900
+  schedule = "0,30 13-21 * * 1-5"
+
+# Insider data updates after US close. Schedule snapshot once daily at the
+# widest window (180 days); live endpoint filters down to 30/60/90 on read.
+[functions."scheduled/scan-insider"]
+  timeout = 900
+  schedule = "30 21 * * 1-5"
+
 # Lynch is fundamentals-driven; daily refresh after US close is enough.
 [functions."scheduled/scan-lynch"]
   timeout = 900
