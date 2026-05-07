@@ -30,6 +30,17 @@
   timeout = 26
 
 # ==========================================================================
+# Scheduled (background) functions — full-universe scans that populate
+# Firestore snapshots. Phase 1 introduces these to fix the silent product bug
+# where every board scanned only the first 80–200 alphabetical tickers.
+# Background timeout cap is 15 min; scans budget themselves to 14 min.
+# ==========================================================================
+
+[functions."scheduled/scan-target-board"]
+  timeout = 900
+  schedule = "0,30 13-21 * * 1-5"
+
+# ==========================================================================
 # API redirects — rewrite /api/<endpoint> to /.netlify/functions/<endpoint>
 # ==========================================================================
 
