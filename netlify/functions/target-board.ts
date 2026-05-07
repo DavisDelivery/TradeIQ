@@ -19,6 +19,9 @@ import { computeRegime, regimeToMacroBias } from './shared/regime';
 import { CORE_WATCHLIST, UNIVERSE, inIndex, SPY } from './shared/universe';
 import type { TargetBoardResponse, Target } from './shared/types';
 import type { Bar } from './shared/data-provider';
+import { createLogger } from './shared/logger';
+
+const log = createLogger('target-board');
 
 const PASS1_MAX = 80;
 const PASS2_MAX = 20;
@@ -41,8 +44,11 @@ export const handler: Handler = async (event) => {
   const universe = (qs.universe as 'all' | 'sp500' | 'ndx' | 'dow' | 'russell' | 'russell2k' | 'core') ?? 'core';
 
   const cacheKey = universe;
+  const start = Date.now();
+  log.info('request', { universe, limit });
   const cached = resultCache.get(cacheKey);
   if (cached && Date.now() - cached.at < CACHE_TTL_MS) {
+    log.info('response', { status: 200, cached: true, durationMs: Date.now() - start, universe });
     return json(200, { ...cached.data, cached: true });
   }
 
@@ -122,8 +128,17 @@ export const handler: Handler = async (event) => {
     if (results.length > 0) {
       resultCache.set(cacheKey, { data: response, at: Date.now() });
     }
+    log.info('response', {
+      status: 200,
+      cached: false,
+      durationMs: Date.now() - start,
+      universe,
+      tickersScanned: results.length,
+      pass1Scanned: pass1Tickers.length,
+    });
     return json(200, response);
   } catch (err: any) {
+    log.error('failed', { error: err, durationMs: Date.now() - start, universe });
     if (cached) return json(200, { ...cached.data, cached: true, stale: true, warning: String(err?.message ?? err) });
     return json(500, { error: String(err?.message ?? err), targets: [], generatedAt: new Date().toISOString(), source: 'error' } as TargetBoardResponse);
   }

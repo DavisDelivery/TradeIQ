@@ -27,6 +27,9 @@ import {
   composeProphet, type ProphetScore, type FundInput, type CatalystInput,
 } from './shared/prophet-layers';
 import type { Bar } from './shared/data-provider';
+import { createLogger } from './shared/logger';
+
+const log = createLogger('prophet-picks');
 
 const ANTHROPIC_API = 'https://api.anthropic.com/v1/messages';
 const MODEL = 'claude-opus-4-7';
@@ -88,11 +91,14 @@ export const handler: Handler = async (event) => {
   const minConviction = (qs.minConviction as 'low' | 'medium' | 'high') ?? 'low';
   const limit = Math.min(Number(qs.limit ?? 30), 100);
   const narrate = qs.narrate !== '0';
+  const start = Date.now();
+  log.info('request', { universe, minConviction, limit, narrate });
 
   const scanUniverse = pickUniverse(universe);
   const cacheKey = `${universe}:${minConviction}`;
   const cached = resultCache.get(cacheKey);
   if (cached && Date.now() - new Date(cached.generatedAt).getTime() < CACHE_TTL_MS) {
+    log.info('response', { status: 200, cached: true, universe, durationMs: Date.now() - start });
     return json(200, {
       ok: true,
       cached: true,
@@ -191,6 +197,10 @@ export const handler: Handler = async (event) => {
       resultCache.set(cacheKey, { picks, generatedAt, universeSize: scanUniverse.length, partial });
     }
 
+    log.info('response', {
+      status: 200, cached: false, universe, qualified: picks.length, partial,
+      durationMs: Date.now() - start,
+    });
     return json(200, {
       ok: true,
       cached: false,
@@ -204,9 +214,11 @@ export const handler: Handler = async (event) => {
       picks: filterByConviction(picks, minConviction).slice(0, limit),
     });
   } catch (err: any) {
+    log.error('failed', { universe, error: err, durationMs: Date.now() - start });
     // On error, fall back to stale cache if we have one
     const stale = resultCache.get(cacheKey);
     if (stale && Date.now() - new Date(stale.generatedAt).getTime() < STALE_CACHE_TTL_MS) {
+      log.warn('stale_fallback', { universe, generatedAt: stale.generatedAt });
       return json(200, {
         ok: true,
         cached: true,

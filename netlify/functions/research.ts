@@ -12,6 +12,9 @@ import {
   BudgetExhaustedError,
   CircuitOpenError,
 } from './shared/anthropic-client';
+import { createLogger } from './shared/logger';
+
+const log = createLogger('research');
 
 const MODEL = 'claude-opus-4-7';
 
@@ -35,14 +38,20 @@ Output ONLY valid JSON matching this schema:
 export const handler: Handler = async (event) => {
   const ticker = (event.queryStringParameters?.ticker ?? '').toUpperCase();
   const force = event.queryStringParameters?.force === '1';
+  const start = Date.now();
+  log.info('request', { ticker, force });
   if (!ticker) return json(400, { ok: false, error: 'ticker required' });
 
   const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) return json(500, { ok: false, error: 'ANTHROPIC_API_KEY not set' });
+  if (!apiKey) {
+    log.error('missing_env', { var: 'ANTHROPIC_API_KEY' });
+    return json(500, { ok: false, error: 'ANTHROPIC_API_KEY not set' });
+  }
 
   // Cache hit
   const cached = cache.get(ticker);
   if (cached && !force && Date.now() - cached.at < TTL_MS) {
+    log.info('response', { status: 200, cached: true, ticker, durationMs: Date.now() - start });
     const resp: ResearchResponse = {
       ok: true,
       ticker,
@@ -79,6 +88,7 @@ export const handler: Handler = async (event) => {
       });
     } catch (err: any) {
       if (err instanceof BudgetExhaustedError) {
+        log.warn('budget_exhausted', { ticker, durationMs: Date.now() - start });
         return json(503, {
           ok: false,
           ticker,
@@ -87,6 +97,7 @@ export const handler: Handler = async (event) => {
         });
       }
       if (err instanceof CircuitOpenError) {
+        log.warn('circuit_open', { ticker, openUntil: err.openUntil, durationMs: Date.now() - start });
         return json(503, {
           ok: false,
           ticker,
@@ -96,6 +107,7 @@ export const handler: Handler = async (event) => {
         });
       }
       if (err instanceof AnthropicHttpError) {
+        log.error('anthropic_http', { ticker, status: err.status, durationMs: Date.now() - start });
         return json(500, { ok: false, ticker, error: `Claude API ${err.status}: ${err.bodyText.slice(0, 200)}` });
       }
       throw err;
@@ -123,8 +135,12 @@ export const handler: Handler = async (event) => {
       cached: false,
       newsCount: news.length,
     };
+    log.info('response', {
+      status: 200, cached: false, ticker, newsCount: news.length, durationMs: Date.now() - start,
+    });
     return json(200, response);
   } catch (err: any) {
+    log.error('failed', { ticker, error: err, durationMs: Date.now() - start });
     return json(500, { ok: false, ticker, error: String(err?.message ?? err) });
   }
 };
