@@ -1,11 +1,18 @@
 // GET /api/research?ticker=NVDA&force=1
-// Claude Sonnet reads recent news + price action, returns structured research brief.
+// Claude Opus reads recent news + price action, returns structured research brief.
+// All Anthropic calls go through callAnthropic, which gates on the daily
+// spend cap and the per-deployment circuit breaker.
 
 import type { Handler } from '@netlify/functions';
 import { getNews, getPreviousClose } from './shared/data-provider';
 import type { ResearchResponse, ResearchBrief } from './shared/types';
+import {
+  callAnthropic,
+  AnthropicHttpError,
+  BudgetExhaustedError,
+  CircuitOpenError,
+} from './shared/anthropic-client';
 
-const ANTHROPIC_API = 'https://api.anthropic.com/v1/messages';
 const MODEL = 'claude-opus-4-7';
 
 // In-memory cache; Netlify function instances live ~15-60 min, good enough for this
@@ -61,28 +68,39 @@ export const handler: Handler = async (event) => {
 
     const user = `${priceBlock}\n\nRecent news:\n${newsBlock}\n\nWrite the brief.`;
 
-    const resp = await fetch(ANTHROPIC_API, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': apiKey,
-        'anthropic-version': '2023-06-01',
-      },
-      body: JSON.stringify({
+    let data: { content: Array<{ type: string; text?: string }> };
+    try {
+      data = await callAnthropic({
         model: MODEL,
         max_tokens: 1200,
         temperature: 0.3,
         system: SYSTEM_PROMPT,
         messages: [{ role: 'user', content: user }],
-      }),
-    });
-
-    if (!resp.ok) {
-      const text = await resp.text();
-      return json(500, { ok: false, ticker, error: `Claude API ${resp.status}: ${text.slice(0, 200)}` });
+      });
+    } catch (err: any) {
+      if (err instanceof BudgetExhaustedError) {
+        return json(503, {
+          ok: false,
+          ticker,
+          error: 'budget_exhausted',
+          message: 'AI features paused — daily Anthropic budget reached. Resets at 00:00 UTC.',
+        });
+      }
+      if (err instanceof CircuitOpenError) {
+        return json(503, {
+          ok: false,
+          ticker,
+          error: 'circuit_open',
+          message: 'AI temporarily unavailable due to upstream errors. Retry shortly.',
+          openUntil: new Date(err.openUntil).toISOString(),
+        });
+      }
+      if (err instanceof AnthropicHttpError) {
+        return json(500, { ok: false, ticker, error: `Claude API ${err.status}: ${err.bodyText.slice(0, 200)}` });
+      }
+      throw err;
     }
 
-    const data = (await resp.json()) as { content: Array<{ type: string; text?: string }> };
     const textBlock = data.content.find((b) => b.type === 'text');
     if (!textBlock?.text) return json(500, { ok: false, ticker, error: 'Claude returned no text' });
 

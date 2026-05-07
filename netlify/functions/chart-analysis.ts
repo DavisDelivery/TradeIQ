@@ -5,8 +5,8 @@
 import type { Handler } from '@netlify/functions';
 import { getDailyBars } from './shared/data-provider';
 import { detectSetups, scoreSetups } from './shared/technical-setups';
+import { callAnthropic, BudgetExhaustedError, CircuitOpenError } from './shared/anthropic-client';
 
-const ANTHROPIC_API = 'https://api.anthropic.com/v1/messages';
 const MODEL = 'claude-opus-4-7';
 
 const headers = { 'Content-Type': 'application/json; charset=utf-8' };
@@ -182,24 +182,21 @@ export const handler: Handler = async (event) => {
         ].join('\n');
         const user = `Ticker: ${ticker}\n\nIndicator snapshot:\n${indicatorSummary}\n\nDetected setups:\n${setupSummary}\n\nLast 5 bars:\n${last5}\n\nWrite a 3-4 sentence trading view that an experienced discretionary trader would actually use: what the chart is showing, what the edge case is, and a specific invalidation level. No hype, no disclaimers.`;
 
-        const resp = await fetch(ANTHROPIC_API, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'x-api-key': process.env.ANTHROPIC_API_KEY,
-            'anthropic-version': '2023-06-01',
-          },
-          body: JSON.stringify({
+        try {
+          const data = await callAnthropic({
             model: MODEL,
             max_tokens: 400,
             temperature: 0.25,
             system: 'You are a veteran swing trader reviewing a chart. Be concise, specific, and give a clear edge-case read. Reference actual price levels. No disclaimers, no "always DYOR", just the read.',
             messages: [{ role: 'user', content: user }],
-          }),
-        });
-        if (resp.ok) {
-          const data = (await resp.json()) as { content: Array<{ type: string; text?: string }> };
+          });
           narrative = data.content.find((b) => b.type === 'text')?.text?.trim() ?? null;
+        } catch (err) {
+          // Narrative is optional decoration — drop it on budget/circuit/upstream
+          // failure rather than failing the whole chart response.
+          if (err instanceof BudgetExhaustedError) narrative = null;
+          else if (err instanceof CircuitOpenError) narrative = null;
+          else narrative = null;
         }
       } catch { /* swallow */ }
     }
