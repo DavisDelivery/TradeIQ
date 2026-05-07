@@ -40,6 +40,15 @@
   timeout = 900
   schedule = "0,30 13-21 * * 1-5"
 
+[functions."scheduled/scan-williams"]
+  timeout = 900
+  schedule = "0,30 13-21 * * 1-5"
+
+# Lynch is fundamentals-driven; daily refresh after US close is enough.
+[functions."scheduled/scan-lynch"]
+  timeout = 900
+  schedule = "0 22 * * 1-5"
+
 # ==========================================================================
 # API redirects — rewrite /api/<endpoint> to /.netlify/functions/<endpoint>
 # ==========================================================================
