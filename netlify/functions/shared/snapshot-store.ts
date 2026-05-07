@@ -27,7 +27,14 @@ export type BoardName =
   | 'lynch'
   | 'earnings';
 
-export type UniverseKey = 'sp500' | 'ndx' | 'dow' | 'russell2k' | 'all' | 'core';
+export type UniverseKey =
+  | 'sp500'
+  | 'ndx'
+  | 'dow'
+  | 'russell2k'
+  | 'all'
+  | 'core'
+  | 'largecap';
 
 export interface BoardSnapshot {
   /** Stamped from MODEL_VERSION at write time. */
