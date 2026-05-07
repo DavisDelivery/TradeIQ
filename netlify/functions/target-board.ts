@@ -27,6 +27,14 @@ const SCAN_BUDGET_MS = 24_000;
 const resultCache = new Map<string, { data: any; at: number }>();
 const CACHE_TTL_MS = 10 * 60 * 1000;
 
+// Test-only export: exposes the module-scoped cache so the cache-poisoning
+// regression suite can assert empty results never poison the cache.
+// Production code never references this — it's a pure introspection hook.
+export const __testInternals = {
+  resultCache,
+  reset: () => resultCache.clear(),
+};
+
 export const handler: Handler = async (event) => {
   const qs = event.queryStringParameters ?? {};
   const limit = Math.min(Number(qs.limit ?? 50), 100);

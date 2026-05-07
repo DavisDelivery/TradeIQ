@@ -25,6 +25,13 @@ const ALLOWED_WINDOWS = [30, 60, 90, 180] as const;
 const resultCache = new Map<string, { data: InsiderBoardResponse; at: number }>();
 const CACHE_TTL_MS = 30 * 60 * 1000;
 
+// Test-only export: exposes the module-scoped cache so the cache-poisoning
+// regression suite can assert empty results never poison the cache.
+export const __testInternals = {
+  resultCache,
+  reset: () => resultCache.clear(),
+};
+
 export const handler: Handler = async (event) => {
   try {
     const qs = event.queryStringParameters ?? {};

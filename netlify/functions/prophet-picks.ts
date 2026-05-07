@@ -73,6 +73,14 @@ const STALE_CACHE_TTL_MS = 4 * 60 * 60 * 1000;  // 4 hours
 const narrativeCache = new Map<string, { text: string; at: number }>();
 const NARRATIVE_TTL_MS = 6 * 60 * 60 * 1000;
 
+// Test-only export: exposes the module-scoped cache so the cache-poisoning
+// regression suite can assert empty results never poison the cache.
+export const __testInternals = {
+  resultCache,
+  narrativeCache,
+  reset: () => { resultCache.clear(); narrativeCache.clear(); },
+};
+
 export const handler: Handler = async (event) => {
   const qs = event.queryStringParameters ?? {};
   const universe = (qs.universe as 'largecap' | 'russell' | 'all') ?? 'largecap';

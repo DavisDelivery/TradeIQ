@@ -21,6 +21,13 @@ import type {
 const resultCache = new Map<number, { data: EarningsBoardResponse; at: number }>();
 const CACHE_TTL_MS = 30 * 60 * 1000;
 
+// Test-only export: exposes the module-scoped cache so the cache-poisoning
+// regression suite can assert empty results never poison the cache.
+export const __testInternals = {
+  resultCache,
+  reset: () => resultCache.clear(),
+};
+
 const ALLOWED_WINDOWS = [3, 7, 14, 30] as const;
 const POST_PRINT_LOOKBACK_DAYS = 5;
 
