@@ -8,7 +8,9 @@ SPA on top of TypeScript Netlify Functions.
 **Live:** https://tradeiq-alpha.netlify.app
 **Owner:** Chad Davis · single-user app
 **Roadmap:** see [`ORCHESTRATOR.md`](./ORCHESTRATOR.md) — the source of truth
-for what's built, what's next, and where each phase landed.
+for what's built, what's next, and where each phase landed. Phase 1
+(universe coverage + scheduled snapshots) is live as of v0.9.1-alpha;
+Phase 0 (engineering foundation) is reconciled on top in this branch.
 
 ## Architecture (one paragraph)
 

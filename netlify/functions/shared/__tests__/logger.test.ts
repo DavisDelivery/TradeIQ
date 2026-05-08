@@ -27,13 +27,13 @@ function lastErr(): any {
 }
 
 describe('createLogger', () => {
-  it('emits a single-line JSON event with ts/level/fn/msg', () => {
+  it('emits a single-line JSON event with ts/level/fn/event', () => {
     const log = createLogger('target-board');
     log.info('request', { universe: 'core' });
     const e = lastLog();
     expect(e.level).toBe('info');
     expect(e.fn).toBe('target-board');
-    expect(e.msg).toBe('request');
+    expect(e.event).toBe('request');
     expect(e.universe).toBe('core');
     expect(typeof e.ts).toBe('string');
     expect(new Date(e.ts).toString()).not.toBe('Invalid Date');

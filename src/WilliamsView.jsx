@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { TrendingUp, TrendingDown, Activity, Zap } from 'lucide-react';
 import { LogButton } from './components/LogButton.jsx';
+import { FreshnessPill } from './components/FreshnessPill.jsx';
 import { validate, SHAPES } from './lib/validateResponse.js';
 
 const SIDE_OPTIONS = [
@@ -14,11 +15,15 @@ export const WilliamsView = ({ universe = 'sp500' }) => {
   const [error, setError] = useState(null);
   const [data, setData] = useState(null);
   const [side, setSide] = useState('both');
+  const [isRescanning, setIsRescanning] = useState(false);
 
-  const load = async () => {
-    setLoading(true); setError(null);
+  const load = async ({ force = false } = {}) => {
+    if (force) setIsRescanning(true);
+    else setLoading(true);
+    setError(null);
     try {
-      const r = await fetch(`/api/williams-board?index=${universe}&side=${side}&limit=30`);
+      const url = `/api/williams-board?index=${universe}&side=${side}&limit=30${force ? '&force=1' : ''}`;
+      const r = await fetch(url);
       const json = await r.json();
       if (!r.ok || !json.ok) throw new Error(json.error || `HTTP ${r.status}`);
       setData(validate(json, SHAPES.williams, "williams"));
@@ -26,6 +31,7 @@ export const WilliamsView = ({ universe = 'sp500' }) => {
       setError(e.message);
     } finally {
       setLoading(false);
+      setIsRescanning(false);
     }
   };
 
@@ -39,6 +45,13 @@ export const WilliamsView = ({ universe = 'sp500' }) => {
           <h1 className="text-xl sm:text-2xl font-serif font-semibold text-neutral-100">
             Williams Setups
           </h1>
+          <div className="ml-auto">
+            <FreshnessPill
+              meta={data}
+              isRescanning={isRescanning}
+              onForceRescan={() => load({ force: true })}
+            />
+          </div>
         </div>
         <p className="text-[12px] text-neutral-500 leading-relaxed max-w-2xl">
           Larry Williams style: volatility breakouts, Williams %R momentum reversals,

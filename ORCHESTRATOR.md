@@ -56,7 +56,67 @@
 
 ---
 
-## Phase 1 — Refactor foundation: schemas + monolith split + server state
+## Phase 1 — Universe coverage + snapshot infrastructure
+
+**Goal.** Every board scans the FULL configured universe (all 1,930 Russell 2000, all S&P 500, all NDX, all Dow), not the first 80–200 alphabetical. Comprehensive results delivered instantly to the UI by reading from a shared store populated by scheduled background jobs. Snapshots are model-version stamped and double as the historical archive that downstream phases (backtest, calibration, replay) read from.
+
+**Why this is in Phase 1 and not later.** Every current board caps at 80–200 tickers and slices alphabetically (`tickers.slice(0, 80)`). When the user selects Russell 2000 (1,930 tickers), only A-G ever get scanned. Tickers from H-Z are invisible to the model. This is the worst possible failure mode for small-cap discovery — exactly where insider, political, patent, and short-interest signals have the most edge. It's a silent product gap that makes the app's small-cap claims structurally false. Fix this immediately after the engineering foundation lands.
+
+**Architectural shape.**
+
+The fix is not "raise the limits" — Netlify functions cap at 26s sync, which is nowhere near enough for a deep 1,930-ticker scan. The fix is decoupling scan time from request time:
+
+1. Scheduled background functions (Netlify scheduled functions, up to 15-minute background timeout) scan the full universe across all boards, multiple times daily.
+2. Each run writes results to Firestore as `boardSnapshots/{board}/{date}/{snapshotId}` with full ticker results, model version, scan duration, freshness timestamp.
+3. Live API endpoints (`/api/target-board?universe=russell2k` etc.) read from the most recent snapshot first. Fall back to a live partial scan only if the snapshot is older than the freshness budget for that board.
+4. UI shows a freshness pill: "Live · 8 min ago" or "Refreshing…" or "Fallback (partial scan)".
+5. Manual "Force rescan" button triggers a synchronous capped scan (current behavior, kept as an escape hatch).
+
+**Scope.**
+
+| Workstream | Files | Action |
+|---|---|---|
+| Firebase Admin in functions | `netlify/functions/shared/firebase-admin.ts` | New. Service-account-backed Firestore writer for use from scheduled functions. Distinct from frontend `firebase.js`. Reads `FIREBASE_SERVICE_ACCOUNT` env var (JSON). |
+| Snapshot store abstraction | `netlify/functions/shared/snapshot-store.ts` | New. Read/write API for all snapshot data: `writeSnapshot(board, universe, snapshot)`, `latestSnapshot(board, universe)`, `snapshotAge(board, universe)`. Backed by Firestore. |
+| Model version stamp | `netlify/functions/shared/model-version.ts` | New. Single `MODEL_VERSION` constant bumped on any scoring change. Stamped on every snapshot. |
+| Scheduled scan: target-board | `netlify/functions/scheduled/scan-target-board.ts` | New. Runs at 06:00, 09:30, 12:00, 15:30, 17:00 ET. Scans full universe per index (sp500, ndx, russell2k, dow). Writes per-universe snapshots. |
+| Scheduled scan: prophet | `netlify/functions/scheduled/scan-prophet.ts` | New. Same cadence. Full 7-layer ensemble across full universe. |
+| Scheduled scan: catalyst | `netlify/functions/scheduled/scan-catalyst.ts` | New. Same cadence. |
+| Scheduled scan: insider | `netlify/functions/scheduled/scan-insider.ts` | New. Daily at 17:30 ET (insider data updates after close). |
+| Scheduled scan: williams | `netlify/functions/scheduled/scan-williams.ts` | New. Same cadence as catalyst. |
+| Scheduled scan: lynch | `netlify/functions/scheduled/scan-lynch.ts` | New. Daily after close (fundamentals don't move intraday). |
+| Scheduled scan: earnings | `netlify/functions/scheduled/scan-earnings.ts` | New. 06:00 and 17:00 ET. |
+| Live API rewire — target-board | `netlify/functions/target-board.ts` | Modify. Query path: snapshot-first, fallback partial. Remove the alphabetical 80-cap when serving from snapshot. |
+| Live API rewire — prophet | `netlify/functions/prophet-picks.ts` | Modify. Same pattern. |
+| Live API rewire — catalyst, insider, williams, lynch, earnings | each `*-board.ts` / `*-picks.ts` | Modify. Same pattern. |
+| Snapshot freshness budget | `shared/snapshot-store.ts` | New. Per-board: target-board 30min, prophet 30min, catalyst 1hr, insider 12hr, williams 1hr, lynch 24hr, earnings 12hr. |
+| Universe iteration utility | `shared/full-scan-iterator.ts` | New. Concurrency-controlled async generator that yields ticker batches across full universe. Respects rate limits per provider. |
+| Health endpoint surfaces snapshot age | `netlify/functions/health.ts` | Modify. Return last snapshot age for every board+universe. |
+| Frontend freshness pill | every view component | Modify. Show data age + "force rescan" affordance. |
+| HistoryView | `src/views/HistoryView.jsx` | New. Pick a past date, see exact board snapshot. Tab in nav. |
+| Backfill from journal | `scripts/backfill-snapshots.ts` | New (one-shot). Reconstruct partial historical snapshots from existing journal entries' loggedAt timestamps. |
+| netlify.toml schedule config | `netlify.toml` | Modify. Add `[[scheduled.functions]]` blocks for each scheduled scan with cron expression and timeout=900s (background). |
+
+**One-time setup the user must do (document in PR):**
+1. Create a Firebase service account JSON for `tradeiq-alpha` project (separate from the one created for backups in Phase 0 if needed; can reuse).
+2. Set the JSON as Netlify env var `FIREBASE_SERVICE_ACCOUNT`.
+3. Verify Firestore rules allow service-account writes to `boardSnapshots/**` (default Firestore rules with service account work fine — service accounts bypass security rules).
+
+**Dependencies.** Phase 0 (structured logging, Sentry, Anthropic budget cap — without these, scheduled scans are a black box and could burn budget silently).
+
+**Success criteria.**
+- A request to `/api/target-board?universe=russell2k` returns results covering tickers across the entire alphabet (smoke check: confirm at least one ticker starting with "Z" appears in some board's results, given current Russell composition).
+- Snapshot for each board exists for current day, age < freshness budget during market hours.
+- A scheduled function failure (e.g., Polygon outage) is surfaced via Sentry within 5 minutes.
+- The "force rescan" button still works and explicitly tells the user the result is partial.
+- Anthropic / Polygon / Finnhub API spend per day is within budget (verify via dashboards from Phase 0).
+- HistoryView displays a snapshot from yesterday accurately.
+
+**Estimate.** 2–3 sessions. Heaviest piece is wiring Firebase Admin + service account + the seven scheduled scans + rewiring seven live endpoints. The scheduled scan logic itself is mostly factoring-out of existing in-handler code.
+
+---
+
+## Phase 2 — Refactor foundation: schemas + monolith split + server state
 
 **Goal.** Make the codebase reviewable on a phone and protect every external API boundary with Zod.
 
@@ -74,7 +134,7 @@
 | Server-state cache invalidation | `src/lib/queryKeys.js` | New. Centralized query keys so invalidations are explicit. |
 | Frontend Zod (optional, low priority) | `src/lib/zodFrontend.js` | New. Validate API responses on the frontend too. Backstop for the existing `validateResponse.js` shapes. |
 
-**Dependencies.** Phase 0 (CI catches refactor regressions).
+**Dependencies.** Phase 0 (CI catches refactor regressions). Phase 1 (frontend changes need to play nice with snapshot-backed endpoints).
 
 **Success criteria.**
 - App.jsx is under 800 lines and contains only routing/shell.
@@ -84,35 +144,6 @@
 - All 7 view files exist and pass their own ErrorBoundary.
 
 **Estimate.** 2 sessions. Split App.jsx is mostly mechanical; TanStack Query wiring is the careful part.
-
----
-
-## Phase 2 — Snapshot infrastructure (the keystone)
-
-**Goal.** Every day, every board (target, prophet, catalyst, earnings, insider, williams, lynch) is snapshotted to Firestore with a model-version tag.
-
-**Why.** This is the foundation that unlocks the real backtest, the calibration loop, regime-conditional weighting, and any honest performance claim. Without this, "backtest" is forever a forward-only sample of current model on current universe — which is what's wrong with the current backtest.
-
-**Scope.**
-
-| Workstream | Files | Action |
-|---|---|---|
-| Snapshot writer | `netlify/functions/scheduled/daily-snapshot.ts` | New. Scheduled function (Netlify cron). Runs all boards once per market day after close, writes to Firestore. |
-| Model version stamp | `netlify/functions/shared/model-version.ts` | New. Single string `MODEL_VERSION` constant bumped any time scoring logic changes. Stamped on every snapshot. |
-| Firestore schema | docs in `FIRESTORE_RULES.md` | Update. New collections: `boardSnapshots/{date}/{board}/{ticker}`, `modelVersions/{version}` with full weight + threshold config. |
-| Snapshot replay viewer | `src/views/HistoryView.jsx` | New. View any past day's board exactly as it was. Tab in nav. |
-| Snapshot health check | `netlify/functions/health.ts` | Modify. Surface "last snapshot age" so a missed cron is visible. |
-| Backfill from existing journal | `scripts/backfill-snapshots.ts` | New (one-shot). Reconstruct what we can from existing trade-log entries' `loggedAt` timestamps. |
-
-**Dependencies.** Phase 0 (logging + observability needed to know when cron fails).
-
-**Success criteria.**
-- Every market day at 4:30 PM ET, a snapshot exists in Firestore.
-- `MODEL_VERSION` is stamped on every snapshot.
-- HistoryView lets user pick a date and see that day's target board exactly.
-- Health endpoint shows snapshot age in hours.
-
-**Estimate.** 1 session.
 
 ---
 
@@ -511,8 +542,8 @@ Updated each session. `pending` → `in-progress` → `done` (with version + dat
 | # | Phase | Status | Version | Date | Notes |
 |---|---|---|---|---|---|
 | 0 | Engineering foundation + safety nets | pending | — | — | — |
-| 1 | Refactor foundation (schemas + monolith split + TanStack Query) | pending | — | — | — |
-| 2 | Snapshot infrastructure | pending | — | — | — |
+| 1 | Universe coverage + snapshot infrastructure | done | 0.9.1-alpha | 2026-05-07 | All 7 boards snapshot-first end-to-end; FreshnessPill on all 7 views; HistoryView replay surface; backfill script for tradeLog reconstruction. Phase 0 still pending — see PR notes. |
+| 2 | Refactor foundation (schemas + monolith split + TanStack Query) | pending | — | — | — |
 | 3 | Point-in-time data layer | pending | — | — | — |
 | 4 | Real backtest v2 | pending | — | — | — |
 | 5 | Calibration loop | pending | — | — | — |
@@ -533,8 +564,8 @@ Updated each session. `pending` → `in-progress` → `done` (with version + dat
 |  | Sessions |
 |---|---|
 | Phase 0 | 1–2 |
-| Phase 1 | 2 |
-| Phase 2 | 1 |
+| Phase 1 | 2–3 |
+| Phase 2 | 2 |
 | Phase 3 | 1–2 |
 | Phase 4 | 2–3 |
 | Phase 5 | 2 |
@@ -547,14 +578,16 @@ Updated each session. `pending` → `in-progress` → `done` (with version + dat
 | Phase 12 | 1 |
 | Phase 13 | 1–2 |
 | Phase 14 | 1 |
-| **Total** | **20–28 sessions** |
+| **Total** | **21–30 sessions** |
 
-At a session a week, this is ~5–7 months of evening/weekend work. At a couple sessions a week, ~3 months. The dependency chain means Phases 0–4 are mostly sequential; after that several phases parallelize (e.g., 6 and 7 are independent; 10 and 11 are independent).
+At a session a week, this is ~5–7 months of evening/weekend work. At a couple sessions a week, ~3 months. Phases 0 and 1 are sequential and high-leverage. After Phase 1 several phases parallelize (e.g., 6 and 7 are independent; 10 and 11 are independent).
 
 ---
 
 ## Highest-leverage path if time gets compressed
 
-If you only have time for the top three: **Phase 0, Phase 2, Phase 4.** That gets you tests + CI + spend cap + Sentry, daily snapshots, and a real backtest. Everything else compounds off those.
+If you only have time for the top three: **Phase 0, Phase 1, Phase 4.** That gets you tests + CI + spend cap + Sentry, comprehensive universe coverage with snapshots, and a real backtest. Everything else compounds off those.
+
+Phase 1 is the user-visible win — small caps suddenly become discoverable. Phase 4 is the credibility win — analyst weights stop being guesses. Phase 0 is the protection — neither of the above can be trusted without the engineering foundation underneath.
 
 Worst path: skipping Phase 0 to chase features. Cache poisoning recurs, Anthropic spend gets weird, a bad commit silently breaks prod. Done that movie three times already.
