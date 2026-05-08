@@ -26,7 +26,7 @@ import { readLog, logTrade, removeTrade, computeForwardReturns } from './tradeLo
 import { validate, SHAPES, fetchWithRetry } from './lib/validateResponse.js';
 import { useSortable, SortableTh } from './lib/useSortable.jsx';
 
-const APP_VERSION = '0.9.0-alpha';
+const APP_VERSION = '0.9.1-alpha';
 
 // ======================================================================
 // ERROR BOUNDARY — catches React render errors in any child subtree and

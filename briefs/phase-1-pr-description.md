@@ -5,12 +5,10 @@ alphabetical tickers. Decouples scan duration from request duration by routing
 all board APIs through Firestore-backed snapshots populated by background
 scheduled functions.
 
-## Status: partial
+## Status: done
 
-Phase 1 is shipped as **partial** on the ORCHESTRATOR status table. 6 of 7
-boards are end-to-end snapshot-first; earnings + the HistoryView replay
-surface + the one-shot backfill script are deferred to follow-up commits on
-this same PR or a successor PR.
+All 7 boards are end-to-end snapshot-first. HistoryView replay surface
+shipped. One-shot backfill script shipped.
 
 ## Phase 0 dependency
 
@@ -103,20 +101,37 @@ scan-lynch          0  22    * * 1-5     daily, 18:00 ET (fundamentals are slow)
 All scheduled functions: `timeout = 900` (15 min). Each scan budgets
 itself to 14 min to leave 60s margin.
 
-## What's deferred (follow-up work on this PR or a successor)
+## What landed in the close-the-gaps round (v0.9.1-alpha)
 
-- **Earnings board.** 811 lines, calendar-driven (not universe-driven), and
-  doesn't have the silent A-G slice bug the same way (its universe is
-  bounded by the earnings calendar, not alphabetical slicing). Would
-  require a window-based snapshot strategy similar to insider. Punted to
-  avoid an 800-line refactor with risk of breaking the working board.
-- **HistoryView** for snapshot replay. Until scheduled scans have been
-  running for a few days, there's no historical data to view, so the UI
-  would be empty. Defer until snapshots are populated.
-- **One-shot backfill script** to reconstruct partial snapshots from
-  `tradeLog`. Same reason — defer until HistoryView is implemented.
-- **EarningsPlaysView pill.** Will be wired when the earnings backend is
-  refactored (would show permanent grey '—' otherwise).
+After the initial partial Phase 1 (v0.9.0-alpha) shipped the 6-of-7-boards
+foundation, this round closed the deferred items:
+
+- **Earnings board** converted to snapshot-first (811-line monolith refactored
+  into 152-line slim handler + ~700-line shared scan module). Uses the
+  widest-window strategy from insider: scheduled scan runs at 30 days ahead
+  + 5 days back, snapshot stores all setups unfiltered, live endpoint
+  filters by user's 3/7/14/30 window at read time. One snapshot covers
+  all 4 window variants. Twice-daily cron (11:30 + 21:30 UTC).
+- **EarningsPlaysView pill.** Replaced standalone Refresh button with the
+  standard FreshnessPill component. All 7 boards now have unified freshness
+  indication.
+- **HistoryView** new tab, between Earnings and Options. Pickers: board ×
+  universe × snapshot date. Auto-selects newest snapshot when board/universe
+  changes. Per-board hand-picked column rendering for compact display
+  (target/prophet/catalyst/insider/williams/lynch/earnings each have their
+  own column set; generic fallback for unknown shapes). Surfaces snapshot
+  warnings in an amber banner.
+- **`/api/snapshot-history` endpoint** with two modes: list (newest 60) and
+  fetch-by-id. Plus `listSnapshots` + `getSnapshotById` helpers in the
+  store. All 7 boards × 7 universes queryable.
+- **One-shot backfill script** at `scripts/backfill-snapshots.ts`. Reads
+  the `tradeLog` collection, groups by (board, date), writes synthetic
+  snapshots tagged `modelVersion: 'backfill-from-tradelog'` so HistoryView
+  shows something for dates that predate Phase 1. HHmm hardcoded to '0000'
+  so synthetic snapshots never collide with real scheduled-scan IDs.
+  Idempotent — re-running overwrites synthetic but never touches real.
+
+Phase 1 is now **done** on the ORCHESTRATOR status table.
 
 ## REQUIRED ONE-TIME USER ACTIONS
 
