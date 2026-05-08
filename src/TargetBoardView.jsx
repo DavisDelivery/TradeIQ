@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useMemo } from 'react';
 import {
   AlertTriangle, Circle, CircleX, X, CircleCheck, Eye, ExternalLink, Filter,
 } from 'lucide-react';
@@ -10,7 +10,7 @@ import { ConvictionBadge, DirectionPill } from './components/Badges.jsx';
 import { ResearchPanel } from './components/ResearchPanel.jsx';
 import { FreshnessPill } from './components/FreshnessPill.jsx';
 import { LogButton } from './components/LogButton.jsx';
-import { validate, SHAPES, fetchWithRetry } from './lib/validateResponse.js';
+import { useTargetBoard } from './hooks/useTargetBoard.js';
 
 // ---------------------------------------------------------------------------
 // TargetCard — single ticker card on the grid
@@ -210,42 +210,15 @@ export const TargetBoardView = ({ targets, onOpenTarget, scanMeta, freshnessPill
 };
 
 // ---------------------------------------------------------------------------
-// LiveTargetBoard — data-fetching wrapper. Owned by App; the brief's
-// Workstream 3 will replace its useState/useEffect with a useTargetBoard hook.
+// LiveTargetBoard — data-fetching wrapper. Wired to useTargetBoard via
+// TanStack Query: cache dedup, focus-revalidate, force-rescan via
+// setQueryData. The old request-ID race guard is no longer needed —
+// useQuery's abort signal supersedes prior in-flight requests
+// automatically when the queryKey changes.
 // ---------------------------------------------------------------------------
 export const LiveTargetBoard = ({ onOpenTarget, universe = 'all' }) => {
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
-  const [data, setData] = useState(null);
-  const [isRescanning, setIsRescanning] = useState(false);
-  const requestIdRef = React.useRef(0);
-
-  const load = async ({ force = false } = {}) => {
-    const myId = ++requestIdRef.current;
-    if (force) setIsRescanning(true);
-    else setLoading(true);
-    setError(null);
-    try {
-      const url = `/api/target-board?limit=50&universe=${universe}${force ? '&force=1' : ''}`;
-      const r = await fetchWithRetry(url);
-      const json = await r.json();
-      if (myId !== requestIdRef.current) return;
-      if (!r.ok || json.error) {
-        setError(json.error || `HTTP ${r.status}`);
-      } else {
-        setData(validate(json, SHAPES.targetBoard, "target-board"));
-      }
-    } catch (err) {
-      if (myId === requestIdRef.current) setError(err.message);
-    } finally {
-      if (myId === requestIdRef.current) {
-        setLoading(false);
-        setIsRescanning(false);
-      }
-    }
-  };
-
-  useEffect(() => { load(); /* eslint-disable-next-line */ }, [universe]);
+  const { data, error, isLoading: loading, isFetching, forceRescan } = useTargetBoard(universe);
+  const isRescanning = isFetching && !loading;
 
   if (loading && !data) {
     const universeMeta = {
@@ -276,8 +249,8 @@ export const LiveTargetBoard = ({ onOpenTarget, universe = 'all' }) => {
           <div className="flex items-center gap-2 text-rose-400 font-mono text-[11px] uppercase tracking-widest mb-1">
             <CircleX className="h-4 w-4" /> Error loading target board
           </div>
-          <div className="text-[12px] text-neutral-300">{error}</div>
-          <button onClick={load} className="mt-3 px-3 h-8 border border-neutral-800 text-[11px] font-mono uppercase tracking-widest text-neutral-400 hover:text-neutral-200">
+          <div className="text-[12px] text-neutral-300">{error?.message ?? String(error)}</div>
+          <button onClick={() => forceRescan()} className="mt-3 px-3 h-8 border border-neutral-800 text-[11px] font-mono uppercase tracking-widest text-neutral-400 hover:text-neutral-200">
             ↻ Retry
           </button>
         </div>
@@ -296,7 +269,7 @@ export const LiveTargetBoard = ({ onOpenTarget, universe = 'all' }) => {
           <FreshnessPill
             meta={data}
             isRescanning={isRescanning}
-            onForceRescan={() => load({ force: true })}
+            onForceRescan={() => forceRescan()}
           />
         }
       />

@@ -1,8 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { TrendingUp, TrendingDown, Activity, Zap } from 'lucide-react';
 import { LogButton } from './components/LogButton.jsx';
 import { FreshnessPill } from './components/FreshnessPill.jsx';
-import { validate, SHAPES } from './lib/validateResponse.js';
+import { useWilliams } from './hooks/useWilliams.js';
 
 const SIDE_OPTIONS = [
   { id: 'both', label: 'Both' },
@@ -11,31 +11,9 @@ const SIDE_OPTIONS = [
 ];
 
 export const WilliamsView = ({ universe = 'sp500' }) => {
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
-  const [data, setData] = useState(null);
   const [side, setSide] = useState('both');
-  const [isRescanning, setIsRescanning] = useState(false);
-
-  const load = async ({ force = false } = {}) => {
-    if (force) setIsRescanning(true);
-    else setLoading(true);
-    setError(null);
-    try {
-      const url = `/api/williams-board?index=${universe}&side=${side}&limit=30${force ? '&force=1' : ''}`;
-      const r = await fetch(url);
-      const json = await r.json();
-      if (!r.ok || !json.ok) throw new Error(json.error || `HTTP ${r.status}`);
-      setData(validate(json, SHAPES.williams, "williams"));
-    } catch (e) {
-      setError(e.message);
-    } finally {
-      setLoading(false);
-      setIsRescanning(false);
-    }
-  };
-
-  useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [universe, side]);
+  const { data, error, isLoading: loading, isFetching, forceRescan } = useWilliams(universe, side);
+  const isRescanning = isFetching && !loading;
 
   return (
     <div className="px-3 py-4 sm:p-6 max-w-[1400px] mx-auto">
@@ -49,7 +27,7 @@ export const WilliamsView = ({ universe = 'sp500' }) => {
             <FreshnessPill
               meta={data}
               isRescanning={isRescanning}
-              onForceRescan={() => load({ force: true })}
+              onForceRescan={() => forceRescan()}
             />
           </div>
         </div>
@@ -83,7 +61,7 @@ export const WilliamsView = ({ universe = 'sp500' }) => {
 
       {error && (
         <div className="border border-rose-800/50 bg-rose-950/20 p-4 text-rose-300 font-mono text-sm">
-          Williams scan failed: {error}
+          Williams scan failed: {error?.message ?? String(error)}
           <button onClick={load} className="ml-4 underline">retry</button>
         </div>
       )}

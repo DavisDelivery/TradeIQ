@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import {
   FlaskConical, Users, Sparkles, TrendingUp, TrendingDown, Zap,
   Filter, RefreshCw, AlertCircle, ExternalLink, Landmark, Briefcase,
@@ -6,7 +6,7 @@ import {
 import { CatalystBadges, ConvictionChip, CatalystChip } from './components/CatalystBadges.jsx';
 import { LogButton } from './components/LogButton.jsx';
 import { FreshnessPill } from './components/FreshnessPill.jsx';
-import { validate, SHAPES } from './lib/validateResponse.js';
+import { useCatalyst } from './hooks/useCatalyst.js';
 
 const FILTER_OPTIONS = [
   { id: 'all', label: 'Any catalyst', desc: 'Any signal active' },
@@ -24,38 +24,12 @@ const CONVICTION_OPTIONS = [
 ];
 
 export const CatalystView = ({ universe = 'sp500', onNavigate }) => {
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
-  const [data, setData] = useState(null);
   const [filter, setFilter] = useState('all');
   const [minConviction, setMinConviction] = useState('medium');
   const [expandedTicker, setExpandedTicker] = useState(null);
-  const [isRescanning, setIsRescanning] = useState(false);
-
-  const load = async ({ force = false } = {}) => {
-    if (force) setIsRescanning(true);
-    else setLoading(true);
-    setError(null);
-    try {
-      const url = `/api/catalyst-board?index=${universe}&filter=${filter}&minConviction=${minConviction}&limit=40${force ? '&force=1' : ''}`;
-      const r = await fetch(url);
-      const ctype = r.headers.get('content-type') ?? '';
-      if (!ctype.includes('json')) {
-        const text = await r.text();
-        throw new Error(`Server returned ${r.status} (${ctype || 'no content-type'}): ${text.slice(0, 120)}`);
-      }
-      const json = await r.json();
-      if (!r.ok || !json.ok) throw new Error(json.error || `HTTP ${r.status}`);
-      setData(validate(json, SHAPES.catalyst, "catalyst"));
-    } catch (e) {
-      setError(e.message);
-    } finally {
-      setLoading(false);
-      setIsRescanning(false);
-    }
-  };
-
-  useEffect(() => { load(); /* eslint-disable-next-line */ }, [universe, filter, minConviction]);
+  const { data, error, isLoading: loading, isFetching, forceRescan } =
+    useCatalyst(universe, filter, minConviction);
+  const isRescanning = isFetching && !loading;
 
   return (
     <div className="px-3 py-4 sm:p-6 max-w-[1400px] mx-auto pb-20 sm:pb-6">
@@ -69,7 +43,7 @@ export const CatalystView = ({ universe = 'sp500', onNavigate }) => {
             <FreshnessPill
               meta={data}
               isRescanning={isRescanning}
-              onForceRescan={() => load({ force: true })}
+              onForceRescan={() => forceRescan()}
             />
           </div>
         </div>
@@ -106,7 +80,7 @@ export const CatalystView = ({ universe = 'sp500', onNavigate }) => {
       )}
 
       {loading && !data && <LoadingSkeleton />}
-      {error && <ErrorBanner message={error} onRetry={load} />}
+      {error && <ErrorBanner message={error?.message ?? String(error)} onRetry={() => forceRescan()} />}
 
       {data && data.picks && (
         <div className="space-y-2">

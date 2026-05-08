@@ -3,9 +3,9 @@ import {
   Users, RefreshCw, AlertCircle, ChevronDown, ChevronUp,
   ArrowUpDown, ArrowUp, ArrowDown, TrendingUp, TrendingDown,
 } from 'lucide-react';
-import { validate, SHAPES, fetchWithRetry } from './lib/validateResponse.js';
 import { useSortable, SortableTh } from './lib/useSortable.jsx';
 import { FreshnessPill } from './components/FreshnessPill.jsx';
+import { useInsider } from './hooks/useInsider.js';
 
 const WINDOW_OPTIONS = [
   { id: 30, label: '30d' },
@@ -41,37 +41,11 @@ export const InsiderBoardView = ({ universe = 'all' }) => {
     }
     return 90;
   });
-  const [data, setData] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
   const [expandedTicker, setExpandedTicker] = useState(null);
 
-  const [isRescanning, setIsRescanning] = useState(false);
-
   const { sortKey, sortDir, sortBy, sortRows } = useSortable('buyDollars', 'desc');
-
-  const load = async ({ force = false } = {}) => {
-    if (force) setIsRescanning(true);
-    else setLoading(true);
-    setError(null);
-    try {
-      const url = `/api/insider-board?days=${windowDays}&index=${universe}&limit=120${force ? '&force=1' : ''}`;
-      const r = await fetchWithRetry(url);
-      const json = await r.json();
-      if (!r.ok || json.error) {
-        setError(json.error || `HTTP ${r.status}`);
-      } else {
-        setData(validate(json, SHAPES.insiderBoard, 'insider-board'));
-      }
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setLoading(false);
-      setIsRescanning(false);
-    }
-  };
-
-  useEffect(() => { load(); /* eslint-disable-next-line */ }, [windowDays, universe]);
+  const { data, error, isLoading: loading, isFetching, forceRescan } = useInsider(universe, windowDays);
+  const isRescanning = isFetching && !loading;
 
   // Sync window choice to URL for bookmarkability
   useEffect(() => {
@@ -108,7 +82,7 @@ export const InsiderBoardView = ({ universe = 'all' }) => {
         <FreshnessPill
           meta={data}
           isRescanning={isRescanning}
-          onForceRescan={() => load({ force: true })}
+          onForceRescan={() => forceRescan()}
         />
       </div>
 
@@ -141,7 +115,7 @@ export const InsiderBoardView = ({ universe = 'all' }) => {
           <AlertCircle className="h-4 w-4 text-rose-400 mt-0.5 flex-shrink-0" />
           <div>
             <div className="text-rose-400 font-mono text-[11px] uppercase tracking-widest mb-1">Error</div>
-            <div className="text-[12px] text-neutral-300">{error}</div>
+            <div className="text-[12px] text-neutral-300">{error?.message ?? String(error)}</div>
           </div>
         </div>
       )}
