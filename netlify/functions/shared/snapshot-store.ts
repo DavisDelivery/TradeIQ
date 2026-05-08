@@ -185,3 +185,73 @@ export async function snapshotAgesForBoard(
   );
   return out;
 }
+
+// ====================================================================
+// History / replay (HistoryView reads through these)
+// ====================================================================
+
+export interface SnapshotListItem {
+  snapshotId: string;
+  generatedAt: string;
+  modelVersion: string;
+  resultsCount: number;
+  universeChecked: number;
+}
+
+/**
+ * List snapshot IDs for a board+universe, newest first. `limit` caps the
+ * number of returned items (default 60, ~2 weeks at 4-snapshot-per-day cadence).
+ *
+ * Note: snapshot IDs encode the date (YYYY-MM-DD-HHmm), so the firestore-side
+ * orderBy on document name is equivalent to orderBy generatedAt.
+ */
+export async function listSnapshots(
+  board: BoardName,
+  universe: UniverseKey,
+  limit: number = 60,
+): Promise<SnapshotListItem[]> {
+  const db = getAdminDb();
+  const snap = await db
+    .collection('boardSnapshots')
+    .doc(board)
+    .collection('runs')
+    .where('universe', '==', universe)
+    .orderBy('generatedAt', 'desc')
+    .limit(limit)
+    .get();
+
+  return snap.docs.map((d) => {
+    const data = d.data();
+    return {
+      snapshotId: d.id,
+      generatedAt: data.generatedAt,
+      modelVersion: data.modelVersion,
+      resultsCount: Array.isArray(data.results) ? data.results.length : 0,
+      universeChecked: data.universeChecked ?? 0,
+    };
+  });
+}
+
+/**
+ * Read a specific historical snapshot by its ID. Used by HistoryView for
+ * replay. Null if the ID doesn't exist for this board+universe.
+ */
+export async function getSnapshotById(
+  board: BoardName,
+  universe: UniverseKey,
+  snapshotId: string,
+): Promise<BoardSnapshot | null> {
+  const db = getAdminDb();
+  const doc = await db
+    .collection('boardSnapshots')
+    .doc(board)
+    .collection('runs')
+    .doc(snapshotId)
+    .get();
+  if (!doc.exists) return null;
+  const data = doc.data() as BoardSnapshot & { universe?: UniverseKey };
+  // Guard against accidental cross-universe pulls (snapshotId could collide if
+  // two universes wrote the same minute, though our IDs include universe).
+  if (data.universe && data.universe !== universe) return null;
+  return data;
+}
