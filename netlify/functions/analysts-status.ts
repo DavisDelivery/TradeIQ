@@ -4,7 +4,9 @@
 // persistence layer and are returned as null until that's built.
 
 import type { Handler } from '@netlify/functions';
+import { createLogger } from './shared/logger';
 
+const log = createLogger('analysts-status');
 const headers = { 'Content-Type': 'application/json' };
 
 interface AnalystEntry {
@@ -85,6 +87,8 @@ const REGISTRY: Omit<AnalystEntry, 'status'>[] = [
 ];
 
 export const handler: Handler = async () => {
+  const start = Date.now();
+  log.info('request');
   try {
     const analysts: AnalystEntry[] = REGISTRY.map((a) => ({
       ...a,
@@ -93,6 +97,10 @@ export const handler: Handler = async () => {
     const healthyCount = analysts.filter((a) => a.status === 'healthy').length;
     const totalWeight = analysts.reduce((s, a) => s + a.weight, 0);
 
+    log.info('response', {
+      status: 200, healthy: healthyCount, degraded: analysts.length - healthyCount,
+      durationMs: Date.now() - start,
+    });
     return {
       statusCode: 200,
       headers,
@@ -110,6 +118,7 @@ export const handler: Handler = async () => {
       }),
     };
   } catch (err: any) {
+    log.error('failed', { error: err, durationMs: Date.now() - start });
     return {
       statusCode: 500,
       headers,

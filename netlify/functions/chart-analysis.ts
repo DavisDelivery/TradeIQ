@@ -5,8 +5,11 @@
 import type { Handler } from '@netlify/functions';
 import { getDailyBars } from './shared/data-provider';
 import { detectSetups, scoreSetups } from './shared/technical-setups';
+import { callAnthropic, BudgetExhaustedError, CircuitOpenError } from './shared/anthropic-client';
+import { createLogger } from './shared/logger';
 
-const ANTHROPIC_API = 'https://api.anthropic.com/v1/messages';
+const log = createLogger('chart-analysis');
+
 const MODEL = 'claude-opus-4-7';
 
 const headers = { 'Content-Type': 'application/json; charset=utf-8' };
@@ -108,20 +111,26 @@ function macd(closes: number[]): { macd: (number | null)[]; signal: (number | nu
 }
 
 export const handler: Handler = async (event) => {
+  const start = Date.now();
   const ticker = (event.queryStringParameters?.ticker ?? '').toUpperCase().trim();
   const lookback = parseInt(event.queryStringParameters?.lookback ?? '180', 10);
   const skipAi = event.queryStringParameters?.skipAi === '1';
+  log.info('request', { ticker, lookback, skipAi });
   if (!ticker) return json(400, { ok: false, error: 'ticker required' });
 
   const cacheKey = `${ticker}:${lookback}:${skipAi ? 'noai' : 'ai'}`;
   const hit = cache.get(cacheKey);
-  if (hit && Date.now() - hit.at < TTL_MS) return json(200, { ...hit.data, cached: true });
+  if (hit && Date.now() - hit.at < TTL_MS) {
+    log.info('response', { status: 200, cached: true, ticker, durationMs: Date.now() - start });
+    return json(200, { ...hit.data, cached: true });
+  }
 
   try {
     const to = new Date().toISOString().slice(0, 10);
     const from = new Date(Date.now() - lookback * 86400000).toISOString().slice(0, 10);
     const bars = await getDailyBars(ticker, from, to);
     if (bars.length < 30) {
+      log.warn('insufficient_data', { ticker, bars: bars.length, durationMs: Date.now() - start });
       return json(200, { ok: false, error: `insufficient data for ${ticker} (${bars.length} bars)` });
     }
 
@@ -182,25 +191,22 @@ export const handler: Handler = async (event) => {
         ].join('\n');
         const user = `Ticker: ${ticker}\n\nIndicator snapshot:\n${indicatorSummary}\n\nDetected setups:\n${setupSummary}\n\nLast 5 bars:\n${last5}\n\nWrite a 3-4 sentence trading view that an experienced discretionary trader would actually use: what the chart is showing, what the edge case is, and a specific invalidation level. No hype, no disclaimers.`;
 
-        const resp = await fetch(ANTHROPIC_API, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'x-api-key': process.env.ANTHROPIC_API_KEY,
-            'anthropic-version': '2023-06-01',
-          },
-          body: JSON.stringify({
+        try {
+          const data = await callAnthropic({
             model: MODEL,
             max_tokens: 400,
             // temperature parameter removed: Claude Opus 4.7 deprecated it
             // (returns 400 invalid_request_error).
             system: 'You are a veteran swing trader reviewing a chart. Be concise, specific, and give a clear edge-case read. Reference actual price levels. No disclaimers, no "always DYOR", just the read.',
             messages: [{ role: 'user', content: user }],
-          }),
-        });
-        if (resp.ok) {
-          const data = (await resp.json()) as { content: Array<{ type: string; text?: string }> };
+          });
           narrative = data.content.find((b) => b.type === 'text')?.text?.trim() ?? null;
+        } catch (err) {
+          // Narrative is optional decoration — drop it on budget/circuit/upstream
+          // failure rather than failing the whole chart response.
+          if (err instanceof BudgetExhaustedError) narrative = null;
+          else if (err instanceof CircuitOpenError) narrative = null;
+          else narrative = null;
         }
       } catch { /* swallow */ }
     }
@@ -242,8 +248,13 @@ export const handler: Handler = async (event) => {
     };
 
     cache.set(cacheKey, { data: response, at: Date.now() });
+    log.info('response', {
+      status: 200, cached: false, ticker, hasNarrative: !!narrative,
+      durationMs: Date.now() - start,
+    });
     return json(200, response);
   } catch (err: any) {
+    log.error('failed', { ticker, error: err, durationMs: Date.now() - start });
     return json(500, { ok: false, ticker, error: String(err?.message ?? err) });
   }
 };

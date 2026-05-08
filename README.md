@@ -1,47 +1,126 @@
-# TradeIQ Alpha — Recovered v1 Source
+# TradeIQ Alpha
 
-This is the complete frontend source code for TradeIQ Alpha v0.1.0-alpha, recovered from the source map embedded in the last production deploy (`69e7ff554f31016c5699b647`).
+A personal trading research stack: regime-aware screening across multiple
+analyst styles, an AI-narrated PROPHET ensemble, an earnings-setup board,
+chart analysis, a journal, and a backtest harness — all in a single React
+SPA on top of TypeScript Netlify Functions.
 
-## Status
+**Live:** https://tradeiq-alpha.netlify.app
+**Owner:** Chad Davis · single-user app
+**Roadmap:** see [`ORCHESTRATOR.md`](./ORCHESTRATOR.md) — the source of truth
+for what's built, what's next, and where each phase landed. Phase 1
+(universe coverage + scheduled snapshots) is live as of v0.9.1-alpha;
+Phase 0 (engineering foundation) is reconciled on top in this branch.
 
-- **Live site:** https://tradeiq-alpha.netlify.app (running deploy `69e7ff554f31016c5699b647`)
-- **Frontend source:** 100% recovered ✅
-  - `src/App.jsx` — 2,187 lines, the monolithic component with all views
-  - `src/main.jsx` — entry point
-- **Backend (Netlify Functions):** source NOT in this recovery, but **still deployed and running** on the live site
-  - 7 functions: target-board, backtest, research, health, engine-test, earnings-board, options-flow
-  - Keep running as-is until we rebuild them in a future session
+## Architecture (one paragraph)
 
-## How to build and run locally
+The frontend is a React 18 SPA built with Vite, served from Netlify CDN.
+A trade journal syncs through Firebase Firestore (`tradeLog` collection).
+Every `/api/*` endpoint is a TypeScript Netlify Function in
+`netlify/functions/*.ts`; they pull market data from Polygon (bars),
+Finnhub (insider, earnings calendar), FRED (macro), and Quiver (political,
+patents, gov contracts), then call Anthropic (Claude Opus 4.7) for the
+AI-narrated views (research briefs, PROPHET narratives, chart reads) via
+`netlify/functions/shared/anthropic-client.ts`. All Anthropic calls go
+through a daily spend cap + circuit breaker backed by Netlify Blobs.
+
+## Local development
 
 ```bash
 npm install
-npm run dev     # http://localhost:5173
-npm run build   # produces dist/
+npm run dev          # http://localhost:5173
+npm run build        # produces dist/
 ```
 
-The dev server won't show real data because `/api/*` endpoints are on the deployed site. You can either:
-1. Deploy this frontend (but be careful — see below)
-2. Proxy `/api/*` to tradeiq-alpha.netlify.app during dev (add a Vite proxy config)
+Required env vars (Netlify dashboard already has these in production):
 
-## ⚠️ Deployment caution
+```
+ANTHROPIC_API_KEY            # Opus 4.7 access
+POLYGON_API_KEY              # bars, news
+FINNHUB_API_KEY              # insider, earnings
+FRED_API_KEY                 # macro
+QUIVER_API_KEY               # political, patents, gov contracts
+ANTHROPIC_DAILY_BUDGET_USD   # default 25
+SENTRY_DSN                   # optional, errors no-op without it
+VITE_SENTRY_DSN              # frontend equivalent
+VITE_FIREBASE_API_KEY        # frontend journal sync
+VITE_FIREBASE_APP_ID         # frontend journal sync
+```
 
-**Deploying this frontend to the same Netlify site will REPLACE the backend functions** with nothing, breaking all `/api/*` endpoints. Do NOT `netlify deploy --prod` against site `8e90d525-78f3-4288-9c15-8b1968e994c1` from this directory.
+The dev server doesn't run the Netlify functions locally — point `/api/*`
+at the deployed site or use `netlify dev` if you have the CLI installed.
 
-Safe paths:
-1. **Deploy to a new Netlify site** for development/preview (safe)
-2. **Use branch deploys / previews** on the existing site (doesn't publish)
-3. **If publishing over v1:** first rebuild the backend functions (Netlify Functions source), include them in the deploy, THEN publish
+## Tests + CI
 
-## Recovery provenance
+```bash
+npm test              # vitest run (runs both projects)
+npm run test:watch    # interactive
+npm run coverage      # full coverage report → coverage/
+npm run typecheck     # tsc --noEmit
+```
 
-- Source extracted from `dist/assets/index-dafeover.js.map` via `sourcesContent` field
-- Tailwind config inferred from compiled CSS (`index-g6i_kzlm.css`, 19.7 KB)
-- Dependencies inferred from JS imports: react 18, react-dom 18, recharts 2, lucide-react
-- Original build: 651,108 bytes
-- Recovered rebuild: 651,010 bytes (functionally identical, different hash due to timestamps)
+Two Vitest projects:
 
-## Session log
+- **functions** (node env): tests under `netlify/functions/**/__tests__/`
+- **frontend** (jsdom env): tests under `src/**/*.test.{js,jsx,ts,tsx}`
 
-- Session 1 (Apr 21–22 2026): source recovered from deploy map; dev environment rebuilt and build verified against original.
-// deploy trigger 1776908002
+CI is `.github/workflows/ci.yml`: typecheck + tests + build on every PR
+and every push to main. Coverage report uploads as a non-blocking artifact.
+A failing test or type error blocks merge once branch protection is enabled.
+
+## Deploy story
+
+Push to `main` → Netlify auto-builds and deploys. After CI green, verify
+the live bundle includes the expected `APP_VERSION`:
+
+```bash
+curl -sS https://tradeiq-alpha.netlify.app/ \
+  | grep -oE 'assets/[^"]*\.js' | head -1 \
+  | xargs -I{} curl -sS https://tradeiq-alpha.netlify.app/{} \
+  | grep -oE '0\.[0-9]+\.[0-9]+-alpha' | head -1
+```
+
+## Conventions
+
+- **APP_VERSION** is bumped in `src/App.jsx` on every user-visible change.
+- **Tables** sort via `useSortable` + `SortableTh` (no exceptions).
+- **Cache-poisoning rule**: function-level `resultCache` writes are gated
+  on `length > 0`. Regression test:
+  `netlify/functions/__tests__/cache-poisoning.test.ts`.
+- **Brand colour** for Davis Delivery family is `#1e5b92`. TradeIQ stays
+  on a neutral dark palette.
+
+## Where things live
+
+```
+src/
+  App.jsx                  # 2.9k-line monolith with all views (Phase 1 splits this)
+  CatalystView.jsx         # other view modules
+  ChartView.jsx
+  InsiderBoardView.jsx
+  JournalView.jsx
+  LynchView.jsx
+  ProphetView.jsx
+  WilliamsView.jsx
+  components/              # reusable UI atoms
+  lib/                     # validateResponse, useSortable, sentry init
+  firebase.js              # CDN-loaded Firebase singleton
+  tradeLog.js              # journal sync logic
+  test/setup.ts            # jsdom test env setup
+
+netlify/functions/
+  *.ts                     # one file = one /api/* endpoint
+  __tests__/               # cache-poisoning regression suite + harness
+  shared/                  # data providers, regime, prophet layers,
+                           # anthropic-budget + anthropic-client,
+                           # logger, sentry helpers
+  shared/__tests__/        # unit tests for the shared layer
+
+scripts/
+  export-firestore.ts      # weekly backup (run by GH Action)
+  restore-firestore.ts     # restore drill
+
+docs/
+  CI_WORKFLOW.md.template.yml      # CI yaml (PAT scope blocked direct push)
+  BACKUP_WORKFLOW.md.template.yml  # weekly backup workflow yaml
+```

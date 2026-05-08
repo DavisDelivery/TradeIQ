@@ -5,3 +5,6 @@ dist/
 .netlify/
 *.log
 .DS_Store
+coverage/
+.vitest-cache/
+backups/

@@ -6,8 +6,13 @@ import type { Handler } from '@netlify/functions';
 import { getDailyBars } from './shared/data-provider';
 import { CORE_WATCHLIST } from './shared/universe';
 import type { OptionsFlowResponse, OptionsCandidate } from './shared/types';
+import { createLogger } from './shared/logger';
+
+const log = createLogger('options-flow');
 
 export const handler: Handler = async () => {
+  const start = Date.now();
+  log.info('request');
   try {
     const to = new Date().toISOString().slice(0, 10);
     const from = new Date(Date.now() - 120 * 86400000).toISOString().slice(0, 10);
@@ -37,8 +42,10 @@ export const handler: Handler = async () => {
       proxyNote: 'Volume + breakout proxies. True options chain data requires TradeStation integration (pending).',
       generatedAt: new Date().toISOString(),
     };
+    log.info('response', { status: 200, candidates: filtered.length, durationMs: Date.now() - start });
     return json(200, response);
   } catch (err: any) {
+    log.error('failed', { error: err, durationMs: Date.now() - start });
     return json(500, { error: String(err?.message ?? err) });
   }
 };

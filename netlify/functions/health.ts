@@ -77,7 +77,7 @@ export const handler: Handler = async () => {
       ok,
       status: ok ? 'healthy' : degraded ? 'degraded' : 'misconfigured',
       service: 'tradeiq-alpha',
-      version: '0.9.0-alpha',
+      version: '0.10.0-alpha',
       checks: apiKeys,
       snapshots,
       snapshotsError,

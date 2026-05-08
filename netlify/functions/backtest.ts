@@ -8,13 +8,18 @@ import type { Bar } from './shared/data-provider';
 import { runTechnical } from './analysts/technical';
 import { runSectorRotation } from './analysts/sector-rotation';
 import type { BacktestResponse, BacktestTrade, BacktestWindowStats, Tier, Direction } from './shared/types';
+import { createLogger } from './shared/logger';
+
+const log = createLogger('backtest');
 
 export const handler: Handler = async (event) => {
+  const start = Date.now();
   const qs = event.queryStringParameters ?? {};
   const lookbackDays = Math.min(Number(qs.lookbackDays ?? 365), 900);
   const sampleEvery = Math.max(1, Number(qs.sampleEvery ?? 5));
   const tickersParam = qs.tickers ?? 'NVDA,AAPL,MSFT,GOOGL,AMZN,META,TSLA,AVGO,AMD,INTC';
   const tickers = tickersParam.split(',').map((t) => t.trim().toUpperCase()).filter(Boolean);
+  log.info('request', { lookbackDays, sampleEvery, tickerCount: tickers.length });
 
   try {
     const to = new Date().toISOString().slice(0, 10);
@@ -127,8 +132,13 @@ export const handler: Handler = async (event) => {
       lookbackDays,
       tickers,
     };
+    log.info('response', {
+      status: 200, lookbackDays, trades: trades.length,
+      durationMs: Date.now() - start,
+    });
     return json(200, response);
   } catch (err: any) {
+    log.error('failed', { error: err, durationMs: Date.now() - start });
     return json(500, { ok: false, error: String(err?.message ?? err) });
   }
 };

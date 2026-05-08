@@ -25,8 +25,8 @@ import {
 } from './shared/snapshot-store';
 import { logger } from './shared/logger';
 import { MODEL_VERSION } from './shared/model-version';
+import { callAnthropic, BudgetExhaustedError, CircuitOpenError } from './shared/anthropic-client';
 
-const ANTHROPIC_API = 'https://api.anthropic.com/v1/messages';
 const MODEL = 'claude-opus-4-7';
 
 const SCAN_BUDGET_MS = 18_000;
@@ -218,14 +218,8 @@ ${layerLines}
 
 Write a 3-4 sentence trader's read: what the chart + catalysts + fundamentals together are saying, and one specific invalidation condition. Reference actual price levels. No disclaimers.`;
 
-    const resp = await fetch(ANTHROPIC_API, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': process.env.ANTHROPIC_API_KEY!,
-        'anthropic-version': '2023-06-01',
-      },
-      body: JSON.stringify({
+    try {
+      const data = await callAnthropic({
         model: MODEL,
         max_tokens: 350,
         // temperature parameter removed: Claude Opus 4.7 deprecated it
@@ -233,11 +227,14 @@ Write a 3-4 sentence trader's read: what the chart + catalysts + fundamentals to
         system:
           'You are a veteran swing trader writing a concise thesis. Be specific with price levels. No boilerplate, no "DYOR", no disclaimers.',
         messages: [{ role: 'user', content: user }],
-      }),
-    });
-    if (!resp.ok) return null;
-    const data = (await resp.json()) as { content: Array<{ type: string; text?: string }> };
-    return data.content.find((b) => b.type === 'text')?.text?.trim() ?? null;
+      });
+      return data.content.find((b) => b.type === 'text')?.text?.trim() ?? null;
+    } catch (err) {
+      // Narratives are best-effort — drop on budget/circuit/upstream
+      // failure rather than failing the whole prophet response.
+      if (err instanceof BudgetExhaustedError || err instanceof CircuitOpenError) return null;
+      return null;
+    }
   } catch {
     return null;
   }

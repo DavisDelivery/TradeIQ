@@ -1,11 +1,21 @@
 // GET /api/research?ticker=NVDA&force=1
-// Claude Sonnet reads recent news + price action, returns structured research brief.
+// Claude Opus reads recent news + price action, returns structured research brief.
+// All Anthropic calls go through callAnthropic, which gates on the daily
+// spend cap and the per-deployment circuit breaker.
 
 import type { Handler } from '@netlify/functions';
 import { getNews, getPreviousClose } from './shared/data-provider';
 import type { ResearchResponse, ResearchBrief } from './shared/types';
+import {
+  callAnthropic,
+  AnthropicHttpError,
+  BudgetExhaustedError,
+  CircuitOpenError,
+} from './shared/anthropic-client';
+import { createLogger } from './shared/logger';
 
-const ANTHROPIC_API = 'https://api.anthropic.com/v1/messages';
+const log = createLogger('research');
+
 const MODEL = 'claude-opus-4-7';
 
 // In-memory cache; Netlify function instances live ~15-60 min, good enough for this
@@ -28,14 +38,20 @@ Output ONLY valid JSON matching this schema:
 export const handler: Handler = async (event) => {
   const ticker = (event.queryStringParameters?.ticker ?? '').toUpperCase();
   const force = event.queryStringParameters?.force === '1';
+  const start = Date.now();
+  log.info('request', { ticker, force });
   if (!ticker) return json(400, { ok: false, error: 'ticker required' });
 
   const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) return json(500, { ok: false, error: 'ANTHROPIC_API_KEY not set' });
+  if (!apiKey) {
+    log.error('missing_env', { var: 'ANTHROPIC_API_KEY' });
+    return json(500, { ok: false, error: 'ANTHROPIC_API_KEY not set' });
+  }
 
   // Cache hit
   const cached = cache.get(ticker);
   if (cached && !force && Date.now() - cached.at < TTL_MS) {
+    log.info('response', { status: 200, cached: true, ticker, durationMs: Date.now() - start });
     const resp: ResearchResponse = {
       ok: true,
       ticker,
@@ -61,14 +77,9 @@ export const handler: Handler = async (event) => {
 
     const user = `${priceBlock}\n\nRecent news:\n${newsBlock}\n\nWrite the brief.`;
 
-    const resp = await fetch(ANTHROPIC_API, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': apiKey,
-        'anthropic-version': '2023-06-01',
-      },
-      body: JSON.stringify({
+    let data: { content: Array<{ type: string; text?: string }> };
+    try {
+      data = await callAnthropic({
         model: MODEL,
         max_tokens: 1200,
         // temperature parameter removed: Claude Opus 4.7 deprecated the
@@ -76,15 +87,34 @@ export const handler: Handler = async (event) => {
         // Model picks its own sampling automatically.
         system: SYSTEM_PROMPT,
         messages: [{ role: 'user', content: user }],
-      }),
-    });
-
-    if (!resp.ok) {
-      const text = await resp.text();
-      return json(500, { ok: false, ticker, error: `Claude API ${resp.status}: ${text.slice(0, 200)}` });
+      });
+    } catch (err: any) {
+      if (err instanceof BudgetExhaustedError) {
+        log.warn('budget_exhausted', { ticker, durationMs: Date.now() - start });
+        return json(503, {
+          ok: false,
+          ticker,
+          error: 'budget_exhausted',
+          message: 'AI features paused — daily Anthropic budget reached. Resets at 00:00 UTC.',
+        });
+      }
+      if (err instanceof CircuitOpenError) {
+        log.warn('circuit_open', { ticker, openUntil: err.openUntil, durationMs: Date.now() - start });
+        return json(503, {
+          ok: false,
+          ticker,
+          error: 'circuit_open',
+          message: 'AI temporarily unavailable due to upstream errors. Retry shortly.',
+          openUntil: new Date(err.openUntil).toISOString(),
+        });
+      }
+      if (err instanceof AnthropicHttpError) {
+        log.error('anthropic_http', { ticker, status: err.status, durationMs: Date.now() - start });
+        return json(500, { ok: false, ticker, error: `Claude API ${err.status}: ${err.bodyText.slice(0, 200)}` });
+      }
+      throw err;
     }
 
-    const data = (await resp.json()) as { content: Array<{ type: string; text?: string }> };
     const textBlock = data.content.find((b) => b.type === 'text');
     if (!textBlock?.text) return json(500, { ok: false, ticker, error: 'Claude returned no text' });
 
@@ -107,8 +137,12 @@ export const handler: Handler = async (event) => {
       cached: false,
       newsCount: news.length,
     };
+    log.info('response', {
+      status: 200, cached: false, ticker, newsCount: news.length, durationMs: Date.now() - start,
+    });
     return json(200, response);
   } catch (err: any) {
+    log.error('failed', { ticker, error: err, durationMs: Date.now() - start });
     return json(500, { ok: false, ticker, error: String(err?.message ?? err) });
   }
 };

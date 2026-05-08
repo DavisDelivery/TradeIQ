@@ -25,8 +25,9 @@ import { FreshnessPill } from './components/FreshnessPill.jsx';
 import { readLog, logTrade, removeTrade, computeForwardReturns } from './tradeLog.js';
 import { validate, SHAPES, fetchWithRetry } from './lib/validateResponse.js';
 import { useSortable, SortableTh } from './lib/useSortable.jsx';
+import { captureException } from './lib/sentry.js';
 
-const APP_VERSION = '0.9.2-alpha';
+const APP_VERSION = '0.10.0-alpha';
 
 // ======================================================================
 // ERROR BOUNDARY — catches React render errors in any child subtree and
@@ -44,6 +45,12 @@ class ErrorBoundary extends React.Component {
   componentDidCatch(error, info) {
     // Log to console so it shows up in remote debugging
     console.error('[ErrorBoundary]', this.props.label || 'unknown', error, info?.componentStack);
+    // Forward to Sentry (no-op if VITE_SENTRY_DSN is unset).
+    captureException(error, {
+      boundary: this.props.label || 'unknown',
+      componentStack: info?.componentStack,
+      appVersion: APP_VERSION,
+    });
   }
   reset = () => this.setState({ hasError: false, error: null });
   render() {
