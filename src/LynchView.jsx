@@ -1,17 +1,22 @@
 import React, { useState, useEffect } from 'react';
 import { TrendingUp, TrendingDown, Shield } from 'lucide-react';
 import { LogButton } from './components/LogButton.jsx';
+import { FreshnessPill } from './components/FreshnessPill.jsx';
 import { validate, SHAPES } from './lib/validateResponse.js';
 
 export const LynchView = ({ universe = 'sp500' }) => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [data, setData] = useState(null);
+  const [isRescanning, setIsRescanning] = useState(false);
 
-  const load = async () => {
-    setLoading(true); setError(null);
+  const load = async ({ force = false } = {}) => {
+    if (force) setIsRescanning(true);
+    else setLoading(true);
+    setError(null);
     try {
-      const r = await fetch(`/api/lynch-board?index=${universe}&limit=30`);
+      const url = `/api/lynch-board?index=${universe}&limit=30${force ? '&force=1' : ''}`;
+      const r = await fetch(url);
       const json = await r.json();
       if (!r.ok || !json.ok) throw new Error(json.error || `HTTP ${r.status}`);
       setData(validate(json, SHAPES.lynch, "lynch"));
@@ -19,6 +24,7 @@ export const LynchView = ({ universe = 'sp500' }) => {
       setError(e.message);
     } finally {
       setLoading(false);
+      setIsRescanning(false);
     }
   };
 
@@ -32,6 +38,13 @@ export const LynchView = ({ universe = 'sp500' }) => {
           <h1 className="text-xl sm:text-2xl font-serif font-semibold text-neutral-100">
             Peter Lynch Picks
           </h1>
+          <div className="ml-auto">
+            <FreshnessPill
+              meta={data}
+              isRescanning={isRescanning}
+              onForceRescan={() => load({ force: true })}
+            />
+          </div>
         </div>
         <p className="text-[12px] text-neutral-500 leading-relaxed max-w-2xl">
           GARP (Growth At Reasonable Price) screen. PEG ratio under 1, consistent earnings,

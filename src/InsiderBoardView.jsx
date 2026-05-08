@@ -5,6 +5,7 @@ import {
 } from 'lucide-react';
 import { validate, SHAPES, fetchWithRetry } from './lib/validateResponse.js';
 import { useSortable, SortableTh } from './lib/useSortable.jsx';
+import { FreshnessPill } from './components/FreshnessPill.jsx';
 
 const WINDOW_OPTIONS = [
   { id: 30, label: '30d' },
@@ -45,13 +46,16 @@ export const InsiderBoardView = ({ universe = 'all' }) => {
   const [error, setError] = useState(null);
   const [expandedTicker, setExpandedTicker] = useState(null);
 
+  const [isRescanning, setIsRescanning] = useState(false);
+
   const { sortKey, sortDir, sortBy, sortRows } = useSortable('buyDollars', 'desc');
 
-  const load = async () => {
-    setLoading(true);
+  const load = async ({ force = false } = {}) => {
+    if (force) setIsRescanning(true);
+    else setLoading(true);
     setError(null);
     try {
-      const url = `/api/insider-board?days=${windowDays}&index=${universe}&limit=120`;
+      const url = `/api/insider-board?days=${windowDays}&index=${universe}&limit=120${force ? '&force=1' : ''}`;
       const r = await fetchWithRetry(url);
       const json = await r.json();
       if (!r.ok || json.error) {
@@ -63,6 +67,7 @@ export const InsiderBoardView = ({ universe = 'all' }) => {
       setError(err.message);
     } finally {
       setLoading(false);
+      setIsRescanning(false);
     }
   };
 
@@ -100,14 +105,11 @@ export const InsiderBoardView = ({ universe = 'all' }) => {
             Click any row to see individual filings. Sort by tapping any column header.
           </p>
         </div>
-        <button
-          onClick={load}
-          disabled={loading}
-          className="h-8 px-3 border border-neutral-800 text-[11px] font-mono uppercase tracking-widest text-neutral-400 hover:text-neutral-200 disabled:opacity-50 flex items-center gap-1.5"
-        >
-          <RefreshCw className={`h-3 w-3 ${loading ? 'animate-spin' : ''}`} />
-          {loading ? '…' : 'Refresh'}
-        </button>
+        <FreshnessPill
+          meta={data}
+          isRescanning={isRescanning}
+          onForceRescan={() => load({ force: true })}
+        />
       </div>
 
       {/* Window selector */}
