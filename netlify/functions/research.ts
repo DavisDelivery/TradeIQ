@@ -82,7 +82,9 @@ export const handler: Handler = async (event) => {
       data = await callAnthropic({
         model: MODEL,
         max_tokens: 1200,
-        temperature: 0.3,
+        // temperature parameter removed: Claude Opus 4.7 deprecated the
+        // temperature field entirely (returns 400 invalid_request_error).
+        // Model picks its own sampling automatically.
         system: SYSTEM_PROMPT,
         messages: [{ role: 'user', content: user }],
       });
