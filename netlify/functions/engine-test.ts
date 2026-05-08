@@ -5,9 +5,13 @@ import type { Handler } from '@netlify/functions';
 import { fetchBarCache, runAnalystsForTicker } from './shared/analyst-runner';
 import { computeRegime, regimeToMacroBias } from './shared/regime';
 import type { EngineTestResponse } from './shared/types';
+import { createLogger } from './shared/logger';
+
+const log = createLogger('engine-test');
 
 export const handler: Handler = async (event) => {
   const ticker = (event.queryStringParameters?.ticker ?? '').toUpperCase();
+  log.info('request', { ticker });
   if (!ticker) return json(400, { error: 'ticker required' });
   const t0 = Date.now();
 
@@ -20,6 +24,7 @@ export const handler: Handler = async (event) => {
     const { target, analysts } = await runAnalystsForTicker({ ticker, barCache, macroBias });
 
     if (!target) {
+      log.warn('no_bars', { ticker, durationMs: Date.now() - t0 });
       return json(200, {
         ticker,
         price: 0,
@@ -39,8 +44,10 @@ export const handler: Handler = async (event) => {
       target,
       analysts,
     };
+    log.info('response', { status: 200, ticker, composite: target.composite, durationMs: Date.now() - t0 });
     return json(200, response);
   } catch (err: any) {
+    log.error('failed', { ticker, error: err, durationMs: Date.now() - t0 });
     return json(500, { error: String(err?.message ?? err) });
   }
 };

@@ -29,6 +29,9 @@ import { detectSetups } from './shared/technical-setups';
 import { scoreCatalysts, type CatalystScore } from './shared/catalyst-scorer';
 import { getDailyBars } from './shared/data-provider';
 import type { PatentActivity } from './shared/patent-provider';
+import { createLogger } from './shared/logger';
+
+const log = createLogger('catalyst-board');
 
 type CatalystPick = CatalystScore & {
   name: string;
@@ -68,18 +71,24 @@ function patentStub(ticker: string): PatentActivity {
 }
 
 export const handler: Handler = async (event) => {
+  const start = Date.now();
   const qs = event.queryStringParameters ?? {};
   const indexFilter = (qs.index as IndexTag | 'all') ?? 'all';
   const limit = Math.min(Number(qs.limit ?? 30), 100);
   const filter = (qs.filter as 'cluster' | 'patents' | 'political' | 'contracts' | 'setup' | 'all') ?? 'all';
   const minConviction = (qs.minConviction as 'low' | 'medium' | 'high') ?? 'medium';
+  log.info('request', { indexFilter, limit, filter, minConviction });
 
   const tickers = indexFilter === 'all' ? UNIVERSE : inIndex(indexFilter);
-  if (tickers.length === 0) return json(400, { ok: false, error: `unknown index: ${indexFilter}` });
+  if (tickers.length === 0) {
+    log.warn('unknown_index', { indexFilter });
+    return json(400, { ok: false, error: `unknown index: ${indexFilter}` });
+  }
 
   const cacheKey = `${indexFilter}|${filter}|${minConviction}|${limit}`;
   const cached = resultCache.get(cacheKey);
   if (cached && Date.now() - cached.at < CACHE_TTL_MS) {
+    log.info('response', { status: 200, cached: true, indexFilter, durationMs: Date.now() - start });
     return json(200, { ...cached.data, cached: true });
   }
 
@@ -176,8 +185,13 @@ export const handler: Handler = async (event) => {
       resultCache.set(cacheKey, { data: response, at: Date.now() });
     }
 
+    log.info('response', {
+      status: 200, cached: false, indexFilter, matched: results.length,
+      universeChecked: scanList.length, durationMs: Date.now() - start,
+    });
     return json(200, response);
   } catch (e: any) {
+    log.error('failed', { indexFilter, error: e, durationMs: Date.now() - start });
     return json(500, { ok: false, error: e?.message ?? 'catalyst-board failed' });
   }
 };

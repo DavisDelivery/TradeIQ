@@ -20,6 +20,9 @@ import { UNIVERSE, inIndex, type IndexTag } from './shared/universe';
 import { getFinnhubInsiderTransactions } from './shared/data-provider';
 import { lookupInsiderRole } from './shared/edgar-roles';
 import type { InsiderBoardResponse, InsiderBoardRow } from './shared/types';
+import { createLogger } from './shared/logger';
+
+const log = createLogger('insider-board');
 
 const ALLOWED_WINDOWS = [30, 60, 90, 180] as const;
 const resultCache = new Map<string, { data: InsiderBoardResponse; at: number }>();
@@ -33,6 +36,7 @@ export const __testInternals = {
 };
 
 export const handler: Handler = async (event) => {
+  const start = Date.now();
   try {
     const qs = event.queryStringParameters ?? {};
     const rawDays = Number(qs.days);
@@ -41,10 +45,12 @@ export const handler: Handler = async (event) => {
       : 90;
     const indexFilter = (qs.index as IndexTag | 'all') ?? 'all';
     const limit = Math.min(Number(qs.limit ?? 100), 200);
+    log.info('request', { windowDays, indexFilter, limit });
 
     const cacheKey = `${windowDays}|${indexFilter}|${limit}`;
     const cached = resultCache.get(cacheKey);
     if (cached && Date.now() - cached.at < CACHE_TTL_MS) {
+      log.info('response', { status: 200, cached: true, windowDays, indexFilter, durationMs: Date.now() - start });
       return json(200, { ...cached.data, cached: true });
     }
 
@@ -217,8 +223,13 @@ export const handler: Handler = async (event) => {
       resultCache.set(cacheKey, { data: response, at: Date.now() });
     }
 
+    log.info('response', {
+      status: 200, cached: false, rows: trimmed.length,
+      universeChecked: scanList.length, durationMs: Date.now() - start,
+    });
     return json(200, response);
   } catch (err: any) {
+    log.error('failed', { error: err, durationMs: Date.now() - start });
     return json(500, { error: String(err?.message ?? err) });
   }
 };

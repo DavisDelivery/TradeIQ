@@ -3,15 +3,23 @@ import type { Handler } from '@netlify/functions';
 import { UNIVERSE, inIndex, type IndexTag } from './shared/universe';
 import { runLynch } from './styles/lynch';
 import { getFundamentals, getEarningsHistory, getPreviousClose } from './shared/data-provider';
+import { createLogger } from './shared/logger';
+
+const log = createLogger('lynch-board');
 
 export const handler: Handler = async (event) => {
+  const start = Date.now();
   const qs = event.queryStringParameters ?? {};
   const indexFilter = (qs.index as IndexTag | 'all') ?? 'all';
   const limit = Math.min(Number(qs.limit ?? 25), 100);
   const minConfidence = Number(qs.minConfidence ?? 0.5);
+  log.info('request', { indexFilter, limit, minConfidence });
 
   const tickers = indexFilter === 'all' ? UNIVERSE : inIndex(indexFilter);
-  if (tickers.length === 0) return json(400, { ok: false, error: `Unknown index: ${indexFilter}` });
+  if (tickers.length === 0) {
+    log.warn('unknown_index', { indexFilter });
+    return json(400, { ok: false, error: `Unknown index: ${indexFilter}` });
+  }
 
   // Lynch needs more data per ticker — tighter cap
   const scanList = tickers.slice(0, Math.min(tickers.length, 150));
@@ -59,6 +67,10 @@ export const handler: Handler = async (event) => {
 
     results.sort((a, b) => b.score - a.score);
 
+    log.info('response', {
+      status: 200, indexFilter, scored: results.length,
+      universeSize: tickers.length, durationMs: Date.now() - start,
+    });
     return json(200, {
       ok: true,
       index: indexFilter,
@@ -70,6 +82,7 @@ export const handler: Handler = async (event) => {
       candidates: results.slice(0, limit),
     });
   } catch (err: any) {
+    log.error('failed', { indexFilter, error: err, durationMs: Date.now() - start });
     return json(500, { ok: false, error: String(err?.message ?? err) });
   }
 };

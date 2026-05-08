@@ -16,6 +16,9 @@ import type {
   EarningsBoardResponse, EarningsSetup, EarningsPlayType,
   PlayTriggers, HistoricalEdge, ExecutionStep,
 } from './shared/types';
+import { createLogger } from './shared/logger';
+
+const log = createLogger('earnings-board');
 
 // Per-window result cache. Key is windowDays.
 const resultCache = new Map<number, { data: EarningsBoardResponse; at: number }>();
@@ -32,15 +35,18 @@ const ALLOWED_WINDOWS = [3, 7, 14, 30] as const;
 const POST_PRINT_LOOKBACK_DAYS = 5;
 
 export const handler: Handler = async (event) => {
+  const start = Date.now();
   try {
     const rawDays = Number(event.queryStringParameters?.days);
     const windowDays: number = (ALLOWED_WINDOWS as readonly number[]).includes(rawDays)
       ? rawDays
       : 7;
+    log.info('request', { windowDays });
 
     // Cache check
     const cached = resultCache.get(windowDays);
     if (cached && Date.now() - cached.at < CACHE_TTL_MS) {
+      log.info('response', { status: 200, cached: true, windowDays, durationMs: Date.now() - start });
       return json(200, { ...cached.data, cached: true });
     }
 
@@ -288,8 +294,13 @@ export const handler: Handler = async (event) => {
       resultCache.set(windowDays, { data: response, at: Date.now() });
     }
 
+    log.info('response', {
+      status: 200, cached: false, windowDays, setups: filtered.length,
+      universeChecked: inUniverse.length, durationMs: Date.now() - start,
+    });
     return json(200, response);
   } catch (err: any) {
+    log.error('failed', { error: err, durationMs: Date.now() - start });
     return json(500, { error: String(err?.message ?? err) });
   }
 };

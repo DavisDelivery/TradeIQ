@@ -3,15 +3,23 @@ import type { Handler } from '@netlify/functions';
 import { UNIVERSE, inIndex, type IndexTag } from './shared/universe';
 import { runWilliams } from './styles/williams';
 import { getDailyBars } from './shared/data-provider';
+import { createLogger } from './shared/logger';
+
+const log = createLogger('williams-board');
 
 export const handler: Handler = async (event) => {
+  const start = Date.now();
   const qs = event.queryStringParameters ?? {};
   const indexFilter = (qs.index as IndexTag | 'all') ?? 'all';
   const limit = Math.min(Number(qs.limit ?? 25), 100);
   const side = (qs.side as 'long' | 'short' | 'both') ?? 'both';
+  log.info('request', { indexFilter, limit, side });
 
   const tickers = indexFilter === 'all' ? UNIVERSE : inIndex(indexFilter);
-  if (tickers.length === 0) return json(400, { ok: false, error: `Unknown index: ${indexFilter}` });
+  if (tickers.length === 0) {
+    log.warn('unknown_index', { indexFilter });
+    return json(400, { ok: false, error: `Unknown index: ${indexFilter}` });
+  }
 
   // Cap scan to keep under Netlify timeout
   const scanList = tickers.slice(0, Math.min(tickers.length, 200));
@@ -48,6 +56,10 @@ export const handler: Handler = async (event) => {
     const filtered = side === 'both' ? results : results.filter((r) => r.side === side);
     filtered.sort((a, b) => Math.abs(b.score) - Math.abs(a.score));
 
+    log.info('response', {
+      status: 200, indexFilter, side, scored: results.length,
+      universeSize: tickers.length, durationMs: Date.now() - start,
+    });
     return json(200, {
       ok: true,
       index: indexFilter,
@@ -60,6 +72,7 @@ export const handler: Handler = async (event) => {
       candidates: filtered.slice(0, limit),
     });
   } catch (err: any) {
+    log.error('failed', { indexFilter, side, error: err, durationMs: Date.now() - start });
     return json(500, { ok: false, error: String(err?.message ?? err) });
   }
 };
