@@ -542,7 +542,7 @@ Updated each session. `pending` → `in-progress` → `done` (with version + dat
 | # | Phase | Status | Version | Date | Notes |
 |---|---|---|---|---|---|
 | 0 | Engineering foundation + safety nets | pending | — | — | — |
-| 1 | Universe coverage + snapshot infrastructure | pending | — | — | — |
+| 1 | Universe coverage + snapshot infrastructure | partial | 0.9.0-alpha | 2026-05-07 | 6/7 boards snapshot-first; FreshnessPill on 5/7 views; earnings, HistoryView, backfill deferred. Phase 0 still pending — see PR notes. |
 | 2 | Refactor foundation (schemas + monolith split + TanStack Query) | pending | — | — | — |
 | 3 | Point-in-time data layer | pending | — | — | — |
 | 4 | Real backtest v2 | pending | — | — | — |

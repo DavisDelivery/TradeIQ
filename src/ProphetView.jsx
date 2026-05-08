@@ -9,6 +9,7 @@ import {
   ReferenceLine, Tooltip, CartesianGrid,
 } from 'recharts';
 import { LogButton } from './components/LogButton.jsx';
+import { FreshnessPill } from './components/FreshnessPill.jsx';
 import { validate, SHAPES, fetchWithRetry } from './lib/validateResponse.js';
 
 const UNIVERSE_OPTIONS = [
@@ -40,14 +41,17 @@ export const ProphetView = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [expandedTicker, setExpandedTicker] = useState(null);
+  const [isRescanning, setIsRescanning] = useState(false);
   const requestIdRef = React.useRef(0);
 
-  const load = async () => {
+  const load = async ({ force = false } = {}) => {
     // Increment request counter — any prior in-flight request becomes stale
     const myRequestId = ++requestIdRef.current;
-    setLoading(true); setError(null);
+    if (force) setIsRescanning(true);
+    else setLoading(true);
+    setError(null);
     try {
-      const url = `/api/prophet-picks?universe=${universe}&minConviction=${minConviction}&limit=30`;
+      const url = `/api/prophet-picks?universe=${universe}&minConviction=${minConviction}&limit=30${force ? '&force=1' : ''}`;
       const r = await fetchWithRetry(url);
       const ctype = r.headers.get('content-type') ?? '';
       if (!ctype.includes('json')) {
@@ -90,7 +94,10 @@ export const ProphetView = () => {
       if (myRequestId === requestIdRef.current) setError(e.message);
     } finally {
       // Only clear loading if this is still the latest request
-      if (myRequestId === requestIdRef.current) setLoading(false);
+      if (myRequestId === requestIdRef.current) {
+        setLoading(false);
+        setIsRescanning(false);
+      }
     }
   };
 
@@ -99,10 +106,17 @@ export const ProphetView = () => {
   return (
     <div className="px-3 py-4 sm:p-6 max-w-[1400px] mx-auto pb-20 sm:pb-6">
       <header className="mb-4">
-        <div className="flex items-baseline gap-3 mb-2">
+        <div className="flex items-baseline gap-3 mb-2 flex-wrap">
           <Sparkles className="h-4 w-4 text-emerald-400" />
           <h1 className="text-xl sm:text-2xl font-serif font-semibold text-neutral-100">Prophet</h1>
           <span className="text-[10px] font-mono text-neutral-600 uppercase tracking-wider">7-layer ensemble</span>
+          <div className="ml-auto">
+            <FreshnessPill
+              meta={data}
+              isRescanning={isRescanning}
+              onForceRescan={() => load({ force: true })}
+            />
+          </div>
         </div>
         <p className="text-[12px] text-neutral-500 leading-relaxed max-w-2xl">
           Convergence scanner. A stock earns a pick only when structure, momentum, volume, volatility,
