@@ -30,6 +30,48 @@
   timeout = 26
 
 # ==========================================================================
+# Scheduled (background) functions — full-universe scans that populate
+# Firestore snapshots. Phase 1 introduces these to fix the silent product bug
+# where every board scanned only the first 80–200 alphabetical tickers.
+# Background timeout cap is 15 min; scans budget themselves to 14 min.
+# ==========================================================================
+
+[functions."scheduled/scan-target-board"]
+  timeout = 900
+  schedule = "0,30 13-21 * * 1-5"
+
+[functions."scheduled/scan-prophet"]
+  timeout = 900
+  schedule = "0,30 13-21 * * 1-5"
+
+[functions."scheduled/scan-williams"]
+  timeout = 900
+  schedule = "0,30 13-21 * * 1-5"
+
+[functions."scheduled/scan-catalyst"]
+  timeout = 900
+  schedule = "0,30 13-21 * * 1-5"
+
+# Insider data updates after US close. Schedule snapshot once daily at the
+# widest window (180 days); live endpoint filters down to 30/60/90 on read.
+[functions."scheduled/scan-insider"]
+  timeout = 900
+  schedule = "30 21 * * 1-5"
+
+# Lynch is fundamentals-driven; daily refresh after US close is enough.
+[functions."scheduled/scan-lynch"]
+  timeout = 900
+  schedule = "0 22 * * 1-5"
+
+# Earnings: twice daily — pre-market (catches morning calendar updates and
+# AMC prints from the prior session) and after close (refreshes for next
+# day's BMO calendar). Widest 30d window so one snapshot covers the 3/7/14/30
+# user windows; live endpoint filters at read time.
+[functions."scheduled/scan-earnings"]
+  timeout = 900
+  schedule = "30 11,21 * * 1-5"
+
+# ==========================================================================
 # API redirects — rewrite /api/<endpoint> to /.netlify/functions/<endpoint>
 # ==========================================================================
 
@@ -106,6 +148,11 @@
 [[redirects]]
   from = "/api/prophet-picks"
   to = "/.netlify/functions/prophet-picks"
+  status = 200
+
+[[redirects]]
+  from = "/api/snapshot-history"
+  to = "/.netlify/functions/snapshot-history"
   status = 200
 
 # SPA fallback

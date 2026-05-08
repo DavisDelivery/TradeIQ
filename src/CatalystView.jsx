@@ -5,6 +5,7 @@ import {
 } from 'lucide-react';
 import { CatalystBadges, ConvictionChip, CatalystChip } from './components/CatalystBadges.jsx';
 import { LogButton } from './components/LogButton.jsx';
+import { FreshnessPill } from './components/FreshnessPill.jsx';
 import { validate, SHAPES } from './lib/validateResponse.js';
 
 const FILTER_OPTIONS = [
@@ -29,11 +30,14 @@ export const CatalystView = ({ universe = 'sp500', onNavigate }) => {
   const [filter, setFilter] = useState('all');
   const [minConviction, setMinConviction] = useState('medium');
   const [expandedTicker, setExpandedTicker] = useState(null);
+  const [isRescanning, setIsRescanning] = useState(false);
 
-  const load = async () => {
-    setLoading(true); setError(null);
+  const load = async ({ force = false } = {}) => {
+    if (force) setIsRescanning(true);
+    else setLoading(true);
+    setError(null);
     try {
-      const url = `/api/catalyst-board?index=${universe}&filter=${filter}&minConviction=${minConviction}&limit=40`;
+      const url = `/api/catalyst-board?index=${universe}&filter=${filter}&minConviction=${minConviction}&limit=40${force ? '&force=1' : ''}`;
       const r = await fetch(url);
       const ctype = r.headers.get('content-type') ?? '';
       if (!ctype.includes('json')) {
@@ -47,6 +51,7 @@ export const CatalystView = ({ universe = 'sp500', onNavigate }) => {
       setError(e.message);
     } finally {
       setLoading(false);
+      setIsRescanning(false);
     }
   };
 
@@ -60,6 +65,13 @@ export const CatalystView = ({ universe = 'sp500', onNavigate }) => {
           <h1 className="text-xl sm:text-2xl font-serif font-semibold text-neutral-100">
             Catalyst Board
           </h1>
+          <div className="ml-auto">
+            <FreshnessPill
+              meta={data}
+              isRescanning={isRescanning}
+              onForceRescan={() => load({ force: true })}
+            />
+          </div>
         </div>
         <p className="text-[12px] text-neutral-500 leading-relaxed max-w-2xl">
           Where insider buying, patent momentum, and advanced technical setups align.

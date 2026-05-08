@@ -1,0 +1,239 @@
+// Shared scan orchestrator for the target board.
+//
+// Both the live endpoint (netlify/functions/target-board.ts) and the
+// scheduled full-universe scan (netlify/functions/scheduled/scan-target-board.ts)
+// route through this module. Single source of truth for scoring math:
+// no duplication, no drift between live and scheduled.
+//
+// The live caller passes a tight budget + small caps to fit Netlify's 26s
+// sync timeout. The scheduled caller passes the full universe and a 14-min
+// budget to fit the 15-min background timeout with margin.
+
+import { fetchBarCache, runAnalystsForTicker } from './analyst-runner';
+import { computeRegime, regimeToMacroBias } from './regime';
+import { CORE_WATCHLIST, UNIVERSE, inIndex, SPY } from './universe';
+import type { Target } from './types';
+import type { Bar } from './data-provider';
+import { mapWithConcurrency } from './full-scan-iterator';
+import type { Logger } from './logger';
+
+export type TargetUniverseKey =
+  | 'all'
+  | 'sp500'
+  | 'ndx'
+  | 'dow'
+  | 'russell'
+  | 'russell2k'
+  | 'core';
+
+export interface RunTargetScanOpts {
+  universe: TargetUniverseKey;
+  /** Cap on Pass-1 cheap pre-scoring. Use Infinity for full-universe scans. */
+  pass1Max?: number;
+  /** Cap on Pass-2 full analyst battery (the expensive pass). */
+  pass2Max: number;
+  /** Wall-clock budget for the entire scan; loop bails between batches once exceeded. */
+  scanBudgetMs: number;
+  /** Bar-fetch concurrency. Live: ~6. Scheduled: ~8. */
+  barFetchConcurrency?: number;
+  /** Bar-fetch pacing in ms between batches. Use to respect rate limits. */
+  barFetchPacingMs?: number;
+  /** Pass-2 analyst concurrency. Live used 5; scheduled can use 5–8. */
+  analystConcurrency?: number;
+  /** Optional logger for structured progress. */
+  logger?: Logger;
+}
+
+export interface RunTargetScanResult {
+  results: Target[];
+  scanDurationMs: number;
+  /** Total tickers in the universe (before any cap). */
+  universeChecked: number;
+  /** Pass-1 tickers actually scanned (= min(universe, pass1Max)). */
+  pass1Scanned: number;
+  /** Pass-2 survivors that ran the full battery. */
+  pass2Survivors: number;
+  /** Soft warnings (timeouts, partial bar fetches) without aborting the scan. */
+  warnings: string[];
+  /** True if the scan returned early due to scanBudgetMs. */
+  budgetExceeded: boolean;
+}
+
+export function resolveTargetUniverse(universe: TargetUniverseKey): string[] {
+  if (universe === 'core') return CORE_WATCHLIST;
+  if (universe === 'sp500') return inIndex('sp500').map((u) => u.ticker);
+  if (universe === 'ndx') return inIndex('ndx').map((u) => u.ticker);
+  if (universe === 'dow') return inIndex('dow').map((u) => u.ticker);
+  if (universe === 'russell' || universe === 'russell2k')
+    return inIndex('russell2k').map((u) => u.ticker);
+  return UNIVERSE.map((u) => u.ticker);
+}
+
+export async function runTargetScan(opts: RunTargetScanOpts): Promise<RunTargetScanResult> {
+  const log = opts.logger;
+  const start = Date.now();
+  const warnings: string[] = [];
+
+  const allTickers = resolveTargetUniverse(opts.universe);
+  const universeChecked = allTickers.length;
+
+  log?.info('target_scan_started', {
+    universe: opts.universe,
+    universeSize: universeChecked,
+    pass1Max: opts.pass1Max ?? 'Infinity',
+    pass2Max: opts.pass2Max,
+    budgetMs: opts.scanBudgetMs,
+  });
+
+  const regime = await computeRegime();
+  const macroBias = regimeToMacroBias(regime);
+
+  const pass1Max = opts.pass1Max ?? Infinity;
+  const pass1Tickers = isFinite(pass1Max) ? allTickers.slice(0, pass1Max) : allTickers;
+  const smallUniverse = allTickers.length <= 40;
+
+  // Pass 1: bar fetch (with the cache helper that already batches internally)
+  // + cheap technical pre-score. fetchBarCache handles its own concurrency,
+  // so we just pass through. For very large universes (> 500), fall back to
+  // chunked bar fetches via mapWithConcurrency to respect Polygon limits.
+  let barCache: Awaited<ReturnType<typeof fetchBarCache>>;
+  if (pass1Tickers.length <= 500) {
+    barCache = await fetchBarCache(pass1Tickers);
+  } else {
+    barCache = {};
+    const chunkSize = 250;
+    for (let i = 0; i < pass1Tickers.length; i += chunkSize) {
+      if (Date.now() - start > opts.scanBudgetMs) {
+        warnings.push(`bar-fetch budget exceeded after ${i} tickers`);
+        break;
+      }
+      const chunk = pass1Tickers.slice(i, i + chunkSize);
+      const sub = await fetchBarCache(chunk);
+      Object.assign(barCache, sub);
+      log?.debug('target_scan_bar_chunk_done', { fetched: i + chunk.length, total: pass1Tickers.length });
+      // pacing handled inside fetchBarCache; tiny extra breath for very large universes:
+      if (opts.barFetchPacingMs) await sleep(opts.barFetchPacingMs);
+    }
+  }
+
+  const spyBars = barCache[SPY] ?? [];
+  const spyRet20 = ret(spyBars, 20);
+
+  let survivors: string[];
+  if (smallUniverse) {
+    survivors = pass1Tickers;
+  } else {
+    const preScored = pass1Tickers.map((t) => {
+      const bars = barCache[t];
+      if (!bars || bars.length < 50) return { ticker: t, score: -1 };
+      return { ticker: t, score: preScore(bars, spyRet20) };
+    });
+    preScored.sort((a, b) => b.score - a.score);
+    survivors = preScored
+      .slice(0, opts.pass2Max)
+      .filter((p) => p.score > 0)
+      .map((p) => p.ticker);
+  }
+
+  log?.info('target_scan_pass1_complete', {
+    pass1Scanned: pass1Tickers.length,
+    survivors: survivors.length,
+    elapsedMs: Date.now() - start,
+  });
+
+  // Pass 2: full analyst battery on survivors only.
+  const analystConcurrency = opts.analystConcurrency ?? 5;
+  let budgetExceeded = false;
+  const results: Target[] = [];
+
+  await mapWithConcurrency(
+    survivors,
+    async (t) => {
+      const r = await runAnalystsForTicker({ ticker: t, barCache, macroBias });
+      if (r.target) results.push(r.target);
+      return r;
+    },
+    {
+      batchSize: analystConcurrency,
+      shouldAbort: () => {
+        if (Date.now() - start > opts.scanBudgetMs) {
+          budgetExceeded = true;
+          warnings.push('pass-2 budget exceeded; results may be partial');
+          return true;
+        }
+        return false;
+      },
+      onError: (err, ticker) => {
+        log?.warn('target_scan_ticker_error', { ticker, err: String(err) });
+      },
+    },
+  );
+
+  results.sort((a, b) => b.composite - a.composite);
+
+  const scanDurationMs = Date.now() - start;
+  log?.info('target_scan_complete', {
+    universe: opts.universe,
+    universeChecked,
+    pass1Scanned: pass1Tickers.length,
+    pass2Survivors: survivors.length,
+    resultCount: results.length,
+    scanDurationMs,
+    budgetExceeded,
+    warnings: warnings.length,
+  });
+
+  return {
+    results,
+    scanDurationMs,
+    universeChecked,
+    pass1Scanned: pass1Tickers.length,
+    pass2Survivors: survivors.length,
+    warnings,
+    budgetExceeded,
+  };
+}
+
+// ---------- helpers (lifted verbatim from original target-board.ts) ----------
+
+function preScore(bars: Bar[], spyRet20: number): number {
+  if (bars.length < 50) return 0;
+  const closes = bars.map((b) => b.c);
+  const last = closes[closes.length - 1];
+  const sma20 = avg(closes.slice(-20));
+  const sma50 = avg(closes.slice(-50));
+  const sma200 = bars.length >= 200 ? avg(closes.slice(-200)) : null;
+
+  let s = 50;
+  if (last > sma20) s += 8;
+  if (last > sma50) s += 8;
+  if (sma200 !== null && last > sma200) s += 10;
+  if (sma20 > sma50) s += 6;
+
+  const myRet = ret(bars, 20);
+  if (myRet > spyRet20) s += 10;
+  else if (myRet > spyRet20 - 0.05) s += 3;
+
+  const window52w = closes.slice(-252);
+  const max52w = Math.max(...window52w);
+  const from52wHigh = (last - max52w) / max52w;
+  if (from52wHigh > -0.05) s += 8;
+  else if (from52wHigh < -0.25) s -= 10;
+
+  return Math.max(0, Math.min(100, s));
+}
+
+function avg(arr: number[]): number {
+  return arr.reduce((a, b) => a + b, 0) / arr.length;
+}
+
+function ret(bars: Bar[], n: number): number {
+  if (bars.length < n + 1) return 0;
+  const c0 = bars[bars.length - n - 1].c;
+  const c1 = bars[bars.length - 1].c;
+  return (c1 - c0) / c0;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms));
+}

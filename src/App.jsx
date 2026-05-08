@@ -18,13 +18,15 @@ import { ChartView } from './ChartView.jsx';
 import { JournalView } from './JournalView.jsx';
 import { ProphetView } from './ProphetView.jsx';
 import { InsiderBoardView } from './InsiderBoardView.jsx';
+import { HistoryView } from './HistoryView.jsx';
 import { LogButton } from './components/LogButton.jsx';
 import { UniverseSelector, UNIVERSE_AWARE_VIEWS } from './components/UniverseSelector.jsx';
+import { FreshnessPill } from './components/FreshnessPill.jsx';
 import { readLog, logTrade, removeTrade, computeForwardReturns } from './tradeLog.js';
 import { validate, SHAPES, fetchWithRetry } from './lib/validateResponse.js';
 import { useSortable, SortableTh } from './lib/useSortable.jsx';
 
-const APP_VERSION = '0.7.25-alpha';
+const APP_VERSION = '0.9.1-alpha';
 
 // ======================================================================
 // ERROR BOUNDARY — catches React render errors in any child subtree and
@@ -353,6 +355,7 @@ const TopBar = ({ activeView, setActiveView, regime, universeStats }) => {
     { id: 'williams', label: 'Williams', shortLabel: 'Williams', icon: Activity },
     { id: 'lynch', label: 'Lynch', shortLabel: 'Lynch', icon: Shield },
     { id: 'earnings', label: 'Earnings', shortLabel: 'Earnings', icon: Zap },
+    { id: 'history', label: 'History', shortLabel: 'History', icon: Clock },
     { id: 'options', label: 'Options Flow', shortLabel: 'Options', icon: Cpu },
     { id: 'engine', label: 'Engine Test', shortLabel: 'Engine', icon: Activity },
     { id: 'backtest', label: 'Backtest', shortLabel: 'Backtest', icon: BarChart3 },
@@ -572,14 +575,17 @@ const LiveTargetBoard = ({ onOpenTarget, universe = 'all' }) => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [data, setData] = useState(null);
+  const [isRescanning, setIsRescanning] = useState(false);
   const requestIdRef = React.useRef(0);
 
-  const load = async () => {
+  const load = async ({ force = false } = {}) => {
     const myId = ++requestIdRef.current;
-    setLoading(true);
+    if (force) setIsRescanning(true);
+    else setLoading(true);
     setError(null);
     try {
-      const r = await fetchWithRetry(`/api/target-board?limit=50&universe=${universe}`);
+      const url = `/api/target-board?limit=50&universe=${universe}${force ? '&force=1' : ''}`;
+      const r = await fetchWithRetry(url);
       const json = await r.json();
       // Drop stale response if user has since tapped a different universe
       if (myId !== requestIdRef.current) return;
@@ -591,7 +597,10 @@ const LiveTargetBoard = ({ onOpenTarget, universe = 'all' }) => {
     } catch (err) {
       if (myId === requestIdRef.current) setError(err.message);
     } finally {
-      if (myId === requestIdRef.current) setLoading(false);
+      if (myId === requestIdRef.current) {
+        setLoading(false);
+        setIsRescanning(false);
+      }
     }
   };
 
@@ -638,7 +647,18 @@ const LiveTargetBoard = ({ onOpenTarget, universe = 'all' }) => {
   const targets = data?.targets || [];
   return (
     <>
-      <TargetBoardView targets={targets} onOpenTarget={onOpenTarget} scanMeta={data} />
+      <TargetBoardView
+        targets={targets}
+        onOpenTarget={onOpenTarget}
+        scanMeta={data}
+        freshnessPill={
+          <FreshnessPill
+            meta={data}
+            isRescanning={isRescanning}
+            onForceRescan={() => load({ force: true })}
+          />
+        }
+      />
       {data && (
         <div className="max-w-[1400px] mx-auto px-4 sm:px-6 pb-6 text-[10px] font-mono text-neutral-600 flex items-center gap-3">
           <span>Source: <span className="text-neutral-400">{data.source}</span></span>
@@ -646,16 +666,19 @@ const LiveTargetBoard = ({ onOpenTarget, universe = 'all' }) => {
           <span>Generated: <span className="text-neutral-400">{safeTimestamp(data.generatedAt)}</span></span>
           <span>·</span>
           <span>{targets.length} targets</span>
-          <button onClick={load} className="ml-auto px-2 h-6 border border-neutral-800 text-[10px] uppercase tracking-widest text-neutral-500 hover:text-neutral-300">
-            ↻ Refresh
-          </button>
+          {data.modelVersion && (
+            <>
+              <span>·</span>
+              <span>Model: <span className="text-neutral-400">{data.modelVersion}</span></span>
+            </>
+          )}
         </div>
       )}
     </>
   );
 };
 
-const TargetBoardView = ({ targets, onOpenTarget, scanMeta }) => {
+const TargetBoardView = ({ targets, onOpenTarget, scanMeta, freshnessPill }) => {
   const [filterTier, setFilterTier] = useState('all');
   const [filterDirection, setFilterDirection] = useState('all');
 
@@ -679,7 +702,10 @@ const TargetBoardView = ({ targets, onOpenTarget, scanMeta }) => {
       {/* Header strip */}
       <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-4 mb-5 sm:mb-6">
         <div>
-          <div className="text-[10px] uppercase tracking-[0.2em] text-neutral-500 font-mono mb-2">Live Board</div>
+          <div className="flex items-center gap-3 mb-2">
+            <div className="text-[10px] uppercase tracking-[0.2em] text-neutral-500 font-mono">Live Board</div>
+            {freshnessPill}
+          </div>
           <h1 className="font-serif text-2xl sm:text-3xl font-bold tracking-tight">
             {filtered.length} <span className="text-neutral-500 italic font-light">targets ranked</span>
           </h1>
@@ -1605,6 +1631,7 @@ const EarningsPlaysView = () => {
   });
   const [filter, setFilter] = useState('all');
   const [loading, setLoading] = useState(true);
+  const [isRescanning, setIsRescanning] = useState(false);
   const [error, setError] = useState(null);
   const [data, setData] = useState(null);
   const [expandedKey, setExpandedKey] = useState(null);
@@ -1612,11 +1639,13 @@ const EarningsPlaysView = () => {
 
   const { sortKey, sortDir, sortBy, sortRows } = useSortable('composite', 'desc');
 
-  const load = async () => {
-    setLoading(true);
+  const load = async ({ force = false } = {}) => {
+    if (force) setIsRescanning(true);
+    else setLoading(true);
     setError(null);
     try {
-      const r = await fetchWithRetry(`/api/earnings-board?days=${windowDays}`);
+      const url = `/api/earnings-board?days=${windowDays}${force ? '&force=1' : ''}`;
+      const r = await fetchWithRetry(url);
       const json = await r.json();
       if (!r.ok || json.error) {
         setError(json.error || `HTTP ${r.status}`);
@@ -1627,6 +1656,7 @@ const EarningsPlaysView = () => {
       setError(err.message);
     } finally {
       setLoading(false);
+      setIsRescanning(false);
     }
   };
 
@@ -1671,13 +1701,13 @@ const EarningsPlaysView = () => {
             Each card shows entry trigger, stop, targets, sizing, and historical edge.
           </p>
         </div>
-        <button
-          onClick={load}
-          disabled={loading}
-          className="h-8 px-3 border border-neutral-800 text-[11px] font-mono uppercase tracking-widest text-neutral-400 hover:text-neutral-200 disabled:opacity-50 flex-shrink-0"
-        >
-          {loading ? '…' : '↻ Refresh'}
-        </button>
+        <div className="flex-shrink-0">
+          <FreshnessPill
+            meta={data}
+            isRescanning={isRescanning}
+            onForceRescan={() => load({ force: true })}
+          />
+        </div>
       </div>
 
       {/* Window + filter row */}
@@ -2904,6 +2934,7 @@ export default function App() {
         {activeView === 'williams' && <ErrorBoundary label="Williams"><WilliamsView universe={universe} /></ErrorBoundary>}
         {activeView === 'lynch' && <ErrorBoundary label="Lynch"><LynchView universe={universe} /></ErrorBoundary>}
         {activeView === 'earnings' && <ErrorBoundary label="Earnings"><EarningsPlaysView universe={universe} /></ErrorBoundary>}
+        {activeView === 'history' && <ErrorBoundary label="History"><HistoryView /></ErrorBoundary>}
         {activeView === 'options' && <ErrorBoundary label="Options"><OptionsPlaysView universe={universe} /></ErrorBoundary>}
         {activeView === 'engine' && <ErrorBoundary label="Engine"><EngineTestView /></ErrorBoundary>}
         {activeView === 'backtest' && <ErrorBoundary label="Backtest"><BacktestView /></ErrorBoundary>}

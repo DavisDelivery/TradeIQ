@@ -1,69 +1,137 @@
-// GET /api/williams-board?index=sp500&side=both&limit=30
+// GET /api/williams-board?index=sp500&side=both&limit=30[&force=1]
+//
+// Phase 1: snapshot-first. See target-board.ts for the full pattern doc.
+
 import type { Handler } from '@netlify/functions';
-import { UNIVERSE, inIndex, type IndexTag } from './shared/universe';
-import { runWilliams } from './styles/williams';
-import { getDailyBars } from './shared/data-provider';
+import {
+  runWilliamsScan,
+  type WilliamsUniverseKey,
+} from './shared/scan-williams';
+import {
+  isSnapshotFresh,
+  latestSnapshot,
+  snapshotAgeMs,
+  type UniverseKey,
+} from './shared/snapshot-store';
+import { logger } from './shared/logger';
+import { MODEL_VERSION } from './shared/model-version';
+
+const SCAN_BUDGET_MS = 24_000;
+const LIVE_SCAN_CAP = 200;
+
+const fallbackCache = new Map<string, { data: any; at: number }>();
+const FALLBACK_CACHE_TTL_MS = 5 * 60 * 1000;
 
 export const handler: Handler = async (event) => {
   const qs = event.queryStringParameters ?? {};
-  const indexFilter = (qs.index as IndexTag | 'all') ?? 'all';
+  const indexFilter = (qs.index as WilliamsUniverseKey) ?? 'all';
   const limit = Math.min(Number(qs.limit ?? 25), 100);
   const side = (qs.side as 'long' | 'short' | 'both') ?? 'both';
+  const force = qs.force === '1' || qs.force === 'true';
 
-  const tickers = indexFilter === 'all' ? UNIVERSE : inIndex(indexFilter);
-  if (tickers.length === 0) return json(400, { ok: false, error: `Unknown index: ${indexFilter}` });
+  const log = logger.child({ fn: 'williams-board', index: indexFilter, force });
 
-  // Cap scan to keep under Netlify timeout
-  const scanList = tickers.slice(0, Math.min(tickers.length, 200));
+  // 'all' isn't a valid snapshot universe key; only board-specific indexes are.
+  // For 'all' or invalid index, just run the live scan path.
+  const snapshotUniverse: UniverseKey | null =
+    indexFilter === 'all' ? null : (indexFilter as UniverseKey);
+
+  if (!force && snapshotUniverse) {
+    try {
+      const snap = await latestSnapshot('williams', snapshotUniverse);
+      if (snap && isSnapshotFresh(snap)) {
+        const ageMs = snapshotAgeMs(snap);
+        log.info('snapshot_hit', { ageMs, modelVersion: snap.modelVersion });
+        const all = snap.results as any[];
+        const filtered = side === 'both' ? all : all.filter((r) => r.side === side);
+        return json(200, {
+          ok: true,
+          index: indexFilter,
+          side,
+          generatedAt: snap.generatedAt,
+          source: 'snapshot',
+          cached: true,
+          ageMs,
+          modelVersion: snap.modelVersion,
+          universeSize: snap.universeChecked,
+          scanned: all.length,
+          scored: all.length,
+          count: Math.min(limit, filtered.length),
+          candidates: filtered.slice(0, limit),
+        });
+      }
+      if (snap) log.warn('snapshot_stale', { ageMs: snapshotAgeMs(snap) });
+      else log.warn('snapshot_missing');
+    } catch (err: any) {
+      log.error('snapshot_read_failed', { err: String(err?.message ?? err) });
+    }
+  }
+
+  return runLiveAndRespond(indexFilter, side, limit, force ? 'forced-partial' : 'fallback-partial', log);
+};
+
+async function runLiveAndRespond(
+  indexFilter: WilliamsUniverseKey,
+  side: 'long' | 'short' | 'both',
+  limit: number,
+  source: 'forced-partial' | 'fallback-partial',
+  log: ReturnType<typeof logger.child>,
+) {
+  const cacheKey = `${indexFilter}:${side}:${source}`;
+  if (source === 'fallback-partial') {
+    const cached = fallbackCache.get(cacheKey);
+    if (cached && Date.now() - cached.at < FALLBACK_CACHE_TTL_MS) {
+      return json(200, { ...cached.data, cached: true, source });
+    }
+  }
 
   try {
-    const to = new Date().toISOString().slice(0, 10);
-    const from = new Date(Date.now() - 120 * 86400000).toISOString().slice(0, 10);
+    const scan = await runWilliamsScan({
+      universe: indexFilter,
+      scanCap: LIVE_SCAN_CAP,
+      scanBudgetMs: SCAN_BUDGET_MS,
+      concurrency: 10,
+      logger: log,
+    });
 
-    const results: any[] = [];
-    const concurrency = 10;
+    const filtered =
+      side === 'both' ? scan.candidates : scan.candidates.filter((r) => r.side === side);
 
-    for (let i = 0; i < scanList.length; i += concurrency) {
-      const chunk = scanList.slice(i, i + concurrency);
-      const batch = await Promise.all(chunk.map(async (t) => {
-        try {
-          const bars = await getDailyBars(t.ticker, from, to);
-          if (!bars || bars.length < 30) return null;
-          const s = runWilliams({ ticker: t.ticker, bars });
-          return {
-            ticker: t.ticker,
-            name: t.name,
-            sector: t.sector,
-            score: s.score,
-            confidence: s.confidence,
-            rationale: s.rationale,
-            signals: s.signals,
-            side: s.score >= 0 ? 'long' : 'short',
-          };
-        } catch { return null; }
-      }));
-      for (const r of batch) if (r) results.push(r);
-    }
-
-    const filtered = side === 'both' ? results : results.filter((r) => r.side === side);
-    filtered.sort((a, b) => Math.abs(b.score) - Math.abs(a.score));
-
-    return json(200, {
+    const response = {
       ok: true,
       index: indexFilter,
       side,
       generatedAt: new Date().toISOString(),
-      universeSize: tickers.length,
-      scanned: scanList.length,
-      scored: results.length,
+      source,
+      cached: false,
+      ageMs: 0,
+      modelVersion: MODEL_VERSION,
+      universeSize: scan.universeChecked,
+      scanned: scan.scanned,
+      scored: scan.candidates.length,
       count: Math.min(limit, filtered.length),
       candidates: filtered.slice(0, limit),
-    });
+      warning:
+        source === 'fallback-partial'
+          ? 'snapshot stale or missing; partial scan'
+          : 'forced partial scan',
+      warnings: scan.warnings,
+    };
+
+    if (source === 'fallback-partial' && scan.candidates.length > 0) {
+      fallbackCache.set(cacheKey, { data: response, at: Date.now() });
+    }
+    return json(200, response);
   } catch (err: any) {
+    log.error('live_scan_failed', { err: String(err?.message ?? err) });
     return json(500, { ok: false, error: String(err?.message ?? err) });
   }
-};
+}
 
 function json(statusCode: number, body: unknown) {
-  return { statusCode, headers: { 'Content-Type': 'application/json', 'Cache-Control': 'public, max-age=900' }, body: JSON.stringify(body) };
+  return {
+    statusCode,
+    headers: { 'Content-Type': 'application/json', 'Cache-Control': 'public, max-age=60' },
+    body: JSON.stringify(body),
+  };
 }
