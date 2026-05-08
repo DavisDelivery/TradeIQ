@@ -541,7 +541,7 @@ Updated each session. `pending` → `in-progress` → `done` (with version + dat
 
 | # | Phase | Status | Version | Date | Notes |
 |---|---|---|---|---|---|
-| 0 | Engineering foundation + safety nets | pending | — | — | — |
+| 0 | Engineering foundation + safety nets | done | 0.10.0-alpha | 2026-05-08 | Tests + CI + spend cap + circuit breaker + structured logger + Sentry hooks + weekly Firestore backups; reconciled with Phase 1 + temperature hotfix |
 | 1 | Universe coverage + snapshot infrastructure | done | 0.9.1-alpha | 2026-05-07 | All 7 boards snapshot-first end-to-end; FreshnessPill on all 7 views; HistoryView replay surface; backfill script for tradeLog reconstruction. Phase 0 still pending — see PR notes. |
 | 2 | Refactor foundation (schemas + monolith split + TanStack Query) | pending | — | — | — |
 | 3 | Point-in-time data layer | pending | — | — | — |
