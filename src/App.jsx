@@ -1629,6 +1629,7 @@ const EarningsPlaysView = () => {
   });
   const [filter, setFilter] = useState('all');
   const [loading, setLoading] = useState(true);
+  const [isRescanning, setIsRescanning] = useState(false);
   const [error, setError] = useState(null);
   const [data, setData] = useState(null);
   const [expandedKey, setExpandedKey] = useState(null);
@@ -1636,11 +1637,13 @@ const EarningsPlaysView = () => {
 
   const { sortKey, sortDir, sortBy, sortRows } = useSortable('composite', 'desc');
 
-  const load = async () => {
-    setLoading(true);
+  const load = async ({ force = false } = {}) => {
+    if (force) setIsRescanning(true);
+    else setLoading(true);
     setError(null);
     try {
-      const r = await fetchWithRetry(`/api/earnings-board?days=${windowDays}`);
+      const url = `/api/earnings-board?days=${windowDays}${force ? '&force=1' : ''}`;
+      const r = await fetchWithRetry(url);
       const json = await r.json();
       if (!r.ok || json.error) {
         setError(json.error || `HTTP ${r.status}`);
@@ -1651,6 +1654,7 @@ const EarningsPlaysView = () => {
       setError(err.message);
     } finally {
       setLoading(false);
+      setIsRescanning(false);
     }
   };
 
@@ -1695,13 +1699,13 @@ const EarningsPlaysView = () => {
             Each card shows entry trigger, stop, targets, sizing, and historical edge.
           </p>
         </div>
-        <button
-          onClick={load}
-          disabled={loading}
-          className="h-8 px-3 border border-neutral-800 text-[11px] font-mono uppercase tracking-widest text-neutral-400 hover:text-neutral-200 disabled:opacity-50 flex-shrink-0"
-        >
-          {loading ? '…' : '↻ Refresh'}
-        </button>
+        <div className="flex-shrink-0">
+          <FreshnessPill
+            meta={data}
+            isRescanning={isRescanning}
+            onForceRescan={() => load({ force: true })}
+          />
+        </div>
       </div>
 
       {/* Window + filter row */}

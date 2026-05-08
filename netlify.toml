@@ -63,6 +63,14 @@
   timeout = 900
   schedule = "0 22 * * 1-5"
 
+# Earnings: twice daily — pre-market (catches morning calendar updates and
+# AMC prints from the prior session) and after close (refreshes for next
+# day's BMO calendar). Widest 30d window so one snapshot covers the 3/7/14/30
+# user windows; live endpoint filters at read time.
+[functions."scheduled/scan-earnings"]
+  timeout = 900
+  schedule = "30 11,21 * * 1-5"
+
 # ==========================================================================
 # API redirects — rewrite /api/<endpoint> to /.netlify/functions/<endpoint>
 # ==========================================================================
