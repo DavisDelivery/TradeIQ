@@ -17,7 +17,7 @@ import { promises as fs } from 'fs';
 import path from 'path';
 import zlib from 'zlib';
 import { promisify } from 'util';
-import * as admin from 'firebase-admin';
+import admin from 'firebase-admin';
 
 const gzip = promisify(zlib.gzip);
 

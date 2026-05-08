@@ -13,7 +13,7 @@
 import { promises as fs } from 'fs';
 import zlib from 'zlib';
 import { promisify } from 'util';
-import * as admin from 'firebase-admin';
+import admin from 'firebase-admin';
 
 const gunzip = promisify(zlib.gunzip);
 
