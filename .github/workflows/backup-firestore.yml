@@ -1,0 +1,70 @@
+name: Firestore weekly backup
+
+on:
+  schedule:
+    # Sundays at 06:00 UTC (= 02:00 ET, after weekend trades are done).
+    - cron: '0 6 * * 0'
+  # Allow manual runs for ad-hoc backups + initial verification.
+  workflow_dispatch:
+
+jobs:
+  backup:
+    name: Export tradeLog → backup repo
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout TradeIQ
+        uses: actions/checkout@v4
+
+      - name: Setup Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install
+        run: npm ci
+
+      - name: Write service-account JSON
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+        run: |
+          mkdir -p /tmp
+          echo "$FIREBASE_SERVICE_ACCOUNT" > /tmp/firebase-key.json
+          chmod 600 /tmp/firebase-key.json
+
+      - name: Export Firestore
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: /tmp/firebase-key.json
+        run: npx tsx scripts/export-firestore.ts
+
+      - name: Checkout backup repo
+        uses: actions/checkout@v4
+        with:
+          repository: DavisDelivery/TradeIQ-backups
+          path: backup-repo
+          token: ${{ secrets.BACKUP_REPO_PAT }}
+
+      - name: Copy backup file into backup repo
+        run: |
+          mkdir -p backup-repo/firestore
+          cp backups/* backup-repo/firestore/
+          ls -la backup-repo/firestore/
+
+      - name: Commit + push
+        working-directory: backup-repo
+        run: |
+          git config user.name "tradeiq-backup-bot"
+          git config user.email "chad@davisdelivery.com"
+          git add firestore/
+          if git diff --cached --quiet; then
+            echo "No changes to commit (data unchanged since last run)."
+            exit 0
+          fi
+          git commit -m "Backup $(date -u +%F)"
+          git push
+
+      - name: Wipe service-account file
+        if: always()
+        run: rm -f /tmp/firebase-key.json
