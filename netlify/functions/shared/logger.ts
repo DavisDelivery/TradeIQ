@@ -51,6 +51,12 @@ function emit(level: LogLevel, fn: string, msg: string, ctx: LogContext = {}): v
   // and console.error for errors so they show as red in the Netlify UI.
   if (level === 'error') console.error(JSON.stringify(entry));
   else console.log(JSON.stringify(entry));
+
+  // Errors also go to Sentry (no-op if SENTRY_DSN unset). Fire and forget —
+  // we never want logger emission to block the request path on Sentry I/O.
+  if (level === 'error') {
+    void forwardErrorToSentry(fn, msg, ctx);
+  }
 }
 
 // Cheap belt-and-suspenders: never let an Error or BigInt blow up
@@ -71,6 +77,25 @@ function sanitize(ctx: LogContext): LogContext {
     }
   }
   return out;
+}
+
+// Forward error-level events to Sentry. The forwarding is lazy and falls
+// back to a no-op if Sentry isn't configured (DSN missing). We swallow any
+// failure inside the forwarder itself — logging must not throw.
+async function forwardErrorToSentry(fn: string, msg: string, ctx: LogContext): Promise<void> {
+  if (!process.env.SENTRY_DSN) return;
+  try {
+    const { captureException } = await import('./sentry');
+    // Find the first Error in ctx, otherwise fabricate one from msg.
+    let err: unknown = msg;
+    for (const v of Object.values(ctx)) {
+      if (v instanceof Error) { err = v; break; }
+    }
+    if (typeof err === 'string') err = new Error(`[${fn}] ${msg}`);
+    captureException(err, { fn, msg, ...sanitize(ctx) });
+  } catch {
+    // If Sentry import fails (e.g. bundling oddity), don't crash logging.
+  }
 }
 
 export function createLogger(fn: string, baseCtx: LogContext = {}): Logger {
