@@ -1,6 +1,17 @@
 // Unified market data provider — Polygon (bars, fundamentals, news, snapshots)
 // + Finnhub (earnings, recommendations) + FRED (macro rates, VIX).
 
+import {
+  PolygonAggregatesResponseSchema,
+  PolygonFinancialsResponseSchema,
+  PolygonNewsResponseSchema,
+  FinnhubEarningsCalendarResponseSchema,
+  FinnhubEarningsHistoryResponseSchema,
+  FinnhubInsiderTxResponseSchema,
+  FredObservationsResponseSchema,
+  parseOrFallback,
+} from './schemas';
+
 const POLYGON = 'https://api.polygon.io';
 const FINNHUB = 'https://finnhub.io/api/v1';
 const FRED = 'https://api.stlouisfed.org/fred';
@@ -44,16 +55,26 @@ export async function getDailyBars(
   const url = `${POLYGON}/v2/aggs/ticker/${encodeURIComponent(ticker)}/range/1/day/${from}/${to}?adjusted=true&sort=asc&limit=5000&apiKey=${polygonKey()}`;
   const res = await fetch(url);
   if (!res.ok) throw new Error(`Polygon bars ${ticker}: ${res.status}`);
-  const data = (await res.json()) as { results?: Bar[] };
-  return data.results ?? [];
+  const data = parseOrFallback(
+    PolygonAggregatesResponseSchema,
+    await res.json(),
+    { provider: 'polygon', endpoint: 'aggregates', ticker },
+    { results: [] },
+  );
+  return (data.results ?? []) as Bar[];
 }
 
 export async function getPreviousClose(ticker: string): Promise<Bar | null> {
   const url = `${POLYGON}/v2/aggs/ticker/${encodeURIComponent(ticker)}/prev?adjusted=true&apiKey=${polygonKey()}`;
   const res = await fetch(url);
   if (!res.ok) return null;
-  const data = (await res.json()) as { results?: Bar[] };
-  return data.results?.[0] ?? null;
+  const data = parseOrFallback(
+    PolygonAggregatesResponseSchema,
+    await res.json(),
+    { provider: 'polygon', endpoint: 'previous-close', ticker },
+    { results: [] },
+  );
+  return ((data.results?.[0] ?? null) as Bar | null);
 }
 
 // ---------------------------------------------------------------------------
@@ -83,8 +104,13 @@ export async function getFundamentals(
     const url = `${POLYGON}/vX/reference/financials?ticker=${ticker}&limit=5&timeframe=quarterly&order=desc&apiKey=${polygonKey()}`;
     const res = await fetch(url);
     if (!res.ok) return null;
-    const data = (await res.json()) as { results?: any[] };
-    const results = data.results ?? [];
+    const data = parseOrFallback(
+      PolygonFinancialsResponseSchema,
+      await res.json(),
+      { provider: 'polygon', endpoint: 'financials', ticker },
+      { results: [] },
+    );
+    const results = (data.results ?? []) as any[];
     if (results.length === 0) return null;
 
     const latest = results[0];
@@ -173,7 +199,12 @@ export async function getNews(ticker: string, limit = 20): Promise<NewsItem[]> {
     const url = `${POLYGON}/v2/reference/news?ticker=${ticker}&limit=${limit}&order=desc&sort=published_utc&apiKey=${polygonKey()}`;
     const res = await fetch(url);
     if (!res.ok) return [];
-    const data = (await res.json()) as { results?: any[] };
+    const data = parseOrFallback(
+      PolygonNewsResponseSchema,
+      await res.json(),
+      { provider: 'polygon', endpoint: 'news', ticker },
+      { results: [] },
+    );
     return (data.results ?? []).map((r) => ({
       id: r.id,
       title: r.title,
@@ -210,15 +241,20 @@ export async function getUpcomingEarnings(
     const url = `${FINNHUB}/calendar/earnings?from=${from}&to=${to}&symbol=${ticker}&token=${finnhubKey()}`;
     const res = await fetch(url);
     if (!res.ok) return null;
-    const data = (await res.json()) as { earningsCalendar?: any[] };
+    const data = parseOrFallback(
+      FinnhubEarningsCalendarResponseSchema,
+      await res.json(),
+      { provider: 'finnhub', endpoint: 'calendar/earnings', ticker },
+      { earningsCalendar: [] },
+    );
     const first = data.earningsCalendar?.[0];
     if (!first) return null;
     return {
       ticker,
       date: first.date,
       hour: first.hour,
-      epsEstimate: first.epsEstimate,
-      revenueEstimate: first.revenueEstimate,
+      epsEstimate: first.epsEstimate ?? undefined,
+      revenueEstimate: first.revenueEstimate ?? undefined,
     };
   } catch {
     return null;
@@ -243,13 +279,18 @@ export async function getEarningsCalendarRange(
       }
       return [];
     }
-    const data = (await res.json()) as { earningsCalendar?: any[] };
+    const data = parseOrFallback(
+      FinnhubEarningsCalendarResponseSchema,
+      await res.json(),
+      { provider: 'finnhub', endpoint: 'calendar/earnings/range' },
+      { earningsCalendar: [] },
+    );
     return (data.earningsCalendar ?? []).map((e) => ({
       ticker: e.symbol,
       date: e.date,
       hour: e.hour,
-      epsEstimate: e.epsEstimate,
-      revenueEstimate: e.revenueEstimate,
+      epsEstimate: e.epsEstimate ?? undefined,
+      revenueEstimate: e.revenueEstimate ?? undefined,
     }));
   } catch {
     return [];
@@ -268,7 +309,12 @@ export async function getEarningsHistory(ticker: string, limit = 8): Promise<Ear
     const url = `${FINNHUB}/stock/earnings?symbol=${ticker}&limit=${limit}&token=${finnhubKey()}`;
     const res = await fetch(url);
     if (!res.ok) return [];
-    const data = (await res.json()) as any[];
+    const data = parseOrFallback(
+      FinnhubEarningsHistoryResponseSchema,
+      await res.json(),
+      { provider: 'finnhub', endpoint: 'stock/earnings', ticker },
+      [],
+    );
     if (!Array.isArray(data)) return [];
     return data
       .map((r) => ({
@@ -318,7 +364,12 @@ export async function getFinnhubInsiderTransactions(
       }
       return [];
     }
-    const data = (await res.json()) as { data?: any[] };
+    const data = parseOrFallback(
+      FinnhubInsiderTxResponseSchema,
+      await res.json(),
+      { provider: 'finnhub', endpoint: 'stock/insider-transactions', ticker },
+      { data: [] },
+    );
     const rows = Array.isArray(data?.data) ? data.data : [];
     return rows
       .map((r) => ({
@@ -362,7 +413,12 @@ async function fredLatestObservation(seriesId: string): Promise<number | null> {
     const url = `${FRED}/series/observations?series_id=${seriesId}&api_key=${fredKey()}&file_type=json&sort_order=desc&limit=10`;
     const res = await fetch(url);
     if (!res.ok) return null;
-    const data = (await res.json()) as { observations?: Array<{ date: string; value: string }> };
+    const data = parseOrFallback(
+      FredObservationsResponseSchema,
+      await res.json(),
+      { provider: 'fred', endpoint: `series/observations:${seriesId}` },
+      { observations: [] },
+    );
     for (const obs of data.observations ?? []) {
       if (obs.value !== '.' && obs.value !== '') {
         const v = Number(obs.value);
@@ -380,7 +436,12 @@ async function fredSeries(seriesId: string, days: number): Promise<Array<{ date:
     const url = `${FRED}/series/observations?series_id=${seriesId}&api_key=${fredKey()}&file_type=json&sort_order=desc&limit=${days}`;
     const res = await fetch(url);
     if (!res.ok) return [];
-    const data = (await res.json()) as { observations?: Array<{ date: string; value: string }> };
+    const data = parseOrFallback(
+      FredObservationsResponseSchema,
+      await res.json(),
+      { provider: 'fred', endpoint: `series/observations:${seriesId}` },
+      { observations: [] },
+    );
     return (data.observations ?? [])
       .filter((o) => o.value !== '.' && o.value !== '')
       .map((o) => ({ date: o.date, value: Number(o.value) }))

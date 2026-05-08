@@ -25,6 +25,7 @@
 //      since the scoring logic is quite different.
 
 import { quiverGetTicker, q, qn, qdate } from './quiver-client';
+import { QuiverCongressionalArraySchema, QuiverLobbyingArraySchema } from './schemas';
 
 export interface CongressTrade {
   politician: string;
@@ -85,9 +86,9 @@ export async function getPoliticalActivity(
     const priorFromIso = new Date(Date.now() - lookbackDays * 2 * 86400000).toISOString().slice(0, 10);
 
     const [senateRows, houseRows, lobbyingRows] = await Promise.all([
-      quiverGetTicker('senatetrading', ticker),
-      quiverGetTicker('housetrading', ticker),
-      quiverGetTicker('lobbying', ticker),
+      quiverGetTicker('senatetrading', ticker, { schema: QuiverCongressionalArraySchema }),
+      quiverGetTicker('housetrading', ticker, { schema: QuiverCongressionalArraySchema }),
+      quiverGetTicker('lobbying', ticker, { schema: QuiverLobbyingArraySchema }),
     ]);
 
     const senateTrades = senateRows.map((r) => normalizeTrade(r, 'senate')).filter(Boolean) as CongressTrade[];

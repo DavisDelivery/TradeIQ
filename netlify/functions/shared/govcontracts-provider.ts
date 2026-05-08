@@ -15,6 +15,7 @@
 //     change.
 
 import { quiverGetTicker, q, qn, qdate } from './quiver-client';
+import { QuiverGovContractArraySchema } from './schemas';
 
 export interface GovContract {
   date: string;
@@ -49,7 +50,9 @@ export async function getGovContractActivity(
   };
 
   try {
-    const rows = await quiverGetTicker('govcontractsall', ticker);
+    const rows = await quiverGetTicker('govcontractsall', ticker, {
+      schema: QuiverGovContractArraySchema,
+    });
     if (rows.length === 0) return empty;
 
     const all = rows.map(normalize).filter(Boolean) as GovContract[];
