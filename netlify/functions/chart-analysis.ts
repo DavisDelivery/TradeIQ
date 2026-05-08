@@ -192,7 +192,8 @@ export const handler: Handler = async (event) => {
           body: JSON.stringify({
             model: MODEL,
             max_tokens: 400,
-            temperature: 0.25,
+            // temperature parameter removed: Claude Opus 4.7 deprecated it
+            // (returns 400 invalid_request_error).
             system: 'You are a veteran swing trader reviewing a chart. Be concise, specific, and give a clear edge-case read. Reference actual price levels. No disclaimers, no "always DYOR", just the read.',
             messages: [{ role: 'user', content: user }],
           }),

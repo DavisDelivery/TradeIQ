@@ -228,7 +228,8 @@ Write a 3-4 sentence trader's read: what the chart + catalysts + fundamentals to
       body: JSON.stringify({
         model: MODEL,
         max_tokens: 350,
-        temperature: 0.25,
+        // temperature parameter removed: Claude Opus 4.7 deprecated it
+        // (returns 400 invalid_request_error).
         system:
           'You are a veteran swing trader writing a concise thesis. Be specific with price levels. No boilerplate, no "DYOR", no disclaimers.',
         messages: [{ role: 'user', content: user }],
