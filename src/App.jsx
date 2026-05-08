@@ -18,6 +18,7 @@ import { ChartView } from './ChartView.jsx';
 import { JournalView } from './JournalView.jsx';
 import { ProphetView } from './ProphetView.jsx';
 import { InsiderBoardView } from './InsiderBoardView.jsx';
+import { HistoryView } from './HistoryView.jsx';
 import { LogButton } from './components/LogButton.jsx';
 import { UniverseSelector, UNIVERSE_AWARE_VIEWS } from './components/UniverseSelector.jsx';
 import { FreshnessPill } from './components/FreshnessPill.jsx';
@@ -354,6 +355,7 @@ const TopBar = ({ activeView, setActiveView, regime, universeStats }) => {
     { id: 'williams', label: 'Williams', shortLabel: 'Williams', icon: Activity },
     { id: 'lynch', label: 'Lynch', shortLabel: 'Lynch', icon: Shield },
     { id: 'earnings', label: 'Earnings', shortLabel: 'Earnings', icon: Zap },
+    { id: 'history', label: 'History', shortLabel: 'History', icon: Clock },
     { id: 'options', label: 'Options Flow', shortLabel: 'Options', icon: Cpu },
     { id: 'engine', label: 'Engine Test', shortLabel: 'Engine', icon: Activity },
     { id: 'backtest', label: 'Backtest', shortLabel: 'Backtest', icon: BarChart3 },
@@ -2932,6 +2934,7 @@ export default function App() {
         {activeView === 'williams' && <ErrorBoundary label="Williams"><WilliamsView universe={universe} /></ErrorBoundary>}
         {activeView === 'lynch' && <ErrorBoundary label="Lynch"><LynchView universe={universe} /></ErrorBoundary>}
         {activeView === 'earnings' && <ErrorBoundary label="Earnings"><EarningsPlaysView universe={universe} /></ErrorBoundary>}
+        {activeView === 'history' && <ErrorBoundary label="History"><HistoryView /></ErrorBoundary>}
         {activeView === 'options' && <ErrorBoundary label="Options"><OptionsPlaysView universe={universe} /></ErrorBoundary>}
         {activeView === 'engine' && <ErrorBoundary label="Engine"><EngineTestView /></ErrorBoundary>}
         {activeView === 'backtest' && <ErrorBoundary label="Backtest"><BacktestView /></ErrorBoundary>}

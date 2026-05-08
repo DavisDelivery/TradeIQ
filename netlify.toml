@@ -150,6 +150,11 @@
   to = "/.netlify/functions/prophet-picks"
   status = 200
 
+[[redirects]]
+  from = "/api/snapshot-history"
+  to = "/.netlify/functions/snapshot-history"
+  status = 200
+
 # SPA fallback
 [[redirects]]
   from = "/*"
