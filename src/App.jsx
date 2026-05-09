@@ -23,7 +23,6 @@ import { LogButton } from './components/LogButton.jsx';
 import { UniverseSelector, UNIVERSE_AWARE_VIEWS } from './components/UniverseSelector.jsx';
 import { FreshnessPill } from './components/FreshnessPill.jsx';
 import { readLog, logTrade, removeTrade, computeForwardReturns } from './tradeLog.js';
-import { validate, SHAPES, fetchWithRetry } from './lib/validateResponse.js';
 import { useSortable, SortableTh } from './lib/useSortable.jsx';
 import { captureException } from './lib/sentry.js';
 import { TargetBoardView, LiveTargetBoard, TargetDetail } from './TargetBoardView.jsx';

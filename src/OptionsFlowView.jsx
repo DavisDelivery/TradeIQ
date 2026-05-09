@@ -1,32 +1,10 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { CircleX, Info, AlertTriangle } from 'lucide-react';
-import { validate, SHAPES } from './lib/validateResponse.js';
+import { useOptionsFlow } from './hooks/useOptionsFlow.js';
 
 export const OptionsFlowView = () => {
   const [filter, setFilter] = useState('all');
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
-  const [data, setData] = useState(null);
-
-  const load = async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const r = await fetch('/api/options-flow');
-      const json = await r.json();
-      if (!r.ok || json.error) {
-        setError(json.error || `HTTP ${r.status}`);
-      } else {
-        setData(validate(json, SHAPES.optionsFlow, "options-flow"));
-      }
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => { load(); }, []);
+  const { data, error, isLoading: loading, refetch } = useOptionsFlow();
 
   const candidates = data?.candidates || [];
   const filtered = candidates
@@ -54,7 +32,7 @@ export const OptionsFlowView = () => {
             unusual options flow. True options chain data requires TradeStation (pending).
           </p>
         </div>
-        <button onClick={load} disabled={loading}
+        <button onClick={() => refetch()} disabled={loading}
           className="h-8 px-3 border border-neutral-800 text-[11px] font-mono uppercase tracking-widest text-neutral-400 hover:text-neutral-200 disabled:opacity-50 flex-shrink-0">
           {loading ? '…' : '↻ Refresh'}
         </button>
@@ -65,7 +43,7 @@ export const OptionsFlowView = () => {
           <div className="flex items-center gap-2 text-rose-400 font-mono text-[11px] uppercase tracking-widest mb-1">
             <CircleX className="h-4 w-4" /> Error
           </div>
-          <div className="text-[12px] text-neutral-300">{error}</div>
+          <div className="text-[12px] text-neutral-300">{error?.message ?? String(error)}</div>
         </div>
       )}
 

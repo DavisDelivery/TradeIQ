@@ -1,10 +1,10 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import {
   BarChart, Bar, LineChart, Line, ResponsiveContainer, XAxis, YAxis,
   Tooltip, Cell, CartesianGrid,
 } from 'recharts';
 import { tierColor } from './lib/formatters.jsx';
-import { validate, SHAPES } from './lib/validateResponse.js';
+import { useBacktest } from './hooks/useBacktest.js';
 
 // Co-located helpers (used only inside this view).
 const KpiCard = ({ label, value, color = 'neutral' }) => {
@@ -30,28 +30,9 @@ const ChartPanel = ({ title, subtitle, children, className = '' }) => (
 );
 
 export const BacktestView = () => {
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
-  const [data, setData] = useState(null);
   const [lookback, setLookback] = useState(365);
   const [windowDays, setWindowDays] = useState(20); // 5, 10, or 20 day forward window
-
-  const load = async (days = lookback) => {
-    setLoading(true); setError(null);
-    try {
-      const tickers = 'NVDA,AAPL,MSFT,GOOGL,AMZN,META,TSLA,AVGO,AMD,INTC';
-      const r = await fetch(`/api/backtest?lookbackDays=${days}&tickers=${tickers}&sampleEvery=5`);
-      const json = await r.json();
-      if (!r.ok || !json.ok) throw new Error(json.error || `HTTP ${r.status}`);
-      setData(validate(json, SHAPES.backtest, "backtest"));
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => { load(); }, []);
+  const { data, error, isLoading: loading, refetch } = useBacktest(lookback);
 
   if (loading && !data) {
     return (
@@ -67,8 +48,8 @@ export const BacktestView = () => {
     return (
       <div className="px-3 py-4 sm:p-6 max-w-[1400px] mx-auto">
         <div className="border border-rose-800/50 bg-rose-950/20 p-6 text-rose-300 font-mono text-sm">
-          Backtest failed: {error}
-          <button onClick={() => load()} className="ml-4 underline">retry</button>
+          Backtest failed: {error?.message ?? String(error)}
+          <button onClick={() => refetch()} className="ml-4 underline">retry</button>
         </div>
       </div>
     );
@@ -79,7 +60,7 @@ export const BacktestView = () => {
       <div className="px-3 py-4 sm:p-6 max-w-[1400px] mx-auto">
         <div className="border border-neutral-800 p-8 text-center text-neutral-500 font-mono text-sm">
           Backtest data unavailable.
-          <button onClick={() => load()} className="ml-4 underline">retry</button>
+          <button onClick={() => refetch()} className="ml-4 underline">retry</button>
         </div>
       </div>
     );

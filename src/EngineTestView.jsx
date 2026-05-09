@@ -2,30 +2,16 @@ import React, { useState } from 'react';
 import { CircleX } from 'lucide-react';
 import { tierColor } from './lib/formatters.jsx';
 import { ConvictionBadge, DirectionPill } from './components/Badges.jsx';
+import { useEngineTest } from './hooks/useEngineTest.js';
 
 export const EngineTestView = () => {
   const [ticker, setTicker] = useState('NVDA');
-  const [loading, setLoading] = useState(false);
-  const [result, setResult] = useState(null);
-  const [error, setError] = useState(null);
+  const { mutate, data: result, error, isPending: loading, reset } = useEngineTest();
 
-  const runTest = async () => {
-    setLoading(true);
-    setError(null);
-    setResult(null);
-    try {
-      const r = await fetch(`/api/engine-test?ticker=${encodeURIComponent(ticker.toUpperCase())}`);
-      const data = await r.json();
-      if (!r.ok || data.error) {
-        setError(data.error || `HTTP ${r.status}`);
-      } else {
-        setResult(data);
-      }
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setLoading(false);
-    }
+  const runTest = () => {
+    if (!ticker.trim()) return;
+    reset();
+    mutate(ticker);
   };
 
   return (
@@ -64,7 +50,7 @@ export const EngineTestView = () => {
           <div className="flex items-center gap-2 text-rose-400 font-mono text-[11px] uppercase tracking-widest mb-2">
             <CircleX className="h-4 w-4" /> Error
           </div>
-          <pre className="text-[12px] text-neutral-300 whitespace-pre-wrap">{error}</pre>
+          <pre className="text-[12px] text-neutral-300 whitespace-pre-wrap">{error?.message ?? String(error)}</pre>
         </div>
       )}
 

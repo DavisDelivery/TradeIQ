@@ -72,23 +72,26 @@ App.jsx went from **2,965 → 336 lines**. Now contains only: imports, `APP_VERS
 - `src/lib/queryKeys.js` — centralized factory; hierarchical `['tradeiq', noun, ...scopes]` shape so partial invalidation works
 - `src/lib/queryClient.js` — retry: 1, exponential backoff, refetchOnWindowFocus: true, refetchOnReconnect: true
 
-**Hooks** (13 in `src/hooks/`, each thin wrapper around `useQuery` with the matching `SHAPES` validator and per-board staleTime per the brief):
+**Hooks** (16 in `src/hooks/`, each thin wrapper around `useQuery`/`useMutation` with the matching `SHAPES` validator and per-board staleTime per the brief):
 
-| Hook | staleTime | forceRescan |
-|---|---|---|
-| useTargetBoard | 60s | yes |
-| useProphet | 60s | yes |
-| useCatalyst | 60s | yes |
-| useInsider | 10 min | yes |
-| useWilliams | 60s | yes |
-| useLynch | 10 min | yes |
-| useEarnings | 5 min | yes |
-| useHealth | 30s | — |
-| useRegime | 30s | — |
-| useAnalystsStatus | 30s | — |
-| useResearch | 60s | — (chart-analysis with skipAi=1) |
-| useChartAnalysis | 60s | — (full AI variant) |
-| useSnapshotHistory | 60s | — (list + per-snapshot detail modes) |
+| Hook | Pattern | staleTime | Notes |
+|---|---|---|---|
+| useTargetBoard | useQuery + force | 60s | |
+| useProphet | useQuery + force | 60s | Inline JSON-sanitization + narrate=0 fallback |
+| useCatalyst | useQuery + force | 60s | |
+| useInsider | useQuery + force | 10 min | |
+| useWilliams | useQuery + force | 60s | |
+| useLynch | useQuery + force | 10 min | |
+| useEarnings | useQuery + force | 5 min | |
+| useHealth | useQuery | 30s | |
+| useRegime | useQuery | 30s | |
+| useAnalystsStatus | useQuery | 30s | |
+| useResearch | useQuery | 60s | chart-analysis with skipAi=1 (cheap) |
+| useChartAnalysis | useQuery | 60s | full chart-analysis with AI |
+| useSnapshotHistory | useQuery | 60s | list + per-snapshot detail |
+| useOptionsFlow | useQuery | 5 min | |
+| useBacktest | useQuery | 10 min | params: lookback days + tickers |
+| useEngineTest | useMutation | n/a | manual trigger; setQueryData on success |
 
 **forceRescan pattern** (boards): `force=1` fetch → `setQueryData(...)` (NOT `invalidateQueries`). Replaces cache directly so the user-initiated rescan response IS the new ground truth, no refetch round-trip.
 
@@ -96,12 +99,30 @@ App.jsx went from **2,965 → 336 lines**. Now contains only: imports, `APP_VERS
 - `useTargetBoard.test.jsx` — 5 tests: happy path, forceRescan replaces cache without refetch, HTTP error surfacing, JSON `error` field surfacing, per-universe cache isolation
 - `queryKeys.test.js` — 6 tests: collision-free namespacing, conviction in prophet key, research vs chartAnalysis distinct keys
 
-**Views wired to hooks** (5 board views in this PR):
+**Views wired to hooks** — every view in the app, zero remaining `useState + useEffect + fetch + setState` patterns for server data:
+
+Board views (force-rescan):
 - `WilliamsView` → `useWilliams(universe, side)`
 - `LynchView` → `useLynch(universe)`
 - `CatalystView` → `useCatalyst(universe, filter, minConviction)`
 - `InsiderBoardView` → `useInsider(universe, windowDays)`
 - `LiveTargetBoard` (inside `TargetBoardView.jsx`) → `useTargetBoard(universe)`
+- `ProphetView` → `useProphet(universe, minConviction)`
+- `EarningsPlaysView` → `useEarnings(windowDays)` *(also fixes pre-existing W2 bug — was referencing `fetchWithRetry`/`validate`/`SHAPES`/`readLog` without imports; would have crashed on first user click into the Earnings tab)*
+
+Non-board views:
+- `HistoryView` → `useSnapshotHistory(board, universe, snapshotId)` (list + detail modes)
+- `ChartView` → `useChartAnalysis(ticker, lookback)`
+- `JournalView` → `useResearch('SPY')` for SPY bars + `useQueries` for per-ticker bars
+- `OptionsFlowView` → `useOptionsFlow()`
+- `BacktestView` → `useBacktest(lookback)`
+- `EngineTestView` → `useEngineTest()` (mutation pattern — fires only on user click)
+
+Composed views:
+- `AlertsView` → 4-hook composition (`useTargetBoard` + `useCatalyst` + `useEarnings` + `useRegime`) with `useMemo` derivation. Side benefit: opening Alerts now warms the same cache the dedicated boards read, so any subsequent board open is an instant hit.
+
+App.jsx top-level:
+- TopBar regime + analyst-status badges → `useRegime` + `useAnalystsStatus` (replaces inline useEffect + 2x fetch with mock-fallback kept intact via `data?.regime ?? MOCK_REGIME`)
 
 For each view, the conversion is the same shape:
 ```jsx
@@ -111,13 +132,17 @@ const isRescanning = isFetching && !loading;
 // error?.message instead of error (TanStack returns Error, not string)
 ```
 
-Old request-ID race-protection refs removed — TanStack Query's abort signal supersedes prior in-flight requests automatically when the queryKey changes.
+Old request-ID race-protection refs (in TargetBoardView, ProphetView) removed — TanStack Query's abort signal supersedes prior in-flight requests automatically when the queryKey changes.
 
-## Deferred to follow-up (in this branch's commit chain or a 2.1 brief)
+## Gap closed
 
-- **ProphetView wiring** — has prophet-specific JSON sanitization (strips ASCII control chars, retries with `narrate=0` on parse failure) that guards against mobile JSON corruption. Wiring as-is would either pollute the generic `useProphet` hook with prophet-specific logic or lose the mobile-reliability fix. Best landed when the prophet endpoint emits clean JSON (a backend fix, not a hook change).
-- **Extracted views** (`AlertsView`, `EngineTestView`, `EarningsPlaysView`, `OptionsFlowView`, `SettingsView`, `BacktestView`, `RegimeView`, `AnalystsView`, `TargetBoardView` outer wrapper) — these were extracted in the W2 commit but most read from local mock data or use non-board endpoints. Wiring is mechanical and small, separable into its own commit.
-- **HistoryView** → `useSnapshotHistory`, **ChartView** → `useChartAnalysis`, **JournalView** → `useResearch`, **App.jsx** TopBar regime/analyst-status badges → `useRegime` + `useAnalystsStatus`.
+The brief's success criterion "every view uses its hook (no remaining useEffect + fetch + setState patterns for server data)" is satisfied in full as of this PR. The initial wiring sweep landed 5 board views; subsequent commits added the remaining 8 (ProphetView with mobile JSON-sanitization baked into the hook's queryFn; HistoryView, ChartView, JournalView, EarningsView, OptionsFlowView, BacktestView, EngineTestView, AlertsView; plus App.jsx topbar). Three new hooks were added in the closing pass: `useOptionsFlow`, `useBacktest`, `useEngineTest` (the last being a `useMutation` pattern since it's manually triggered).
+
+Final audit:
+```
+$ grep -rE "fetch\(['\"]/api/" src/   # zero hits in real code
+src/lib/validateResponse.js:11:// (only inside a doc-comment example)
+```
 
 ## Test counts
 

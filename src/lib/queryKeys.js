@@ -32,4 +32,7 @@ export const queryKeys = {
   research: (ticker) => ['tradeiq', 'research', ticker],
   chartAnalysis: (ticker) => ['tradeiq', 'chartAnalysis', ticker],
   snapshotHistory: (board) => ['tradeiq', 'snapshotHistory', board],
+  optionsFlow: () => ['tradeiq', 'optionsFlow'],
+  backtest: (lookback, tickers) => ['tradeiq', 'backtest', lookback, tickers],
+  engineTest: (ticker) => ['tradeiq', 'engineTest', ticker],
 };
