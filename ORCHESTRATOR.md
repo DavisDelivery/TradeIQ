@@ -556,7 +556,7 @@ Updated each session. `pending` → `in-progress` → `done` (with version + dat
 |---|---|---|---|---|---|
 | 0 | Engineering foundation + safety nets | done | 0.10.0-alpha | 2026-05-08 | Tests + CI + spend cap + circuit breaker + structured logger + Sentry hooks + weekly Firestore backups; reconciled with Phase 1 + temperature hotfix |
 | 1 | Universe coverage + snapshot infrastructure | done | 0.9.1-alpha | 2026-05-07 | All 7 boards snapshot-first end-to-end; FreshnessPill on all 7 views; HistoryView replay surface; backfill script for tradeLog reconstruction. Phase 0 still pending — see PR notes. |
-| 2 | Refactor foundation (schemas + monolith split + TanStack Query) | pending | — | — | — |
+| 2 | Refactor foundation (schemas + monolith split + TanStack Query) | done | 0.11.0-alpha | 2026-05-08 | Zod at 5 provider boundaries (10 fetch sites + 5 Quiver datasets); App.jsx 2965 -> 331 lines; 16 hooks + provider wrap; all 13 views wired to hooks (zero remaining useState+useEffect+fetch patterns for server data); fixed pre-existing W2 bug in EarningsView (missing imports); 127 tests (62 baseline + 54 schema + 11 hook); +12kB gzipped under 820kB budget. |
 | 3 | Point-in-time data layer | pending | — | — | — |
 | 4 | Real backtest v2 | pending | — | — | — |
 | 5 | Calibration loop + ML refinement | pending | — | — | — |

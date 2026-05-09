@@ -16,6 +16,7 @@
 //     forward-looking fundamental, not a price-moving announcement.
 
 import { quiverGetTicker, q, qn, qdate } from './quiver-client';
+import { QuiverPatentArraySchema } from './schemas';
 
 export interface PatentGrant {
   patentId: string;
@@ -72,8 +73,8 @@ export async function getPatentActivity(
   try {
     // Quiver exposes patent data under the `allpatents` endpoint. Some plans
     // also have `patents` — we try both.
-    let rows = await quiverGetTicker('allpatents', ticker);
-    if (rows.length === 0) rows = await quiverGetTicker('patents', ticker);
+    let rows = await quiverGetTicker('allpatents', ticker, { schema: QuiverPatentArraySchema });
+    if (rows.length === 0) rows = await quiverGetTicker('patents', ticker, { schema: QuiverPatentArraySchema });
     if (rows.length === 0) return empty;
 
     const grants = rows.map(normalizePatent).filter(Boolean) as PatentGrant[];

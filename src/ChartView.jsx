@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import {
   LineChart, Line, BarChart, Bar, ComposedChart, Area,
   XAxis, YAxis, Tooltip, CartesianGrid, ResponsiveContainer,
@@ -9,37 +9,20 @@ import {
   Brain, Zap, AlertCircle, Search, RefreshCw,
 } from 'lucide-react';
 import { LogButton } from './components/LogButton.jsx';
-import { validate, SHAPES } from './lib/validateResponse.js';
+import { useChartAnalysis } from './hooks/useChartAnalysis.js';
 
 const QUICK_TICKERS = ['NVDA', 'AAPL', 'MSFT', 'TSLA', 'META', 'GOOGL', 'AMZN', 'SPY'];
 
 export const ChartView = () => {
   const [ticker, setTicker] = useState('NVDA');
   const [input, setInput] = useState('NVDA');
-  const [data, setData] = useState(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState(null);
 
-  const load = async (t) => {
-    setLoading(true); setError(null);
-    try {
-      const r = await fetch(`/api/chart-analysis?ticker=${encodeURIComponent(t)}&lookback=180`);
-      const ctype = r.headers.get('content-type') ?? '';
-      if (!ctype.includes('json')) throw new Error(`Server returned ${r.status}`);
-      const json = await r.json();
-      if (!r.ok || !json.ok) throw new Error(json.error || `HTTP ${r.status}`);
-      setData(validate(json, SHAPES.chartAnalysis, "chart-analysis"));
-    } catch (e) {
-      setError(e.message);
-    } finally { setLoading(false); }
-  };
-
-  useEffect(() => { load(ticker); /* eslint-disable-next-line */ }, [ticker]);
+  const { data, error, isLoading: loading, refetch } = useChartAnalysis(ticker, 180);
 
   const submit = () => {
     const t = input.trim().toUpperCase();
     if (t && t !== ticker) setTicker(t);
-    else load(ticker);
+    else refetch();
   };
 
   return (
@@ -68,7 +51,7 @@ export const ChartView = () => {
           <button onClick={submit} className="px-2 py-1.5 text-[10px] font-mono text-neutral-400 hover:text-neutral-100 border-l border-neutral-800">GO</button>
         </div>
         <button
-          onClick={() => load(ticker)}
+          onClick={() => refetch()}
           disabled={loading}
           className="px-2 py-1.5 border border-neutral-800 text-neutral-500 hover:text-neutral-200 disabled:opacity-50"
           title="Refresh"
@@ -89,7 +72,7 @@ export const ChartView = () => {
       {error && (
         <div className="border border-rose-500/30 bg-rose-500/10 p-3 flex items-start gap-2 mb-4">
           <AlertCircle className="h-4 w-4 text-rose-400 flex-shrink-0 mt-0.5" />
-          <div className="text-[12px] text-rose-300">{error}</div>
+          <div className="text-[12px] text-rose-300">{error?.message ?? String(error)}</div>
         </div>
       )}
 

@@ -1,5 +1,8 @@
 // Shared Quiver Quantitative API client.
 
+import type { ZodSchema } from 'zod';
+import { parseOrFallback } from './schemas/parse';
+
 const QUIVER_BASE = 'https://api.quiverquant.com/beta';
 
 function quiverKey(): string {
@@ -61,19 +64,37 @@ export async function quiverGet<T = any>(
 export async function quiverGetTicker<T = any>(
   endpoint: string,
   ticker: string,
-  opts: { ttlMs?: number } = {},
+  opts: { ttlMs?: number; schema?: ZodSchema<T[]> } = {},
 ): Promise<T[]> {
   const data = await quiverGet<T[] | { data?: T[]; records?: T[] }>(
     `/historical/${endpoint}/${encodeURIComponent(ticker)}`,
     opts,
   );
-  if (Array.isArray(data)) return data;
-  if (data && typeof data === 'object') {
+  let rows: T[] = [];
+  if (Array.isArray(data)) rows = data;
+  else if (data && typeof data === 'object') {
     const obj = data as any;
-    if (Array.isArray(obj.data)) return obj.data;
-    if (Array.isArray(obj.records)) return obj.records;
+    if (Array.isArray(obj.data)) rows = obj.data;
+    else if (Array.isArray(obj.records)) rows = obj.records;
   }
-  return [];
+  if (rows.length === 0) return [];
+
+  // Optional schema validation. Only applied when caller supplies one.
+  // We validate the array as a whole (so schema_mismatch is logged once
+  // per request, not once per record) and fall back to the unvalidated
+  // rows on parse failure — Quiver's field-name churn means strict
+  // validation would constantly tank the response, and the providers
+  // already normalize via q()/qn()/qdate(). Schemas exist here as drift
+  // sensors, not gates.
+  if (opts.schema) {
+    return parseOrFallback(
+      opts.schema,
+      rows,
+      { provider: 'quiver', endpoint, ticker },
+      rows,
+    );
+  }
+  return rows;
 }
 
 export function q(row: any, ...names: string[]): any {

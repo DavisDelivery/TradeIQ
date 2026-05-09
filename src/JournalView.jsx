@@ -1,9 +1,13 @@
 import React, { useState, useEffect, useMemo } from 'react';
+import { useQueries } from '@tanstack/react-query';
 import {
   BookMarked, TrendingUp, TrendingDown, Minus, X, RefreshCw, AlertCircle,
   Zap, Briefcase, Activity, Shield, Target, Cloud, CloudOff,
 } from 'lucide-react';
 import { readLog, removeTrade, computeForwardReturns, daysBetween, cloudSyncState } from './tradeLog.js';
+import { useResearch } from './hooks/useResearch.js';
+import { queryKeys } from './lib/queryKeys.js';
+import { fetchWithRetry } from './lib/validateResponse.js';
 
 const SOURCE_META = {
   earnings: { label: 'Earnings', icon: Zap, color: 'text-sky-400 border-sky-500/40 bg-sky-500/5' },
@@ -25,10 +29,6 @@ const WINDOWS = [
 
 export const JournalView = () => {
   const [log, setLog] = useState([]);
-  const [perfByTicker, setPerfByTicker] = useState({});
-  const [spyBars, setSpyBars] = useState(null);
-  const [loadingTickers, setLoadingTickers] = useState(new Set());
-  const [errorTickers, setErrorTickers] = useState(new Set());
   const [expandedId, setExpandedId] = useState(null);
   const [sourceFilter, setSourceFilter] = useState('all');
   const [cloudState, setCloudState] = useState(cloudSyncState());
@@ -47,42 +47,56 @@ export const JournalView = () => {
     };
   }, []);
 
-  // Fetch SPY bars once for alpha calculations
-  useEffect(() => {
-    if (log.length === 0 || spyBars) return;
-    fetch('/api/chart-analysis?ticker=SPY&lookback=180&skipAi=1')
-      .then((r) => r.ok ? r.json() : null)
-      .then((json) => { if (json?.ok && Array.isArray(json.bars)) setSpyBars(json.bars); })
-      .catch(() => {});
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [log.length]);
+  // SPY bars for alpha calculations — useResearch caches across views,
+  // so any other view that already loaded SPY hands us the result instantly.
+  const spyQuery = useResearch(log.length > 0 ? 'SPY' : null, 180);
+  const spyBars = Array.isArray(spyQuery.data?.bars) ? spyQuery.data.bars : null;
 
-  // Fetch chart-analysis data for each distinct ticker in the log (no AI narrative)
-  useEffect(() => {
-    const tickers = Array.from(new Set(log.map((t) => t.ticker)));
-    for (const ticker of tickers) {
-      if (perfByTicker[ticker] || loadingTickers.has(ticker)) continue;
-      setLoadingTickers((prev) => new Set([...prev, ticker]));
-      fetch(`/api/chart-analysis?ticker=${encodeURIComponent(ticker)}&lookback=180&skipAi=1`)
-        .then((r) => r.ok ? r.json() : null)
-        .then((json) => {
-          if (json?.ok && Array.isArray(json.bars)) {
-            setPerfByTicker((prev) => ({ ...prev, [ticker]: json.bars }));
-          } else {
-            setErrorTickers((prev) => new Set([...prev, ticker]));
-          }
-        })
-        .catch(() => setErrorTickers((prev) => new Set([...prev, ticker])))
-        .finally(() => {
-          setLoadingTickers((prev) => {
-            const next = new Set(prev);
-            next.delete(ticker);
-            return next;
-          });
-        });
-    }
+  // Per-ticker bars via useQueries — one in-flight query per distinct
+  // ticker, with native dedup if the same ticker appears in multiple
+  // log entries. Each query lands in the same cache slot as useResearch,
+  // so a ticker viewed earlier in ChartView/Prophet is already warm here.
+  const distinctTickers = useMemo(
+    () => Array.from(new Set(log.map((t) => t.ticker))).filter(Boolean),
+    [log],
+  );
+  const tickerQueries = useQueries({
+    queries: distinctTickers.map((ticker) => ({
+      queryKey: queryKeys.research(ticker),
+      queryFn: async ({ signal }) => {
+        const r = await fetchWithRetry(
+          `/api/chart-analysis?ticker=${encodeURIComponent(ticker)}&lookback=180&skipAi=1`,
+          { signal },
+        );
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        const json = await r.json();
+        if (!json.ok || !Array.isArray(json.bars)) throw new Error(json.error || 'no data');
+        return json;
+      },
+      staleTime: 60_000,
+    })),
+  });
+
+  // Reduce the parallel results to the perfByTicker / loadingTickers /
+  // errorTickers shape the existing render code expects. Memoized so the
+  // downstream components don't see a fresh object every render.
+  const { perfByTicker, loadingTickers, errorTickers } = useMemo(() => {
+    const perf = {};
+    const loading = new Set();
+    const errors = new Set();
+    distinctTickers.forEach((ticker, i) => {
+      const q = tickerQueries[i];
+      if (!q) return;
+      if (q.isLoading) loading.add(ticker);
+      else if (q.isError) errors.add(ticker);
+      else if (Array.isArray(q.data?.bars)) perf[ticker] = q.data.bars;
+    });
+    return { perfByTicker: perf, loadingTickers: loading, errorTickers: errors };
+    // tickerQueries has unstable identity on every render; depend on its
+    // length and the relevant per-query flags via JSON of statuses. This
+    // is hacky but avoids over-triggering memo invalidation.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [log]);
+  }, [distinctTickers, tickerQueries.map((q) => `${q.status}:${q.dataUpdatedAt ?? 0}`).join(',')]);
 
   const handleRemove = (id) => {
     setLog(removeTrade(id));

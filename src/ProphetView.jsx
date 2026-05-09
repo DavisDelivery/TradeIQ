@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import {
   Sparkles, TrendingUp, TrendingDown, Minus, Brain, Zap, AlertCircle,
   RefreshCw, Layers, Activity, Volume2, Gauge, Scale, Briefcase, Target,
@@ -10,7 +10,7 @@ import {
 } from 'recharts';
 import { LogButton } from './components/LogButton.jsx';
 import { FreshnessPill } from './components/FreshnessPill.jsx';
-import { validate, SHAPES, fetchWithRetry } from './lib/validateResponse.js';
+import { useProphet } from './hooks/useProphet.js';
 
 const UNIVERSE_OPTIONS = [
   { id: 'largecap', label: 'Large Cap', desc: 'S&P 500 + NDX + Dow (~230)' },
@@ -37,71 +37,10 @@ const LAYER_META = {
 export const ProphetView = () => {
   const [universe, setUniverse] = useState('largecap');
   const [minConviction, setMinConviction] = useState('low');
-  const [data, setData] = useState(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState(null);
   const [expandedTicker, setExpandedTicker] = useState(null);
-  const [isRescanning, setIsRescanning] = useState(false);
-  const requestIdRef = React.useRef(0);
-
-  const load = async ({ force = false } = {}) => {
-    // Increment request counter — any prior in-flight request becomes stale
-    const myRequestId = ++requestIdRef.current;
-    if (force) setIsRescanning(true);
-    else setLoading(true);
-    setError(null);
-    try {
-      const url = `/api/prophet-picks?universe=${universe}&minConviction=${minConviction}&limit=30${force ? '&force=1' : ''}`;
-      const r = await fetchWithRetry(url);
-      const ctype = r.headers.get('content-type') ?? '';
-      if (!ctype.includes('json')) {
-        const text = await r.text();
-        throw new Error(`Server ${r.status}: ${text.slice(0, 120)}`);
-      }
-      // Read as text first so we can sanitize before parsing. Mobile clients sometimes
-      // receive responses with stray unicode that break native JSON.parse.
-      const raw = await r.text();
-      let json;
-      try {
-        json = JSON.parse(raw);
-      } catch (parseErr) {
-        // Sanitize: strip ASCII control chars and try again
-        const clean = raw.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u2028\u2029]/g, ' ');
-        try {
-          json = JSON.parse(clean);
-        } catch {
-          // Last resort — retry the scan with narratives disabled (eliminates the main source of bad bytes)
-          console.error('[prophet] JSON parse failed, retrying without narratives', parseErr.message);
-          const fallback = await fetch(`${url}&narrate=0`);
-          if (!fallback.ok) throw new Error(`Scan failed: ${parseErr.message}`);
-          json = await fallback.json();
-        }
-      }
-      if (!r.ok || !json.ok) throw new Error(json.error || `HTTP ${r.status}`);
-      // Drop the response if a newer request has been fired (user changed filter)
-      if (myRequestId !== requestIdRef.current) {
-        console.log('[prophet] dropping stale response', myRequestId, 'current is', requestIdRef.current);
-        return;
-      }
-      // Also guard: response's universe must match currently-selected universe
-      if (json.universe && json.universe !== universe) {
-        console.log('[prophet] response universe mismatch, dropping', json.universe, 'vs', universe);
-        return;
-      }
-      setData(validate(json, SHAPES.prophet, "prophet"));
-    } catch (e) {
-      // Only surface errors for the latest request
-      if (myRequestId === requestIdRef.current) setError(e.message);
-    } finally {
-      // Only clear loading if this is still the latest request
-      if (myRequestId === requestIdRef.current) {
-        setLoading(false);
-        setIsRescanning(false);
-      }
-    }
-  };
-
-  useEffect(() => { load(); /* eslint-disable-next-line */ }, [universe, minConviction]);
+  const { data, error, isLoading: loading, isFetching, forceRescan } =
+    useProphet(universe, minConviction);
+  const isRescanning = isFetching && !loading;
 
   return (
     <div className="px-3 py-4 sm:p-6 max-w-[1400px] mx-auto pb-20 sm:pb-6">
@@ -114,7 +53,7 @@ export const ProphetView = () => {
             <FreshnessPill
               meta={data}
               isRescanning={isRescanning}
-              onForceRescan={() => load({ force: true })}
+              onForceRescan={() => forceRescan()}
             />
           </div>
         </div>
@@ -161,7 +100,7 @@ export const ProphetView = () => {
             {data.partial && <span className="text-amber-500">· partial</span>}
             {data.stale && <span className="text-amber-500">· stale fallback</span>}
           </div>
-          <button onClick={load} disabled={loading} className="flex items-center gap-1 text-neutral-500 hover:text-neutral-300 transition-colors">
+          <button onClick={() => forceRescan()} disabled={loading} className="flex items-center gap-1 text-neutral-500 hover:text-neutral-300 transition-colors">
             <RefreshCw className={`h-3 w-3 ${loading ? 'animate-spin' : ''}`} />
             {loading ? 'scanning…' : 'refresh'}
           </button>
@@ -182,8 +121,8 @@ export const ProphetView = () => {
           <AlertCircle className="h-4 w-4 text-rose-400 flex-shrink-0 mt-0.5" />
           <div>
             <div className="text-[12px] text-rose-300 font-medium">Prophet scan failed</div>
-            <div className="text-[11px] text-rose-400/70 mt-0.5">{error}</div>
-            <button onClick={load} className="text-[11px] text-rose-300 underline mt-1 hover:text-rose-200">retry</button>
+            <div className="text-[11px] text-rose-400/70 mt-0.5">{error?.message ?? String(error)}</div>
+            <button onClick={() => forceRescan()} className="text-[11px] text-rose-300 underline mt-1 hover:text-rose-200">retry</button>
           </div>
         </div>
       )}
@@ -193,8 +132,8 @@ export const ProphetView = () => {
         <div className="border border-neutral-800 p-8 text-center">
           <div className="inline-block h-6 w-6 border-2 border-emerald-500/30 border-t-emerald-500 rounded-full animate-spin mb-3" />
           <div className="text-neutral-400 text-sm">
-            {universe === 'all' ? 'Scanning ~2,200 tickers across 7 layers — early-stops when enough qualify…'
-              : universe === 'russell' ? 'Scanning Russell 2000 (~1,930 tickers) — early-stops when enough qualify…'
+            {universe === 'all' ? 'Loading rankings (~2,200 tickers across 7 layers)…'
+              : universe === 'russell' ? 'Loading Russell 2000 rankings (1,930 tickers across 7 layers)…'
               : 'Scanning S&P 500 + NDX + Dow (~230 tickers) across 7 layers…'}
           </div>
           <div className="text-neutral-600 text-[11px] mt-1 font-mono">First scan 15-22s · cached 20 min after</div>
