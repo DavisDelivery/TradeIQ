@@ -3,6 +3,8 @@ import { AlertTriangle, CircleX } from 'lucide-react';
 import { useSortable, SortableTh } from './lib/useSortable.jsx';
 import { FreshnessPill } from './components/FreshnessPill.jsx';
 import { MOCK_EARNINGS } from './lib/mockData.js';
+import { useEarnings } from './hooks/useEarnings.js';
+import { readLog } from './tradeLog.js';
 
 const DetailStat = ({ label, value, color }) => (
   <div>
@@ -50,37 +52,12 @@ export const EarningsPlaysView = () => {
     return 7;
   });
   const [filter, setFilter] = useState('all');
-  const [loading, setLoading] = useState(true);
-  const [isRescanning, setIsRescanning] = useState(false);
-  const [error, setError] = useState(null);
-  const [data, setData] = useState(null);
   const [expandedKey, setExpandedKey] = useState(null);
   const [loggedIds, setLoggedIds] = useState(() => new Set(readLog().filter((t) => t.source === 'earnings').map((t) => t.ticker + '|' + t.reportDate)));
 
   const { sortKey, sortDir, sortBy, sortRows } = useSortable('composite', 'desc');
-
-  const load = async ({ force = false } = {}) => {
-    if (force) setIsRescanning(true);
-    else setLoading(true);
-    setError(null);
-    try {
-      const url = `/api/earnings-board?days=${windowDays}${force ? '&force=1' : ''}`;
-      const r = await fetchWithRetry(url);
-      const json = await r.json();
-      if (!r.ok || json.error) {
-        setError(json.error || `HTTP ${r.status}`);
-      } else {
-        setData(validate(json, SHAPES.earningsBoard, "earnings-board"));
-      }
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setLoading(false);
-      setIsRescanning(false);
-    }
-  };
-
-  useEffect(() => { load(); /* eslint-disable-next-line */ }, [windowDays]);
+  const { data, error, isLoading: loading, isFetching, forceRescan } = useEarnings(windowDays);
+  const isRescanning = isFetching && !loading;
 
   // Sync window selection to URL for bookmarkability
   useEffect(() => {
@@ -125,7 +102,7 @@ export const EarningsPlaysView = () => {
           <FreshnessPill
             meta={data}
             isRescanning={isRescanning}
-            onForceRescan={() => load({ force: true })}
+            onForceRescan={() => forceRescan()}
           />
         </div>
       </div>
@@ -153,7 +130,7 @@ export const EarningsPlaysView = () => {
           <div className="flex items-center gap-2 text-rose-400 font-mono text-[11px] uppercase tracking-widest mb-1">
             <CircleX className="h-4 w-4" /> Error
           </div>
-          <div className="text-[12px] text-neutral-300">{error}</div>
+          <div className="text-[12px] text-neutral-300">{error?.message ?? String(error)}</div>
         </div>
       )}
 

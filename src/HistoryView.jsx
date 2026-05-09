@@ -10,6 +10,7 @@
 
 import React, { useState, useEffect, useMemo } from 'react';
 import { Clock, AlertCircle } from 'lucide-react';
+import { useSnapshotHistory } from './hooks/useSnapshotHistory.js';
 
 const BOARDS = [
   { id: 'target-board', label: 'Target Board' },
@@ -59,12 +60,7 @@ function formatAge(iso) {
 const HistoryView = () => {
   const [board, setBoard] = useState('target-board');
   const [universe, setUniverse] = useState('sp500');
-  const [snapshots, setSnapshots] = useState([]);
   const [selectedId, setSelectedId] = useState(null);
-  const [snapshot, setSnapshot] = useState(null);
-  const [loading, setLoading] = useState(false);
-  const [loadingSnapshot, setLoadingSnapshot] = useState(false);
-  const [error, setError] = useState(null);
 
   // Reset universe to a valid one when board changes
   useEffect(() => {
@@ -75,73 +71,35 @@ const HistoryView = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [board]);
 
-  // Fetch snapshot list whenever board or universe changes
-  useEffect(() => {
-    let cancelled = false;
-    setLoading(true);
-    setError(null);
-    setSnapshot(null);
-    setSelectedId(null);
-    fetch(`/api/snapshot-history?board=${board}&universe=${universe}&limit=60`)
-      .then((r) => r.json())
-      .then((json) => {
-        if (cancelled) return;
-        if (!json.ok) {
-          setError(json.error || 'Failed to load snapshots');
-          setSnapshots([]);
-          return;
-        }
-        setSnapshots(json.snapshots ?? []);
-        // Auto-select the newest
-        if (json.snapshots && json.snapshots.length > 0) {
-          setSelectedId(json.snapshots[0].snapshotId);
-        }
-      })
-      .catch((err) => {
-        if (!cancelled) {
-          setError(String(err?.message ?? err));
-          setSnapshots([]);
-        }
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-    return () => { cancelled = true; };
-  }, [board, universe]);
+  // Snapshot list (no snapshotId -> list mode)
+  const listQuery = useSnapshotHistory(board, universe);
+  const snapshots = listQuery.data?.snapshots ?? [];
+  const loading = listQuery.isLoading;
 
-  // Fetch the actual snapshot when selectedId changes
+  // Auto-select newest when the list loads or the selection becomes
+  // invalid for the new board/universe.
   useEffect(() => {
-    if (!selectedId) {
-      setSnapshot(null);
+    if (!snapshots.length) {
+      setSelectedId(null);
       return;
     }
-    let cancelled = false;
-    setLoadingSnapshot(true);
-    setError(null);
-    fetch(
-      `/api/snapshot-history?board=${board}&universe=${universe}&snapshotId=${encodeURIComponent(selectedId)}`,
-    )
-      .then((r) => r.json())
-      .then((json) => {
-        if (cancelled) return;
-        if (!json.ok) {
-          setError(json.error || 'Failed to load snapshot');
-          setSnapshot(null);
-          return;
-        }
-        setSnapshot(json.snapshot);
-      })
-      .catch((err) => {
-        if (!cancelled) {
-          setError(String(err?.message ?? err));
-          setSnapshot(null);
-        }
-      })
-      .finally(() => {
-        if (!cancelled) setLoadingSnapshot(false);
-      });
-    return () => { cancelled = true; };
-  }, [selectedId, board, universe]);
+    if (!selectedId || !snapshots.some((s) => s.snapshotId === selectedId)) {
+      setSelectedId(snapshots[0].snapshotId);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [snapshots]);
+
+  // Snapshot detail (snapshotId set -> detail mode; cached per id)
+  const detailQuery = useSnapshotHistory(board, universe, selectedId);
+  const snapshot = detailQuery.data?.snapshot ?? null;
+  const loadingSnapshot = detailQuery.isLoading && !!selectedId;
+
+  // Surface either error (list takes precedence — if the list failed,
+  // detail couldn't have succeeded anyway).
+  const error =
+    listQuery.error?.message ??
+    (selectedId ? detailQuery.error?.message : null) ??
+    null;
 
   const validUniverses = UNIVERSES_PER_BOARD[board] ?? ['sp500'];
 

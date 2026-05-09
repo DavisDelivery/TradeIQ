@@ -39,6 +39,8 @@ import { ResearchPanel } from './components/ResearchPanel.jsx';
 import { Logo, StatusDot, ConvictionBadge, DirectionPill } from './components/Badges.jsx';
 import { fmt, safeTimestamp, tierColor, tierGlow, directionIcon, analystIcon, analystLabel } from './lib/formatters.jsx';
 import { MOCK_REGIME, MOCK_TARGETS, MOCK_ANALYSTS, MOCK_ALERTS, MOCK_EQUITY_CURVE } from './lib/mockData.js';
+import { useRegime } from './hooks/useRegime.js';
+import { useAnalystsStatus } from './hooks/useAnalystsStatus.js';
 
 
 const APP_VERSION = '0.11.0-alpha';
@@ -252,22 +254,16 @@ export default function App() {
   const [activeView, setActiveView] = useState('board');
   const [selectedTarget, setSelectedTarget] = useState(null);
   const [universe, setUniverse] = useState('sp500');
-  const [regime, setRegime] = useState(MOCK_REGIME);
-  const [analysts, setAnalysts] = useState(MOCK_ANALYSTS);
   const showUniverseBar = UNIVERSE_AWARE_VIEWS.has(activeView);
 
-  useEffect(() => {
-    // Live regime from FRED. Falls back to MOCK_REGIME if network/auth fails.
-    fetch('/api/regime')
-      .then((r) => (r.ok ? r.json() : null))
-      .then((d) => { if (d && d.regime) setRegime(d); })
-      .catch(() => {});
-    // Live analyst roster + health. Falls back to MOCK_ANALYSTS.
-    fetch('/api/analysts-status')
-      .then((r) => (r.ok ? r.json() : null))
-      .then((d) => { if (d?.analysts?.length) setAnalysts(d.analysts); })
-      .catch(() => {});
-  }, []);
+  // Live regime + analyst roster from the API. Both fall back gracefully
+  // to MOCK_* on network/auth failure (TanStack returns `data: undefined`
+  // and we substitute the mock so downstream components always have a
+  // shape to render against).
+  const { data: regimeData } = useRegime();
+  const { data: analystsData } = useAnalystsStatus();
+  const regime = regimeData?.regime ? regimeData : MOCK_REGIME;
+  const analysts = analystsData?.analysts?.length ? analystsData.analysts : MOCK_ANALYSTS;
 
   return (
     <div className="min-h-screen bg-[#050607] text-neutral-200 overflow-x-hidden" style={{
