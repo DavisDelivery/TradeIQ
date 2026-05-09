@@ -132,8 +132,8 @@ export const ProphetView = () => {
         <div className="border border-neutral-800 p-8 text-center">
           <div className="inline-block h-6 w-6 border-2 border-emerald-500/30 border-t-emerald-500 rounded-full animate-spin mb-3" />
           <div className="text-neutral-400 text-sm">
-            {universe === 'all' ? 'Scanning ~2,200 tickers across 7 layers — early-stops when enough qualify…'
-              : universe === 'russell' ? 'Scanning Russell 2000 (~1,930 tickers) — early-stops when enough qualify…'
+            {universe === 'all' ? 'Loading rankings (~2,200 tickers across 7 layers)…'
+              : universe === 'russell' ? 'Loading Russell 2000 rankings (1,930 tickers across 7 layers)…'
               : 'Scanning S&P 500 + NDX + Dow (~230 tickers) across 7 layers…'}
           </div>
           <div className="text-neutral-600 text-[11px] mt-1 font-mono">First scan 15-22s · cached 20 min after</div>
