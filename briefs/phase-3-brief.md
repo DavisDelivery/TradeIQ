@@ -32,6 +32,16 @@ Where as-of is fundamentally not supported by the vendor (e.g., Finnhub recommen
 
 This phase is mostly TypeScript backend work. No new UI surface in Phase 3. Frontend stays untouched.
 
+### Conventions (apply to every workstream)
+
+- **`asOfDate` format.** Always `YYYY-MM-DD` (10 chars). No timestamps, no timezones in the user-facing API.
+- **`asOfDate` semantics.** Inclusive, end-of-day UTC. Anything filed/published/dated AT or BEFORE 23:59:59Z on that date is visible. Anything dated AFTER is hidden.
+- **Implementation per provider.**
+  - String comparison (`filing_date <= asOfDate`) works directly when both sides are `YYYY-MM-DD`.
+  - For datetime fields (Polygon `published_utc`, Quiver timestamps), pass the API's native filter as `<param>.lte=<asOfDate>T23:59:59Z` to honor end-of-day. Do not strip the time portion — Polygon treats `published_utc.lte=2024-01-01` as midnight start of day, which silently excludes everything published on the 1st.
+  - In-memory filtering uses the same convention: `event.timestamp <= asOfDate + 'T23:59:59.999Z'`.
+- **Document the convention** in `docs/POINT_IN_TIME_AUDIT.md` once at the top so every code reviewer reads it before reviewing PIT changes.
+
 ---
 
 ## Credentials (use these — do not request from user)
@@ -71,7 +81,7 @@ Don't read `app/`, `dist/`, `node_modules/`, or any view file. They're irrelevan
 
 ---
 
-## Phase 3 scope (eleven workstreams)
+## Phase 3 scope (twelve workstreams)
 
 Order matters. W1 first — you can't fix what you haven't audited.
 
@@ -119,7 +129,13 @@ The doc is a living artifact. When Phase 4 hits a PIT edge case, this doc gets u
 
 Daily bars don't get revised after publication. The PIT-safety is built into the API itself — calling `/v2/aggs/ticker/AAPL/range/1/day/2020-01-01/2020-12-31` today returns the same OHLCV that was true on 2020-12-31.
 
-**Action.** Add a `// PIT-safe: daily OHLCV does not revise after publication` comment to `getDailyBars`. No code change. Test confirms behavior in W10.
+**Action.** Add a `// PIT-safe: daily OHLCV does not revise after publication` comment to `getDailyBars`. No code change.
+
+**Spot-check delisted ticker retention.** Backtest will request OHLCV on tickers that no longer exist. Polygon retains delisted bars but it's worth confirming. Hit `getDailyBars` against a known delisted ticker — `LEHMQ` (Lehman Brothers, delisted 2008) or `FRBA` (First Republic, delisted 2023) — for a date range while the company was active. Confirm bars come back. Document the verification in the audit doc with the ticker and date range you tested.
+
+If delisted bars don't come back, that's a much bigger problem for Phase 4 than the PIT additions and needs to surface to user immediately.
+
+Test confirms behavior in W11.
 
 ### Workstream 3 — Polygon fundamentals as-of
 
@@ -144,7 +160,7 @@ export async function getFundamentals(
 
 **Critical detail.** Polygon revises restated financials by editing the same filing record. Even with `filing_date <= asOfDate` filtering, the values you read TODAY for a filing dated 2022-06-15 may differ from what was published on 2022-06-15. Document this in the audit doc as "residual risk: revisions to past filings are silently incorporated."
 
-The closest real fix is to snapshot fundamentals into the Firestore snapshot store at Phase 1 scan time — that becomes the PIT-honest source for backtest. Wire this in W9.
+The closest real fix is to snapshot fundamentals into the Firestore snapshot store at Phase 1 scan time — that becomes the PIT-honest source for backtest. Wire this in W10.
 
 ### Workstream 4 — Polygon news as-of
 
@@ -216,7 +232,7 @@ export async function getRecommendations(
 }
 ```
 
-This requires `snapshotBeforeDate` helper in `snapshot-store.ts` — add it in W9.
+This requires `snapshotBeforeDate` helper in `snapshot-store.ts` — add it in W10.
 
 Document this fallback honestly in the audit doc. Phase 4 backtest will only have rec data from when Phase 1 snapshots started accumulating. That's a known limitation.
 
@@ -233,7 +249,54 @@ Document this fallback honestly in the audit doc. Phase 4 backtest will only hav
 
 Each of these three providers gets `asOfDate?: string` on its public functions.
 
-### Workstream 8 — Universe history (the heaviest piece)
+### Workstream 8 — FRED macro series with vintage_dates
+
+**File.** `netlify/functions/shared/data-provider.ts` (FRED helper functions live alongside Polygon).
+
+**Vendor reality.** This is the gold-standard PIT case. FRED's macro series (GDP, CPI, employment, payrolls, ISM, etc.) get heavily revised after initial release — sometimes years later. A backtest using TODAY'S GDP value to "predict" 2020 outcomes is silently using post-revision numbers that nobody actually had at the time. The St. Louis Fed publishes a `vintage_dates` parameter on `/fred/series/observations` that returns ONLY the data as it was published on or before the requested vintage date. Use it.
+
+**Pattern.**
+```ts
+export async function getFredSeries(
+  seriesId: string,
+  opts: {
+    asOfDate?: string;       // e.g., '2023-06-01'
+    observationStart?: string;
+    observationEnd?: string;
+    limit?: number;
+  } = {},
+): Promise<FredObservation[]> {
+  const params = new URLSearchParams({
+    series_id: seriesId,
+    api_key: process.env.FRED_API_KEY!,
+    file_type: 'json',
+  });
+  if (opts.observationStart) params.set('observation_start', opts.observationStart);
+  if (opts.observationEnd) params.set('observation_end', opts.observationEnd);
+  if (opts.limit) params.set('limit', String(opts.limit));
+  if (opts.asOfDate) {
+    // PIT: return only the values FRED had published on or before asOfDate.
+    // FRED's vintage_dates accepts a comma-separated list; pass just the
+    // single asOfDate to get one consistent vintage.
+    params.set('vintage_dates', opts.asOfDate);
+  }
+
+  const res = await fetch(`https://api.stlouisfed.org/fred/series/observations?${params}`);
+  const json = await res.json();
+  const parsed = FredSeriesObservationsSchema.safeParse(json);
+  if (!parsed.success) {
+    log.warn('schema_mismatch', { provider: 'fred', endpoint: 'observations', issues: parsed.error.issues.slice(0, 5) });
+    return [];
+  }
+  return parsed.data.observations ?? [];
+}
+```
+
+**Document in audit doc.** Add an explicit row noting FRED is the only data class with TRUE vintage-aware PIT support. Macro series have meaningful revision risk and this is the cleanest fix in the entire phase.
+
+Test in W11: pull a known revised series like real GDP for a vintage prior to a known revision date, confirm value matches the historical-as-published value not today's restated value.
+
+### Workstream 9 — Universe history (the heaviest piece)
 
 **File.** `netlify/functions/shared/universe-history.ts`
 
@@ -296,7 +359,7 @@ export function wasInIndexOnDate(
 
 **Acceptable shortcuts for Phase 3.** If iShares historical Russell holdings are too painful to scrape (PDFs in some periods), use what they expose as CSV from current snapshots and back-fill ≥ 2 years of monthly data, document the rest as "best-effort." Better to ship 24 months of solid Russell history than to block on perfect 5-year data.
 
-### Workstream 9 — Snapshot store helpers for PIT fallback
+### Workstream 10 — Snapshot store helpers for PIT fallback
 
 **File.** `netlify/functions/shared/snapshot-store.ts`
 
@@ -332,9 +395,9 @@ export async function fieldAtDate<T>(
 
 These are how W6 falls back gracefully. They're also the foundation for Phase 4's backtest engine.
 
-### Workstream 10 — Tests
+### Workstream 11 — Tests
 
-For every provider function modified in W2–W9, add a PIT correctness test:
+For every provider function modified in W2–W10, add a PIT correctness test:
 
 **Test pattern (illustrative).**
 ```ts
@@ -354,9 +417,9 @@ Universe history needs its own tests:
 - `wasInIndexOnDate('TSLA', 'sp500', '2018-01-01')` returns false (TSLA joined S&P 500 in late 2020)
 - `wasInIndexOnDate('LEHM_DEFUNCT', 'sp500', '2007-01-01')` returns true if pre-2008 history is in scope
 
-Aim for ≥ 25 new tests across all PIT additions. CI gates.
+Aim for ≥ 28 new tests across all PIT additions (the extra 3 cover FRED vintage_dates and the delisted-ticker spot check). CI gates.
 
-### Workstream 11 — APP_VERSION + ORCHESTRATOR status
+### Workstream 12 — APP_VERSION + ORCHESTRATOR status
 
 Bump to `0.12.0-alpha` (minor bump for the new data layer). Update ORCHESTRATOR.md status table:
 
@@ -398,13 +461,14 @@ git checkout -b phase-3-point-in-time-data
 
 Granular commits per workstream:
 
-- `phase-3(audit): POINT_IN_TIME_AUDIT.md covers all 15 data classes`
-- `phase-3(bars): confirm + comment Polygon daily bars are PIT-safe`
+- `phase-3(audit): POINT_IN_TIME_AUDIT.md covers all 15 data classes + asOfDate convention`
+- `phase-3(bars): confirm + comment Polygon daily bars are PIT-safe; verify delisted ticker retention`
 - `phase-3(fundamentals): asOfDate param on getFundamentals + filing_date filter`
 - `phase-3(news): asOfDate param on getNews via published_utc.lte`
 - `phase-3(insider): asOfDate filter on insider trades by FilingDate`
 - `phase-3(recommendations): snapshot-store fallback for non-PIT Finnhub recs`
 - `phase-3(political,patents,contracts): asOfDate filters on Quiver providers`
+- `phase-3(fred): vintage_dates support on getFredSeries for PIT macro`
 - `phase-3(universe-history): scripts/generate-universe-history.ts + universe-history.ts (sp500, ndx, dow)`
 - `phase-3(universe-history): russell2k month-end coverage ≥ 24 months`
 - `phase-3(snapshot-store): snapshotBeforeDate + fieldAtDate helpers`
@@ -442,10 +506,13 @@ All must be true before marking Phase 3 done:
 - [ ] `getInsiderTrades('TSLA', { asOfDate: '2023-12-31' })` returns only filings dated ≤ 2023-12-31 (verified by test)
 - [ ] `getRecommendations('MSFT', { asOfDate: '2023-06-01' })` falls back to snapshot store when PIT requested (verified by test with mocked snapshot)
 - [ ] All three Quiver providers (political, patents, contracts) accept asOfDate
+- [ ] `getFredSeries('GDP', { asOfDate: '<a date prior to a known FRED revision>' })` returns the unrevised value (verified by test against a known historical revision)
+- [ ] `getDailyBars('LEHMQ', '2008-01-01', '2008-08-01')` returns bars for a delisted ticker (verified manually + documented in audit doc)
+- [ ] `asOfDate` convention documented at top of `docs/POINT_IN_TIME_AUDIT.md` and consistent across all PIT additions
 - [ ] `wasInIndexOnDate('AAPL', 'sp500', '2018-03-15')` returns true; ditto a known-out-of-index test
 - [ ] Universe history covers sp500/ndx/dow ≥ 60 months and russell2k ≥ 24 months
 - [ ] `snapshotBeforeDate` + `fieldAtDate` helpers exist and have tests
-- [ ] `npm test` ≥ 152 tests, all green (127 baseline + 25 new)
+- [ ] `npm test` ≥ 155 tests, all green (127 baseline + 28 new)
 - [ ] `npx tsc --noEmit` clean
 - [ ] `npm run build` clean
 - [ ] `APP_VERSION = 0.12.0-alpha`, verified live
@@ -460,6 +527,9 @@ All must be true before marking Phase 3 done:
 - **Wikipedia parsing breaks.** Sometimes Wikipedia table formats change. Try a Wayback Machine archived version. Failing that, hand-curate the deltas from the article history page and document.
 - **Test count blocked by PIT-fallback test setup complexity.** PIT-fallback tests need a mock snapshot store. Use Vitest's `vi.mock()` to swap `snapshotBeforeDate` for a fixture. If the mocking infrastructure is too painful for one test, accept fewer tests but document why.
 - **A vendor returns a field with inconsistent date format.** Normalize at parse time inside the existing Zod schema (use `.transform()`). Don't push the inconsistency upstream.
+- **Hot PIT path caching.** Phase 4 backtest will call PIT functions like `getFundamentals('NVDA', { asOfDate: '2023-06-01' })` thousands of times across parameter sweeps. Every call hits the vendor — that's a rate-limit wall and a slow backtest. Phase 3 does NOT build this cache (Phase 4 territory), but: when adding `asOfDate` to a PIT function, structure the function so a future cache layer can wrap it cleanly. Specifically, ensure the `(provider, ticker, asOfDate, dataClass)` tuple is sufficient to identify the result — no hidden inputs from `Date.now()` or random IDs. Add a `// PIT-cacheable: keyed by (ticker, asOfDate)` comment so Phase 4 can find these spots fast.
+- **Choosing which board's snapshot to read for recommendation fallback (W6).** The brief example used `('lynch', 'sp500')` arbitrarily. Investigate first: which boards' snapshot results actually persist a `recommendation` (or analyst-rating) field? Likely candidates are catalyst (uses Finnhub recs as a signal), lynch (broad fundamental scan), and possibly target-board. Pick the broadest-coverage board that genuinely persists this field. Document the choice in code comments AND in the audit doc. If NO board persists it cleanly, that's a real signal — write into the audit doc that recommendation PIT is unsupported until Phase 1's snapshot schema is extended (which would be a Phase 5 ML-prep task, not Phase 3).
+- **Delisted ticker bars don't return.** If the W2 spot check on `LEHMQ` or `FRBA` comes back empty, this is a Phase 4-blocking issue, not a Phase 3 nuance. Surface to user immediately with the test results. Do not continue to W3+.
 
 ---
 
@@ -506,7 +576,7 @@ wc -l netlify/functions/shared/*.ts | head
 # (you already have the API keys; document what each returns)
 ```
 
-Then proceed: W1 (audit doc) → W2 (bars confirm) → W3-7 (provider PIT additions) → W8 (universe history — heaviest) → W9 (snapshot helpers) → W10 (tests) → W11 (version + status).
+Then proceed: W1 (audit doc) → W2 (bars confirm + delisted spot-check) → W3-7 (Polygon/Finnhub/Quiver PIT additions) → W8 (FRED vintage_dates) → W9 (universe history — heaviest) → W10 (snapshot helpers) → W11 (tests) → W12 (version + status).
 
 ---
 
