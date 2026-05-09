@@ -210,11 +210,13 @@ The fix is not "raise the limits" — Netlify functions cap at 26s sync, which i
 
 ---
 
-## Phase 5 — Calibration loop
+## Phase 5 — Calibration loop + ML refinement
 
-**Goal.** Close the loop: backtest tells you which analysts have edge, which weights are wrong, which regimes invert signal. Use that to retune the production model.
+**Goal.** Close the loop: backtest tells you which analysts have edge, which weights are wrong, which regimes invert signal. Use that to retune the production model. Layer real machine learning on top of the rule-based composite — meta-ranker, similarity search, online weight updates, anomaly detection — so picks improve continuously as more outcome data accumulates.
 
-**Why.** Right now the composite weights (15/8/13/10/10/7/7/14/6/10) are priors. After Phase 4, you have OOS alpha per analyst — that should drive the weights, not gut.
+**Why.** Right now the composite weights (15/8/13/10/10/7/7/14/6/10) are priors. After Phase 4, you have OOS alpha per analyst — that should drive the weights, not gut. Beyond weight tuning, the rule-based composite is a deterministic ranker. ML adds: a learned re-ranker that catches patterns the rules don't, a "this looks like X past cases" reality check on every candidate, gradual weight adaptation as the world changes, and outlier flags for unusual setups. None of this is hype — these are standard, interpretable techniques used across systematic trading desks.
+
+**ML scope is gated on Phase 3 + Phase 4.** No labeled training data without point-in-time history (Phase 3) and forward returns from the backtest (Phase 4). Don't try to shortcut.
 
 **Scope.**
 
@@ -224,17 +226,28 @@ The fix is not "raise the limits" — Netlify functions cap at 26s sync, which i
 | Regime-conditional weights | `analyst-runner.ts` | Modify. Weights become a function of `Regime`, not a constant. Optimizer outputs one weight vector per regime (risk_on / neutral / risk_off). |
 | Post-trade AI review | `netlify/functions/scheduled/post-trade-review.ts` | New. Daily scheduled function. For each closed trade ≥ 10 days old, call Opus with: original thesis (analyst contributions, top signals), actual price path, news that hit during the trade. Opus classifies: thesis-confirmed / thesis-invalidated-but-profitable / thesis-failed / externally-driven. Result stored on the trade entry. |
 | Calibration dashboard | `src/views/CalibrationView.jsx` | New. Per-analyst hit rate, alpha, info ratio rolling 30/90/180 days. Chart of weight evolution over time. |
-| Weight version control | `modelVersions/{version}` collection | Use existing from Phase 2. Every weight change is a new version with full diff. Boards record which version generated them. |
+| Weight version control | `modelVersions/{version}` collection | Use existing from Phase 1. Every weight change is a new version with full diff. Boards record which version generated them. |
+| **Meta-ranker (gradient boosting)** | `ml/meta-ranker.ts`, `scripts/train-meta-ranker.ts` | **New.** Train XGBoost/LightGBM on `(composite, layer_scores, regime, sector, marketCap, liquidity) → forward_5d_return / forward_20d_return / forward_60d_return`. Train weekly via scheduled function from `boardSnapshots` + `tradeLog` outcomes. Production inference re-ranks candidates on top of composite. Highest-leverage real ML application — interpretable (SHAP values per feature), computationally cheap (sub-100ms inference), industry-proven. |
+| **Case-based reasoning / similarity search** | `ml/similarity.ts`, `src/components/SimilarCasesPanel.jsx` | **New.** k-NN over historical signal vectors. For each new candidate, find the K most-similar past setups in `boardSnapshots` and surface "matches 14 prior cases — avg +X% over 20d, hit rate Z%, drawdown -Y%". Reality check on the composite without forcing the user to trust a black box. Stored as ANN index in Firestore or in-memory FAISS depending on snapshot count. |
+| **Bayesian online weight updates** | `ml/bayes-weights.ts` | **New.** Replace quarterly grid-search with Beta posteriors per analyst, updated continuously as outcomes land. Faster adaptation when an analyst stops working. Coexists with the optimizer — optimizer for big rebalances, Bayesian update for slow drift. |
+| **Anomaly flag** | `ml/anomaly.ts`, frontend pill | **New.** Train an isolation forest on historical signal vectors. Flag any candidate whose vector is far from training distribution as either unusual opportunity or data error. Reduces false positives during data outages or vendor schema changes. Surface as a small icon on the candidate card. |
+| **Regime classifier upgrade** | `ml/regime.ts` (replaces existing rule-based regime) | **New.** Current regime is rule-based on VIX + 10Y + 2Y10Y. Train a classifier (logistic regression or gradient boosting) on a wider macro feature set: HY/IG credit spreads, breadth (NH/NL, % above 50dma, McClellan), DXY, gold/oil, sector momentum dispersion, AAII/NAAIM sentiment. Output: continuous regime score plus discrete 3- or 5-state classification. Drives Phase 5's regime-conditional weights with richer signal than 3 fixed yield curves can provide. |
 
-**Dependencies.** Phase 4 (backtest must work first).
+**Dependencies.** Phase 3 (point-in-time data — required for honest training labels), Phase 4 (real backtest — generates the forward-return labels). Hard dependency. No earlier.
 
 **Success criteria.**
 - Running the optimizer outputs a new weight vector that beats current weights OOS by ≥ 10% in Sharpe on a held-out window.
-- Regime-conditional weights show meaningfully different vectors across regimes (sanity check that the regime layer matters).
+- Regime-conditional weights show meaningfully different vectors across regimes.
 - Post-trade review has classified ≥ 50 closed trades.
-- Calibration view shows that, e.g., political-analyst is currently 0.72 hit rate over 90 days.
+- Calibration view shows per-analyst hit rate / alpha / info ratio over rolling windows.
+- Meta-ranker beats composite-alone OOS by ≥ 5% in IC (information coefficient) over the held-out window.
+- Similarity panel renders for every candidate with at least 5 historical matches.
+- Anomaly flag fires on test fixtures (e.g., a deliberately corrupted signal vector).
+- Regime classifier produces a more granular regime label than the rule-based version (verifiable by showing different weight vectors fired for the same VIX level on different breadth conditions).
 
-**Estimate.** 2 sessions.
+**Estimate.** 3–4 sessions (was 2; ML workstreams add a session worth). Train once, ship many times — meta-ranker training is a weekly scheduled job, not request-time.
+
+**Honest caveat.** ML on stock picking is hype-prone. Most ML overfits to backtest. Three guardrails baked in: (1) all ML is interpretable — gradient boosting + SHAP, k-NN explanations, isolation forest scores, no deep nets; (2) all ML re-ranks on top of the rule-based composite, never replaces it (composite stays the floor); (3) every ML output ships with a fallback so a model failure degrades to the existing rule-based behavior, not zero results. If meta-ranker IC drops below composite-alone for two consecutive weeks, it auto-disables.
 
 ---
 
@@ -546,7 +559,7 @@ Updated each session. `pending` → `in-progress` → `done` (with version + dat
 | 2 | Refactor foundation (schemas + monolith split + TanStack Query) | pending | — | — | — |
 | 3 | Point-in-time data layer | pending | — | — | — |
 | 4 | Real backtest v2 | pending | — | — | — |
-| 5 | Calibration loop | pending | — | — | — |
+| 5 | Calibration loop + ML refinement | pending | — | — | — |
 | 6 | Real options data | pending | — | — | — |
 | 7 | Portfolio layer | pending | — | — | — |
 | 8 | Position sizing engine | pending | — | — | — |
@@ -568,7 +581,7 @@ Updated each session. `pending` → `in-progress` → `done` (with version + dat
 | Phase 2 | 2 |
 | Phase 3 | 1–2 |
 | Phase 4 | 2–3 |
-| Phase 5 | 2 |
+| Phase 5 | 3–4 |
 | Phase 6 | 1–2 |
 | Phase 7 | 1–2 |
 | Phase 8 | 1–2 |
@@ -578,7 +591,7 @@ Updated each session. `pending` → `in-progress` → `done` (with version + dat
 | Phase 12 | 1 |
 | Phase 13 | 1–2 |
 | Phase 14 | 1 |
-| **Total** | **21–30 sessions** |
+| **Total** | **22–32 sessions** |
 
 At a session a week, this is ~5–7 months of evening/weekend work. At a couple sessions a week, ~3 months. Phases 0 and 1 are sequential and high-leverage. After Phase 1 several phases parallelize (e.g., 6 and 7 are independent; 10 and 11 are independent).
 
