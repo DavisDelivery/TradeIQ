@@ -57,10 +57,21 @@ const HIGH_VALUE_KEYWORDS = [
   /\b(autonomous|lidar|radar array)\b/i,
 ];
 
+/**
+ * Compute patent activity for `ticker`. Lookback windows anchored to
+ * "now" by default; `asOfDate` anchors them historically.
+ *
+ * PIT cutoff: USPTO grant date (`Date` field on Quiver patent rows).
+ * Grant date is when the patent became public, so this is a clean PIT
+ * filter — no disclosure-lag correction needed.
+ *
+ * PIT-cacheable: keyed by (ticker, lookbackDays, asOfDate).
+ */
 export async function getPatentActivity(
   ticker: string,
   companyName: string,
   lookbackDays = 180,
+  opts: { asOfDate?: string } = {},
 ): Promise<PatentActivity> {
   const empty: PatentActivity = {
     ticker, companyName, lookbackDays,
@@ -77,12 +88,17 @@ export async function getPatentActivity(
     if (rows.length === 0) rows = await quiverGetTicker('patents', ticker, { schema: QuiverPatentArraySchema });
     if (rows.length === 0) return empty;
 
-    const grants = rows.map(normalizePatent).filter(Boolean) as PatentGrant[];
+    const grants = (rows.map(normalizePatent).filter(Boolean) as PatentGrant[])
+      // PIT clip: drop anything granted after asOfDate
+      .filter((g) => !opts.asOfDate || g.grantDate <= opts.asOfDate);
 
-    const fromIso = new Date(Date.now() - lookbackDays * 86400000).toISOString().slice(0, 10);
-    const priorFromIso = new Date(Date.now() - lookbackDays * 2 * 86400000).toISOString().slice(0, 10);
-    const thirtyIso = new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10);
-    const ninetyIso = new Date(Date.now() - 90 * 86400000).toISOString().slice(0, 10);
+    const anchorMs = opts.asOfDate
+      ? Date.parse(opts.asOfDate + 'T23:59:59Z')
+      : Date.now();
+    const fromIso = new Date(anchorMs - lookbackDays * 86400000).toISOString().slice(0, 10);
+    const priorFromIso = new Date(anchorMs - lookbackDays * 2 * 86400000).toISOString().slice(0, 10);
+    const thirtyIso = new Date(anchorMs - 30 * 86400000).toISOString().slice(0, 10);
+    const ninetyIso = new Date(anchorMs - 90 * 86400000).toISOString().slice(0, 10);
 
     const current = grants.filter((g) => g.grantDate >= fromIso);
     const prior = grants.filter((g) => g.grantDate >= priorFromIso && g.grantDate < fromIso);
