@@ -1,6 +1,6 @@
 # Phase 3 Follow-up Brief — Universe History Backfill
 
-You are running a small follow-up to the Phase 3 PR (`phase-3-point-in-time-data`, currently open as PR #5). Phase 3's universe history shipped Dow at full spec but SP500 / NDX / Russell2k at current-seed only because the original Phase 3 agent's environment had egress blocks to Wikipedia and iShares. Your job is to run the existing generator script in an unrestricted environment, verify the output meets the brief spec, and commit the regenerated `universe-history.ts` to the same branch so it ships with the Phase 3 PR.
+You are running a small follow-up after the Phase 3 merge. Phase 3 landed on `main` at commit `bd677f9` (v0.12.0-alpha, live). Phase 3's universe history shipped Dow at full spec but SP500 / NDX / Russell2k at current-seed only because the original Phase 3 agent's environment had egress blocks to Wikipedia and iShares. Your job is to run the existing generator script in an unrestricted environment, verify the output meets the brief spec, commit the regenerated `universe-history.ts` to a small follow-up branch, and open a PR for CI to gate.
 
 This is one workstream, not a phase. No new code. No new tests. No version bump. ≤30 minutes if Wikipedia and iShares cooperate.
 
@@ -9,10 +9,11 @@ This is one workstream, not a phase. No new code. No new tests. No version bump.
 ## What you are working on
 
 **Repo.** `github.com/DavisDelivery/TradeIQ`
-**Branch.** `phase-3-point-in-time-data` (open as PR #5, not yet merged — DO NOT branch from main)
-**Generator script.** `scripts/generate-universe-history.ts` (already on the branch — do not rewrite it)
+**Source branch.** `main` (Phase 3 is already merged at `bd677f9`)
+**Your branch.** `phase-3-followup-universe-backfill` (new — create from main)
+**Generator script.** `scripts/generate-universe-history.ts` (already on main — do not rewrite it)
 **Output file.** `netlify/functions/shared/universe-history.ts` (regenerate, don't hand-edit)
-**Runbook.** `docs/UNIVERSE_HISTORY_RUNBOOK.md` (already on the branch)
+**Runbook.** `docs/UNIVERSE_HISTORY_RUNBOOK.md` (already on main)
 
 ---
 
@@ -22,7 +23,7 @@ Confirm your environment can reach the external sources before doing anything el
 
 ```bash
 curl -sS -o /dev/null -w "wikipedia: %{http_code}\n" "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
-curl -sS -o /dev/null -w "ishares: %{http_code}\n" "https://www.ishares.com/us/products/239710/ishares-russell-2000-etf"
+curl -sS -o /dev/null -w "ishares:   %{http_code}\n" "https://www.ishares.com/us/products/239710/ishares-russell-2000-etf"
 ```
 
 Both should return 200. If either is 000 / timeout / blocked, STOP — you're in the same constrained environment the original agent was. Surface to user immediately with the curl output. Do not proceed and do not synthesize fake data.
@@ -55,17 +56,20 @@ git config user.email "chad@davisdelivery.com"
 git config user.name "Chad Davis"
 git remote set-url origin https://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@github.com/DavisDelivery/TradeIQ.git
 git fetch origin
-git checkout phase-3-point-in-time-data
-git pull --ff-only origin phase-3-point-in-time-data
+git checkout main
+git pull --ff-only origin main
+git checkout -b phase-3-followup-universe-backfill
 npm ci --silent
 ```
 
-Confirm you're on the right branch and the generator exists:
+Confirm the generator + tests exist on main:
 
 ```bash
-git rev-parse --abbrev-ref HEAD     # phase-3-point-in-time-data
 ls scripts/generate-universe-history.ts
+ls netlify/functions/shared/__tests__/universe-history.test.ts
 ```
+
+Both should be present (they shipped with Phase 3).
 
 ---
 
@@ -96,12 +100,12 @@ Expected (from the Phase 3 brief spec):
 
 | Index | Minimum required |
 |---|---|
-| `dow` | ≥ 60 (already shipping at 100+) |
+| `dow` | ≥ 60 (already at 100+) |
 | `sp500` | ≥ 60 |
 | `ndx` | ≥ 60 |
 | `russell2k` | ≥ 24 |
 
-If any index is below the threshold, STOP and document why in the commit message + surface to user. Do not pad with synthetic data. Partial coverage is acceptable to ship — fake data is not.
+If any index is below the threshold, ship anyway but document why in the commit message + surface to user. Partial coverage is acceptable; fake data is not.
 
 ### W3 — Validate the data is sane
 
@@ -132,19 +136,20 @@ AAPL sp500 2018-01-01: true
 
 If TSLA tests come back wrong (e.g., true in 2018), the historical scrape is broken and shipping it would be worse than shipping the current-seed-only state. Surface to user with the test output.
 
-### W4 — Typecheck + commit + push
+### W4 — Typecheck + build + commit
 
 ```bash
 npx tsc --noEmit                         # must be clean
-npm run build 2>&1 | tail -3             # must be clean (universe-history is imported by some functions)
+npm run build 2>&1 | tail -3             # must be clean
 
 git add netlify/functions/shared/universe-history.ts docs/UNIVERSE_HISTORY_RUNBOOK.md
-git commit -m "phase-3(universe-history): backfill sp500/ndx/russell2k from unrestricted env
+git commit -m "universe-history: backfill sp500/ndx/russell2k from unrestricted env
 
-Original Phase 3 agent's environment had egress blocks to Wikipedia and
-iShares. This commit runs the existing scripts/generate-universe-history.ts
-in a non-restricted environment to fill in the historical coverage that
-W9 specified but couldn't ship.
+Phase 3 shipped Dow at full spec but SP500/NDX/Russell2k at current-seed
+only because the original agent's environment had egress blocks to
+Wikipedia and iShares. This commit runs the existing
+scripts/generate-universe-history.ts in a non-restricted environment to
+fill in the historical coverage that Phase 3's W9 specified.
 
 Coverage after this commit:
 - Dow:       2018-01-31 -> 2026-04-30 monthly (100+ snapshots, unchanged)
@@ -159,12 +164,33 @@ Verified:
 - tsc clean, build clean
 
 Phase 4 backtest can now run on all 4 indices with survivorship-bias
-correction, not just Dow. Runbook updated with refresh cadence."
-
-git push origin phase-3-point-in-time-data
+correction, not just Dow."
 ```
 
-If coverage came in below spec on any index (e.g., SP500 only got 40 months because Wikipedia revision history is slim that far back), be explicit in the commit message about which indices fell short and by how much. The brief is OK with that — just not silent about it.
+If coverage came in below spec on any index (e.g., SP500 only got 40 months because Wikipedia revision history is slim that far back), be explicit in the commit message about which indices fell short and by how much.
+
+### W5 — Push + open PR
+
+```bash
+git push origin phase-3-followup-universe-backfill
+
+# Open the PR via GitHub API. Body is a one-paragraph summary —
+# this is small enough not to need a separate PR description doc.
+curl -sS -X POST \
+  -H "Authorization: Bearer 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" \
+  -H "Accept: application/vnd.github+json" \
+  https://api.github.com/repos/DavisDelivery/TradeIQ/pulls \
+  -d "$(jq -n \
+    --arg title 'Universe history backfill: sp500/ndx/russell2k historical coverage' \
+    --arg head 'phase-3-followup-universe-backfill' \
+    --arg base 'main' \
+    --arg body 'Phase 3 follow-up. Runs scripts/generate-universe-history.ts from an unrestricted env to fill in SP500/NDX/Russell2k historical coverage that the original agent had to ship at current-seed-only due to egress blocks. Only modifies netlify/functions/shared/universe-history.ts and the runbook. No logic changes, no test changes, no version bump. CI gates the regenerated data against 21+ existing universe-history tests.' \
+    '{title: $title, head: $head, base: $base, body: $body}')"
+```
+
+Capture the PR number from the response. Surface it in your report-back.
+
+CI will run automatically and gate the merge on the existing test suite passing against the regenerated data. User merges when CI is green.
 
 ---
 
@@ -172,9 +198,9 @@ If coverage came in below spec on any index (e.g., SP500 only got 40 months beca
 
 - Modifying `scripts/generate-universe-history.ts`. If the script has bugs, document them and surface to user — don't fix here.
 - Modifying `universe-history.ts` by hand. It's generator output; hand edits get lost on next regen.
-- Modifying any other file. This commit touches `universe-history.ts` and the runbook only.
-- Bumping `APP_VERSION`. Phase 3's bump already covers this work scope — it's part of the same Phase 3 PR.
-- Merging the Phase 3 PR. User does that.
+- Modifying any other file beyond the regenerated file + runbook coverage table.
+- Bumping `APP_VERSION`. Pure data extension within the existing Phase 3 deploy scope.
+- Merging the PR. User does that after CI green.
 - Anything Phase 4.
 
 ---
@@ -198,7 +224,7 @@ End your turn with:
 - Sanity check results: `<TSLA/AAPL outputs>`
 - Tests: `<count green>`
 - Tsc / build: `<clean / errors>`
-- Commit SHA pushed: `<sha>`
+- PR opened: `<PR number + URL>`
 - Any caveats or partial coverage flagged in commit message
 
 If anything in W2 / W3 / W4 failed, surface to user explicitly and do NOT push.
@@ -209,7 +235,7 @@ If anything in W2 / W3 / W4 failed, surface to user explicitly and do NOT push.
 
 ```bash
 # 1. Environment check FIRST
-curl -sS -o /dev/null -w "wikipedia: %{http_code}\nishares:   %{http_code}\n" \
+curl -sS -o /dev/null -w "wikipedia: %{http_code}\n" \
   "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
 curl -sS -o /dev/null -w "ishares:   %{http_code}\n" \
   "https://www.ishares.com/us/products/239710/ishares-russell-2000-etf"
@@ -224,8 +250,9 @@ git config user.email "chad@davisdelivery.com"
 git config user.name "Chad Davis"
 git remote set-url origin https://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@github.com/DavisDelivery/TradeIQ.git
 git fetch origin
-git checkout phase-3-point-in-time-data
-git pull --ff-only origin phase-3-point-in-time-data
+git checkout main
+git pull --ff-only origin main
+git checkout -b phase-3-followup-universe-backfill
 npm ci --silent
 
 # 3. Confirm the generator exists and read the runbook
@@ -233,7 +260,7 @@ cat docs/UNIVERSE_HISTORY_RUNBOOK.md
 head -30 scripts/generate-universe-history.ts
 ```
 
-Then proceed W1 → W2 → W3 → W4. Stop and surface to user at any failure.
+Then proceed W1 → W2 → W3 → W4 → W5. Stop and surface to user at any failure.
 
 ---
 
