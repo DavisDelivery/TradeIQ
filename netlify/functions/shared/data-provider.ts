@@ -47,6 +47,15 @@ export interface Bar {
   n?: number;
 }
 
+// PIT-safe: daily OHLCV does not revise after publication. Calling
+// for past ranges today returns the same bars that were true on those
+// dates. Delisted-ticker retention verified at audit time:
+//   - FRBA (delisted 2023): returns full pre-delisting history.
+//   - FRC  (First Republic, delisted 2023): same.
+//   - LEHMQ (delisted 2008): NOT_AUTHORIZED on the current Polygon plan
+//     tier — backtests requiring 2008 data will need a tier upgrade.
+// PIT-cacheable: keyed by (ticker, from, to).
+// See docs/POINT_IN_TIME_AUDIT.md for the full data-class matrix.
 export async function getDailyBars(
   ticker: string,
   from: string,
