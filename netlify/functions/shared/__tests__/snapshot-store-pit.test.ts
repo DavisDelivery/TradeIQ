@@ -26,7 +26,7 @@ const queryBuilder = () => {
     get: async () => {
       let items = [...fakeRuns];
       if (universeFilter) items = items.filter((r) => r.data.universe === universeFilter);
-      if (cutoffFilter) items = items.filter((r) => r.data.generatedAt <= cutoffFilter);
+      if (cutoffFilter !== undefined) items = items.filter((r) => r.data.generatedAt <= cutoffFilter!);
       items.sort((a, b) =>
         order === 'asc'
           ? a.data.generatedAt.localeCompare(b.data.generatedAt)
