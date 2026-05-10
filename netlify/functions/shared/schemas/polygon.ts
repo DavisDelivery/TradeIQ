@@ -78,7 +78,7 @@ const PolygonFinancialsBlockSchema = z.object({
 export const PolygonFinancialsResultSchema = z.object({
   start_date: z.string().optional(),
   end_date: z.string().optional(),
-  filing_date: z.string().optional(),
+  filing_date: z.string().nullable().optional(),
   fiscal_period: z.string().optional(),
   fiscal_year: z.string().optional(),
   cik: z.string().optional(),

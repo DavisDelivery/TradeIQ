@@ -68,9 +68,27 @@ export interface PoliticalActivity {
   fetchedAt: string;
 }
 
+/**
+ * Compute political activity for `ticker`. Lookback windows are anchored
+ * to "now" by default; `asOfDate` anchors them historically and clips
+ * out anything dated after.
+ *
+ * PIT cutoff fields:
+ *   - Congressional trades: `Date` (transaction date). Quiver does NOT
+ *     expose the SEC EDGAR PTR filing date, so STOCK Act's 45-day
+ *     disclosure window means trades dated in the 45 days BEFORE
+ *     asOfDate may not have actually been public yet — backtest
+ *     consumers should layer a 45-day forward shift. Documented in
+ *     docs/POINT_IN_TIME_AUDIT.md.
+ *   - Lobbying: `Date` (quarter end). LD-2 due 20 days post-quarter;
+ *     drift is small.
+ *
+ * PIT-cacheable: keyed by (ticker, lookbackDays, asOfDate).
+ */
 export async function getPoliticalActivity(
   ticker: string,
   lookbackDays = 180,
+  opts: { asOfDate?: string } = {},
 ): Promise<PoliticalActivity> {
   const empty: PoliticalActivity = {
     ticker, lookbackDays,
@@ -82,8 +100,12 @@ export async function getPoliticalActivity(
   };
 
   try {
-    const fromIso = new Date(Date.now() - lookbackDays * 86400000).toISOString().slice(0, 10);
-    const priorFromIso = new Date(Date.now() - lookbackDays * 2 * 86400000).toISOString().slice(0, 10);
+    const anchorMs = opts.asOfDate
+      ? Date.parse(opts.asOfDate + 'T23:59:59Z')
+      : Date.now();
+    const fromIso = new Date(anchorMs - lookbackDays * 86400000).toISOString().slice(0, 10);
+    const priorFromIso = new Date(anchorMs - lookbackDays * 2 * 86400000).toISOString().slice(0, 10);
+    const toIso = opts.asOfDate ?? new Date(anchorMs).toISOString().slice(0, 10);
 
     const [senateRows, houseRows, lobbyingRows] = await Promise.all([
       quiverGetTicker('senatetrading', ticker, { schema: QuiverCongressionalArraySchema }),
@@ -93,7 +115,9 @@ export async function getPoliticalActivity(
 
     const senateTrades = senateRows.map((r) => normalizeTrade(r, 'senate')).filter(Boolean) as CongressTrade[];
     const houseTrades = houseRows.map((r) => normalizeTrade(r, 'house')).filter(Boolean) as CongressTrade[];
-    const allTrades = [...senateTrades, ...houseTrades];
+    const allTrades = [...senateTrades, ...houseTrades]
+      // PIT clip: drop anything dated after asOfDate before any window math
+      .filter((t) => !opts.asOfDate || t.date <= toIso);
     const recent = allTrades.filter((t) => t.date >= fromIso);
 
     const buys = recent.filter((t) => t.transactionType === 'buy');
@@ -110,8 +134,9 @@ export async function getPoliticalActivity(
 
     // Lobbying
     const lobbyingAll = lobbyingRows.map(normalizeLobbying).filter(Boolean) as LobbyingFiling[];
-    const lobbyingCurrent = lobbyingAll.filter((f) => f.date >= fromIso);
-    const lobbyingPrior = lobbyingAll.filter((f) => f.date >= priorFromIso && f.date < fromIso);
+    const lobbyingClipped = lobbyingAll.filter((f) => !opts.asOfDate || f.date <= toIso);
+    const lobbyingCurrent = lobbyingClipped.filter((f) => f.date >= fromIso);
+    const lobbyingPrior = lobbyingClipped.filter((f) => f.date >= priorFromIso && f.date < fromIso);
 
     const totalLobbyingDollars = lobbyingCurrent.reduce((a, f) => a + f.amount, 0);
     const priorPeriodLobbyingDollars = lobbyingPrior.reduce((a, f) => a + f.amount, 0);

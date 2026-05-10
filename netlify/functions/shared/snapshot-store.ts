@@ -255,3 +255,81 @@ export async function getSnapshotById(
   if (data.universe && data.universe !== universe) return null;
   return data;
 }
+
+// ====================================================================
+// Point-in-time fallback helpers (Phase 3)
+// ====================================================================
+//
+// When a vendor's API doesn't natively support an "as-of" parameter
+// (e.g., Finnhub recommendations carry no per-rating timestamp), we
+// fall back to "what we read on the most recent snapshot prior to
+// asOfDate." These helpers expose that lookup as a typed read.
+//
+// Phase 4 backtest reads through these — they are the bridge between
+// the live vendor surfaces and the historical record stored in
+// boardSnapshots/{board}/runs/.
+
+/**
+ * Find the most recent snapshot for (board, universe) generated on or
+ * before `asOfDate` (end-of-day UTC, inclusive). Returns null if no
+ * such snapshot exists in the store.
+ *
+ * Used by providers whose vendors don't natively support PIT, so we
+ * fall back to "what we read on the most recent prior date."
+ *
+ * Implementation note: snapshot IDs encode the date as
+ * `{universe}-{YYYY-MM-DD-HHmm}`. The Firestore-side orderBy on
+ * generatedAt + a `<=` filter is the most reliable path.
+ *
+ * PIT-cacheable: keyed by (board, universe, asOfDate).
+ */
+export async function snapshotBeforeDate(
+  board: BoardName,
+  universe: UniverseKey,
+  asOfDate: string,
+): Promise<BoardSnapshot | null> {
+  const db = getAdminDb();
+  // End-of-day UTC ceiling — anything generated up to and including
+  // 23:59:59.999 on asOfDate counts as "on or before."
+  const cutoffIso = `${asOfDate}T23:59:59.999Z`;
+  const snap = await db
+    .collection('boardSnapshots')
+    .doc(board)
+    .collection('runs')
+    .where('universe', '==', universe)
+    .where('generatedAt', '<=', cutoffIso)
+    .orderBy('generatedAt', 'desc')
+    .limit(1)
+    .get();
+  if (snap.empty) return null;
+  const data = snap.docs[0].data() as BoardSnapshot;
+  return data;
+}
+
+/**
+ * Convenience wrapper: given a per-ticker field name, find the value of
+ * that field for `ticker` in the latest snapshot ≤ asOfDate. Returns
+ * null if no snapshot exists or the ticker is missing from it.
+ *
+ * Snapshots store results as `unknown[]` — callers know the shape per
+ * board (e.g., catalyst rows have `recommendation`). We type the return
+ * with a generic so callers can cast at the call site.
+ *
+ * PIT-cacheable: keyed by (board, universe, ticker, field, asOfDate).
+ */
+export async function fieldAtDate<T>(
+  board: BoardName,
+  universe: UniverseKey,
+  ticker: string,
+  field: string,
+  asOfDate: string,
+): Promise<T | null> {
+  const snap = await snapshotBeforeDate(board, universe, asOfDate);
+  if (!snap) return null;
+  const row = (snap.results as any[]).find(
+    (r) => r && typeof r === 'object' && r.ticker === ticker,
+  );
+  if (!row) return null;
+  const val = row[field];
+  return val === undefined ? null : (val as T);
+}

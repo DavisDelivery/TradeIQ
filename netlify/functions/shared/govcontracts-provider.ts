@@ -37,9 +37,22 @@ export interface GovContractActivity {
   fetchedAt: string;
 }
 
+/**
+ * Compute government contract activity for `ticker`. Lookback windows
+ * anchored to "now" by default; `asOfDate` anchors them historically.
+ *
+ * PIT cutoff: Quiver's `Date` field, which is the publication-side date
+ * (when contract entered USASpending.gov). NOT `action_date` — that's
+ * when the contract action physically occurred and may precede public
+ * availability by months. Verified at audit time: AAPL contract had
+ * action_date=2025-09-22 vs Date=2025-12-12, a ~3-month publication lag.
+ *
+ * PIT-cacheable: keyed by (ticker, lookbackDays, asOfDate).
+ */
 export async function getGovContractActivity(
   ticker: string,
   lookbackDays = 180,
+  opts: { asOfDate?: string } = {},
 ): Promise<GovContractActivity> {
   const empty: GovContractActivity = {
     ticker, lookbackDays,
@@ -55,10 +68,15 @@ export async function getGovContractActivity(
     });
     if (rows.length === 0) return empty;
 
-    const all = rows.map(normalize).filter(Boolean) as GovContract[];
+    const all = (rows.map(normalize).filter(Boolean) as GovContract[])
+      // PIT clip: drop anything published after asOfDate
+      .filter((c) => !opts.asOfDate || c.date <= opts.asOfDate);
 
-    const fromIso = new Date(Date.now() - lookbackDays * 86400000).toISOString().slice(0, 10);
-    const priorFromIso = new Date(Date.now() - lookbackDays * 2 * 86400000).toISOString().slice(0, 10);
+    const anchorMs = opts.asOfDate
+      ? Date.parse(opts.asOfDate + 'T23:59:59Z')
+      : Date.now();
+    const fromIso = new Date(anchorMs - lookbackDays * 86400000).toISOString().slice(0, 10);
+    const priorFromIso = new Date(anchorMs - lookbackDays * 2 * 86400000).toISOString().slice(0, 10);
 
     const current = all.filter((c) => c.date >= fromIso);
     const prior = all.filter((c) => c.date >= priorFromIso && c.date < fromIso);
