@@ -8,9 +8,11 @@ import {
   FinnhubEarningsCalendarResponseSchema,
   FinnhubEarningsHistoryResponseSchema,
   FinnhubInsiderTxResponseSchema,
+  FinnhubRecommendationResponseSchema,
   FredObservationsResponseSchema,
   parseOrFallback,
 } from './schemas';
+import { snapshotBeforeDate } from './snapshot-store';
 
 const POLYGON = 'https://api.polygon.io';
 const FINNHUB = 'https://finnhub.io/api/v1';
@@ -518,6 +520,127 @@ export async function getFinnhubInsiderTransactions(
     }
 
     return mapped;
+  } catch {
+    return [];
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Finnhub recommendation trends — /stock/recommendation
+//
+// Returns rolling ~4 monthly snapshots of analyst rating counts. Each row
+// has a `period` (YYYY-MM-DD month-start) which we treat as the PIT
+// timestamp. There is no per-rating issue date in the response — we can
+// only resolve to the snapshot's month.
+//
+// PIT strategy is hybrid:
+//   - Live response covers ~last 4 months. Filter `period <= asOfDate`
+//     in memory.
+//   - For asOfDate older than ~4 months (or when the live response is
+//     empty/missing the required period), fall back to the catalyst
+//     board's snapshot store (catalyst board persists per-ticker
+//     recommendation data at scan time — see scan-catalyst.ts).
+//
+// We pick `catalyst` + `sp500` as the canonical fallback source because
+// the catalyst board is the broadest scan that consistently includes
+// rec data per ticker. Other boards (lynch, target) may also persist
+// it in some periods; this remains a known coverage limit and is
+// captured in docs/POINT_IN_TIME_AUDIT.md as residual risk.
+// ---------------------------------------------------------------------------
+
+export interface RecommendationSnapshot {
+  symbol: string;
+  period: string;            // YYYY-MM-DD month-start
+  strongBuy: number;
+  buy: number;
+  hold: number;
+  sell: number;
+  strongSell: number;
+}
+
+/**
+ * Fetch analyst-rating snapshots for `ticker`.
+ *
+ * Default (no asOfDate): returns the live Finnhub response (~4 most
+ * recent monthly snapshots, newest first).
+ *
+ * With asOfDate: returns snapshots whose `period` is on or before
+ * asOfDate. When the live response can serve the request (asOfDate
+ * within ~4 months of today), it's the preferred path. Otherwise we
+ * fall back to the catalyst board's snapshot store: read the latest
+ * boardSnapshot ≤ asOfDate and pull the recommendation field for
+ * `ticker` from it.
+ *
+ * If neither path has data, returns []. We DO NOT fabricate historical
+ * rating counts — empty is the honest answer.
+ *
+ * PIT-cacheable: keyed by (ticker, asOfDate).
+ */
+export async function getRecommendations(
+  ticker: string,
+  opts: { asOfDate?: string } = {},
+): Promise<RecommendationSnapshot[]> {
+  // ---- Live path (always tried first; cheap and authoritative) ----
+  let live: RecommendationSnapshot[] = [];
+  try {
+    const url = `${FINNHUB}/stock/recommendation?symbol=${encodeURIComponent(ticker)}&token=${finnhubKey()}`;
+    const res = await fetch(url);
+    if (res.ok) {
+      const parsed = parseOrFallback(
+        FinnhubRecommendationResponseSchema,
+        await res.json(),
+        { provider: 'finnhub', endpoint: 'stock/recommendation', ticker },
+        [],
+      );
+      if (Array.isArray(parsed)) {
+        live = parsed.map((r) => ({
+          symbol: r.symbol ?? ticker,
+          period: r.period,
+          strongBuy: r.strongBuy ?? 0,
+          buy: r.buy ?? 0,
+          hold: r.hold ?? 0,
+          sell: r.sell ?? 0,
+          strongSell: r.strongSell ?? 0,
+        }));
+      }
+    }
+  } catch {
+    /* swallow; fall through to filter / fallback */
+  }
+
+  // No asOfDate → return live response as-is (newest first).
+  if (!opts.asOfDate) return live;
+
+  // With asOfDate → filter live response by `period <= asOfDate`. The
+  // live response covers a rolling window, so this serves the recent
+  // backtest dates well.
+  const cutoff = opts.asOfDate;
+  const liveFiltered = live.filter((r) => r.period <= cutoff);
+  if (liveFiltered.length > 0) return liveFiltered;
+
+  // Live response empty for this asOfDate. Fall back to catalyst board's
+  // snapshot store: read the row for `ticker` from the latest snapshot
+  // ≤ asOfDate. Snapshots persist `recommendation` as the same shape
+  // we return here (or close to it — defensive coercion below).
+  try {
+    const snap = await snapshotBeforeDate('catalyst', 'sp500', cutoff);
+    if (!snap) return [];
+    const row = (snap.results as any[]).find(
+      (r) => r && typeof r === 'object' && r.ticker === ticker,
+    );
+    const rec = row?.recommendation;
+    if (!rec) return [];
+    return [
+      {
+        symbol: ticker,
+        period: rec.period ?? snap.generatedAt.slice(0, 10),
+        strongBuy: Number(rec.strongBuy ?? 0),
+        buy: Number(rec.buy ?? 0),
+        hold: Number(rec.hold ?? 0),
+        sell: Number(rec.sell ?? 0),
+        strongSell: Number(rec.strongSell ?? 0),
+      },
+    ];
   } catch {
     return [];
   }

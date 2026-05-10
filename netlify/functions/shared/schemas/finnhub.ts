@@ -83,6 +83,26 @@ export const FinnhubInsiderTxResponseSchema = z.object({
 }).passthrough();
 
 // ---------------------------------------------------------------------------
+// Recommendation trends — /stock/recommendation
+// Returns a bare array of monthly snapshots. Each row has a `period`
+// field (YYYY-MM-DD, the snapshot month-start) which we treat as the
+// PIT timestamp — see W6 in data-provider.ts and the audit doc.
+// Endpoint returns ~last 4 months by default.
+// ---------------------------------------------------------------------------
+
+export const FinnhubRecommendationRowSchema = z.object({
+  symbol: z.string().optional(),
+  period: z.string(),                       // YYYY-MM-DD (month-start)
+  buy: z.coerce.number().optional().default(0),
+  hold: z.coerce.number().optional().default(0),
+  sell: z.coerce.number().optional().default(0),
+  strongBuy: z.coerce.number().optional().default(0),
+  strongSell: z.coerce.number().optional().default(0),
+}).passthrough();
+
+export const FinnhubRecommendationResponseSchema = z.array(FinnhubRecommendationRowSchema);
+
+// ---------------------------------------------------------------------------
 // Inferred types
 // ---------------------------------------------------------------------------
 
@@ -92,3 +112,5 @@ export type FinnhubEarningsSurprise = z.infer<typeof FinnhubEarningsSurpriseSche
 export type FinnhubEarningsHistoryResponse = z.infer<typeof FinnhubEarningsHistoryResponseSchema>;
 export type FinnhubInsiderTxRow = z.infer<typeof FinnhubInsiderTxRowSchema>;
 export type FinnhubInsiderTxResponse = z.infer<typeof FinnhubInsiderTxResponseSchema>;
+export type FinnhubRecommendationRow = z.infer<typeof FinnhubRecommendationRowSchema>;
+export type FinnhubRecommendationResponse = z.infer<typeof FinnhubRecommendationResponseSchema>;
