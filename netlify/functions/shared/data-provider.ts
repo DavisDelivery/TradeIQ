@@ -264,15 +264,41 @@ export interface NewsItem {
   publisher?: string;
 }
 
-export async function getNews(ticker: string, limit = 20): Promise<NewsItem[]> {
+/**
+ * Fetch news articles for `ticker`. Default returns the most recent
+ * `limit` articles.
+ *
+ * PIT semantics: when `asOfDate` is supplied, only articles published on
+ * or before `asOfDate` (end-of-day UTC) are returned. We use Polygon's
+ * native `published_utc.lte` server-side filter — never client-side
+ * filtering, because Polygon's news index spans many GB and pulling it
+ * all client-side would be slow and rate-limit-heavy.
+ *
+ * Polygon at audit time treats `published_utc.lte=YYYY-MM-DD` as
+ * end-of-day inclusive (verified — articles from 2024-01-01T13:30:00Z
+ * came through under `lte=2024-01-01`), but we still pass the explicit
+ * `T23:59:59Z` form to make intent unambiguous.
+ *
+ * PIT-cacheable: keyed by (ticker, asOfDate, limit).
+ */
+export async function getNews(
+  ticker: string,
+  optsOrLimit: { asOfDate?: string; limit?: number } | number = 20,
+): Promise<NewsItem[]> {
+  // Backwards-compatible: callers passing a bare `limit` number still work.
+  const opts = typeof optsOrLimit === 'number' ? { limit: optsOrLimit } : optsOrLimit;
+  const limit = opts.limit ?? 20;
   try {
-    const url = `${POLYGON}/v2/reference/news?ticker=${ticker}&limit=${limit}&order=desc&sort=published_utc&apiKey=${polygonKey()}`;
+    const cutoffParam = opts.asOfDate
+      ? `&published_utc.lte=${encodeURIComponent(`${opts.asOfDate}T23:59:59Z`)}`
+      : '';
+    const url = `${POLYGON}/v2/reference/news?ticker=${ticker}&limit=${limit}&order=desc&sort=published_utc${cutoffParam}&apiKey=${polygonKey()}`;
     const res = await fetch(url);
     if (!res.ok) return [];
     const data = parseOrFallback(
       PolygonNewsResponseSchema,
       await res.json(),
-      { provider: 'polygon', endpoint: 'news', ticker },
+      { provider: 'polygon', endpoint: opts.asOfDate ? `news:asOf=${opts.asOfDate}` : 'news', ticker },
       { results: [] },
     );
     return (data.results ?? []).map((r) => ({
