@@ -44,9 +44,17 @@ export interface InsiderActivity {
   fetchedAt: string;
 }
 
+/**
+ * Compute insider activity for `ticker`. The lookback window is anchored
+ * to "now" by default; when `asOfDate` is supplied it anchors to that
+ * date and only Form 4 filings public on or before are considered.
+ *
+ * PIT-cacheable: keyed by (ticker, lookbackDays, asOfDate).
+ */
 export async function getInsiderActivity(
   ticker: string,
   lookbackDays = 90,
+  opts: { asOfDate?: string } = {},
 ): Promise<InsiderActivity> {
   const empty: InsiderActivity = {
     ticker, lookbackDays,
@@ -59,12 +67,19 @@ export async function getInsiderActivity(
   try {
     // Pull lookback + 365d so firstBuyInAYear has reference data.
     const fetchDays = lookbackDays + 365;
-    const raw = await getFinnhubInsiderTransactions(ticker, fetchDays);
+    const raw = await getFinnhubInsiderTransactions(ticker, fetchDays, {
+      asOfDate: opts.asOfDate,
+    });
     if (raw.length === 0) return empty;
 
     const all = raw.map(normalizeFinnhubTx).filter(Boolean) as InsiderTransaction[];
-    const fromIso = new Date(Date.now() - lookbackDays * 86400000).toISOString().slice(0, 10);
-    const priorYearIso = new Date(Date.now() - (lookbackDays + 365) * 86400000).toISOString().slice(0, 10);
+    // Anchor windows to asOfDate when supplied so the lookback is
+    // historical-correct, not "today minus N days".
+    const anchorMs = opts.asOfDate
+      ? Date.parse(opts.asOfDate + 'T23:59:59Z')
+      : Date.now();
+    const fromIso = new Date(anchorMs - lookbackDays * 86400000).toISOString().slice(0, 10);
+    const priorYearIso = new Date(anchorMs - (lookbackDays + 365) * 86400000).toISOString().slice(0, 10);
 
     const inWindow = all.filter((t) => t.transactionDate >= fromIso);
     const priorYearWindow = all.filter((t) => t.transactionDate >= priorYearIso && t.transactionDate < fromIso);

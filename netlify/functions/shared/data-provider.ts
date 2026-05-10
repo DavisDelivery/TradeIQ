@@ -445,13 +445,34 @@ export interface FinnhubInsiderTx {
   currency: string;
 }
 
+/**
+ * Fetch insider transactions for `ticker`. Default returns trades from
+ * the past `daysBack` days.
+ *
+ * PIT semantics: when `asOfDate` is supplied, only transactions whose
+ * SEC Form 4 filing date (`filingDate`) is on or before `asOfDate` are
+ * returned. We use `filingDate` rather than `transactionDate` because
+ * a trade is only knowable to outsiders once the Form 4 has been filed
+ * — the SEC's 2-business-day filing window means there's a small but
+ * meaningful gap between `transactionDate` and `filingDate`.
+ *
+ * Both Finnhub's API-side `to=<asOfDate>` filter and an in-memory
+ * `filingDate <= asOfDate` filter are applied for safety.
+ *
+ * PIT-cacheable: keyed by (ticker, asOfDate, daysBack).
+ */
 export async function getFinnhubInsiderTransactions(
   ticker: string,
   daysBack: number = 180,
+  opts: { asOfDate?: string } = {},
 ): Promise<FinnhubInsiderTx[]> {
   try {
-    const from = new Date(Date.now() - daysBack * 86400000).toISOString().slice(0, 10);
-    const to = new Date().toISOString().slice(0, 10);
+    // When asOfDate is set, anchor the lookback to it instead of "now".
+    const anchor = opts.asOfDate
+      ? Date.parse(opts.asOfDate + 'T23:59:59Z')
+      : Date.now();
+    const from = new Date(anchor - daysBack * 86400000).toISOString().slice(0, 10);
+    const to = new Date(anchor).toISOString().slice(0, 10);
     const url = `${FINNHUB}/stock/insider-transactions?symbol=${encodeURIComponent(ticker)}&from=${from}&to=${to}&token=${finnhubKey()}`;
     const res = await fetch(url);
     if (!res.ok) {
@@ -463,11 +484,11 @@ export async function getFinnhubInsiderTransactions(
     const data = parseOrFallback(
       FinnhubInsiderTxResponseSchema,
       await res.json(),
-      { provider: 'finnhub', endpoint: 'stock/insider-transactions', ticker },
+      { provider: 'finnhub', endpoint: opts.asOfDate ? `stock/insider-transactions:asOf=${opts.asOfDate}` : 'stock/insider-transactions', ticker },
       { data: [] },
     );
     const rows = Array.isArray(data?.data) ? data.data : [];
-    return rows
+    let mapped = rows
       .map((r) => ({
         name: String(r.name ?? '').trim(),
         share: Number(r.share ?? 0),
@@ -486,6 +507,17 @@ export async function getFinnhubInsiderTransactions(
         Number.isFinite(r.change) &&
         Number.isFinite(r.transactionPrice)
       );
+
+    // Defense-in-depth: re-apply filingDate filter in memory. Finnhub's
+    // `to=` filter operates on transactionDate, not filingDate — so a
+    // trade dated 2 days before asOfDate but filed 1 day after would
+    // slip through without this guard.
+    if (opts.asOfDate) {
+      const cutoff = opts.asOfDate;
+      mapped = mapped.filter((r) => r.filingDate && r.filingDate <= cutoff);
+    }
+
+    return mapped;
   } catch {
     return [];
   }
