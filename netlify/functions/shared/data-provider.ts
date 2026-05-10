@@ -106,20 +106,81 @@ export interface FundamentalsSnapshot {
   asOf?: string;
 }
 
+/**
+ * Estimate a filing date for a Polygon financials row when `filing_date`
+ * is null (common for 10-K annuals on this Polygon plan). The SEC's
+ * non-large filer 10-K deadline is 90 days post-period; large filers
+ * file in 60-75 days. We pick 75 as a conservative middle so the PIT
+ * filter doesn't silently exclude annuals that were public on `asOfDate`.
+ *
+ * Worst-case error is ±15 days, which is documented in
+ * docs/POINT_IN_TIME_AUDIT.md as residual risk. For backtests at monthly
+ * or quarterly cadence this is immaterial.
+ */
+function estimateFilingDate(endDate: string | undefined, fiscalPeriod: string | undefined): string | undefined {
+  if (!endDate) return undefined;
+  // 10-K (annual): ~75 day SEC deadline. 10-Q (quarterly): ~40 days but
+  // Polygon's response usually includes filing_date for 10-Qs, so we hit
+  // this branch mostly for Q4/FY filings.
+  const lagDays = fiscalPeriod === 'Q4' || fiscalPeriod === 'FY' ? 75 : 40;
+  const t = Date.parse(endDate);
+  if (!Number.isFinite(t)) return undefined;
+  return new Date(t + lagDays * 86400000).toISOString().slice(0, 10);
+}
+
+/**
+ * Fetch a fundamentals snapshot for `ticker`. Returns a normalized view
+ * computed from up to 5 most recent quarterly filings.
+ *
+ * PIT semantics: when `asOfDate` is supplied, only filings public on or
+ * before `asOfDate` are considered for the snapshot. The "as-of" filter
+ * is applied at TWO layers for safety:
+ *   1. Server-side via Polygon's `filing_date.lte` query parameter.
+ *   2. In-memory via `(filing_date ?? estimateFilingDate(...)) <= asOfDate`,
+ *      because Polygon's API omits the filter when filing_date is null
+ *      AND because the API-side filter is treated as advisory (we always
+ *      verify in memory).
+ *
+ * RESIDUAL RISK: Polygon silently incorporates restatement edits into
+ * past filings — values returned today for a filing dated 2022-06-15 may
+ * differ from what was public on 2022-06-15 if the company restated.
+ * The proper fix is snapshotting fundamentals into the boardSnapshots
+ * store at scan time (Phase 1 schema extension, out of scope for Phase 3).
+ *
+ * PIT-cacheable: keyed by (ticker, asOfDate).
+ *
+ * See docs/POINT_IN_TIME_AUDIT.md for the full audit.
+ */
 export async function getFundamentals(
   ticker: string,
+  opts: { asOfDate?: string } = {},
 ): Promise<FundamentalsSnapshot | null> {
   try {
-    const url = `${POLYGON}/vX/reference/financials?ticker=${ticker}&limit=5&timeframe=quarterly&order=desc&apiKey=${polygonKey()}`;
+    const filingFilter = opts.asOfDate
+      ? `&filing_date.lte=${encodeURIComponent(opts.asOfDate)}`
+      : '';
+    const url = `${POLYGON}/vX/reference/financials?ticker=${ticker}&limit=5&timeframe=quarterly&order=desc${filingFilter}&apiKey=${polygonKey()}`;
     const res = await fetch(url);
     if (!res.ok) return null;
     const data = parseOrFallback(
       PolygonFinancialsResponseSchema,
       await res.json(),
-      { provider: 'polygon', endpoint: 'financials', ticker },
+      { provider: 'polygon', endpoint: opts.asOfDate ? `financials:asOf=${opts.asOfDate}` : 'financials', ticker },
       { results: [] },
     );
-    const results = (data.results ?? []) as any[];
+    let results = (data.results ?? []) as any[];
+
+    // Defense-in-depth: re-apply the filter in memory using the estimate
+    // fallback for null filing_dates. We don't trust the server to honor
+    // filing_date.lte when filing_date is missing on the row.
+    if (opts.asOfDate) {
+      const cutoff = opts.asOfDate;
+      results = results.filter((r) => {
+        const fd = r.filing_date ?? estimateFilingDate(r.end_date, r.fiscal_period);
+        return fd !== undefined && fd <= cutoff;
+      });
+    }
+
     if (results.length === 0) return null;
 
     const latest = results[0];
