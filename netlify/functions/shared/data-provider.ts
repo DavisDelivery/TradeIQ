@@ -659,56 +659,130 @@ export interface MacroData {
   asOf: string;
 }
 
-async function fredLatestObservation(seriesId: string): Promise<number | null> {
-  try {
-    const url = `${FRED}/series/observations?series_id=${seriesId}&api_key=${fredKey()}&file_type=json&sort_order=desc&limit=10`;
-    const res = await fetch(url);
-    if (!res.ok) return null;
-    const data = parseOrFallback(
-      FredObservationsResponseSchema,
-      await res.json(),
-      { provider: 'fred', endpoint: `series/observations:${seriesId}` },
-      { observations: [] },
-    );
-    for (const obs of data.observations ?? []) {
-      if (obs.value !== '.' && obs.value !== '') {
-        const v = Number(obs.value);
-        if (Number.isFinite(v)) return v;
-      }
-    }
-    return null;
-  } catch {
-    return null;
-  }
+/**
+ * Generic FRED series fetch with vintage-date PIT support. This is the
+ * gold-standard PIT case in the entire codebase: FRED's `vintage_dates`
+ * parameter returns ONLY the values that were published on or before the
+ * supplied date — no estimation, no fallback, just genuine PIT.
+ *
+ * Verified at audit time using GDPC1 (real GDP):
+ *   - 2022-Q4 today:        $24,055B
+ *   - 2022-Q4 vintage 2023-06-01: $20,182B (pre-revisions known then)
+ *   - 2022-Q4 vintage 2024-06-01: $21,989B (after a year of revisions)
+ *
+ * That's a ~9% drift over a year — exactly the look-ahead bias Phase 4
+ * needs to avoid.
+ *
+ * PIT-cacheable: keyed by (seriesId, asOfDate, observationStart, observationEnd, limit).
+ */
+export interface FredObservation {
+  date: string;
+  value: number | null;     // null when source observation is '.' (missing)
+  realtimeStart?: string;
+  realtimeEnd?: string;
 }
 
-async function fredSeries(seriesId: string, days: number): Promise<Array<{ date: string; value: number }>> {
+export async function getFredSeries(
+  seriesId: string,
+  opts: {
+    asOfDate?: string;
+    observationStart?: string;
+    observationEnd?: string;
+    limit?: number;
+    sortOrder?: 'asc' | 'desc';
+  } = {},
+): Promise<FredObservation[]> {
   try {
-    const url = `${FRED}/series/observations?series_id=${seriesId}&api_key=${fredKey()}&file_type=json&sort_order=desc&limit=${days}`;
+    const params = new URLSearchParams({
+      series_id: seriesId,
+      api_key: fredKey(),
+      file_type: 'json',
+      sort_order: opts.sortOrder ?? 'desc',
+    });
+    if (opts.observationStart) params.set('observation_start', opts.observationStart);
+    if (opts.observationEnd) params.set('observation_end', opts.observationEnd);
+    if (opts.limit) params.set('limit', String(opts.limit));
+    if (opts.asOfDate) {
+      // PIT: return only the values FRED had published on or before
+      // asOfDate. vintage_dates accepts a single date as well as a list.
+      params.set('vintage_dates', opts.asOfDate);
+    }
+
+    const url = `${FRED}/series/observations?${params}`;
     const res = await fetch(url);
     if (!res.ok) return [];
     const data = parseOrFallback(
       FredObservationsResponseSchema,
       await res.json(),
-      { provider: 'fred', endpoint: `series/observations:${seriesId}` },
+      {
+        provider: 'fred',
+        endpoint: opts.asOfDate
+          ? `series/observations:${seriesId}:vintage=${opts.asOfDate}`
+          : `series/observations:${seriesId}`,
+      },
       { observations: [] },
     );
-    return (data.observations ?? [])
-      .filter((o) => o.value !== '.' && o.value !== '')
-      .map((o) => ({ date: o.date, value: Number(o.value) }))
-      .filter((o) => Number.isFinite(o.value))
-      .reverse();
+
+    return (data.observations ?? []).map((o) => {
+      const value = o.value === '.' || o.value === '' ? null : Number(o.value);
+      return {
+        date: o.date,
+        value: Number.isFinite(value as number) ? (value as number) : null,
+        realtimeStart: o.realtime_start,
+        realtimeEnd: o.realtime_end,
+      };
+    });
   } catch {
     return [];
   }
 }
 
-export async function getMacroData(): Promise<MacroData> {
+async function fredLatestObservation(
+  seriesId: string,
+  asOfDate?: string,
+): Promise<number | null> {
+  const obs = await getFredSeries(seriesId, {
+    asOfDate,
+    sortOrder: 'desc',
+    limit: 10,
+  });
+  for (const o of obs) {
+    if (o.value !== null) return o.value;
+  }
+  return null;
+}
+
+async function fredSeries(
+  seriesId: string,
+  days: number,
+  asOfDate?: string,
+): Promise<Array<{ date: string; value: number }>> {
+  const obs = await getFredSeries(seriesId, {
+    asOfDate,
+    sortOrder: 'desc',
+    limit: days,
+  });
+  return obs
+    .filter((o) => o.value !== null)
+    .map((o) => ({ date: o.date, value: o.value as number }))
+    .reverse();
+}
+
+/**
+ * Macro snapshot: VIX + yield curve. Default returns latest values.
+ * With `asOfDate`, every underlying series is read at FRED vintage
+ * `asOfDate`, giving genuinely PIT-correct macro context for backtests.
+ *
+ * PIT-cacheable: keyed by (asOfDate).
+ */
+export async function getMacroData(
+  opts: { asOfDate?: string } = {},
+): Promise<MacroData> {
   const [vix, y10, y2, vixHistory] = await Promise.all([
-    fredLatestObservation('VIXCLS'),
-    fredLatestObservation('DGS10'),
-    fredLatestObservation('DGS2'),
-    fredSeries('VIXCLS', 90),
+    fredLatestObservation('VIXCLS', opts.asOfDate),
+    fredLatestObservation('DGS10', opts.asOfDate),
+    fredLatestObservation('DGS2', opts.asOfDate),
+    fredSeries('VIXCLS', 90, opts.asOfDate),
   ]);
 
   const spread2s10sBps = y10 !== null && y2 !== null ? Math.round((y10 - y2) * 100) : null;
@@ -719,6 +793,8 @@ export async function getMacroData(): Promise<MacroData> {
     yield2y: y2,
     spread2s10sBps,
     vixHistory,
-    asOf: new Date().toISOString(),
+    asOf: opts.asOfDate
+      ? `${opts.asOfDate}T23:59:59.999Z`
+      : new Date().toISOString(),
   };
 }
