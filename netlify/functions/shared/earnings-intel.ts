@@ -38,11 +38,14 @@ export interface EarningsIntel {
   flags: string[];
 }
 
-export async function getEarningsIntel(ticker: string): Promise<EarningsIntel> {
+export async function getEarningsIntel(
+  ticker: string,
+  opts: { asOfDate?: string } = {},
+): Promise<EarningsIntel> {
   const [fund, history, upcoming] = await Promise.all([
-    getFundamentals(ticker).catch(() => null),
-    getEarningsHistory(ticker, 8).catch(() => [] as EarningsSurprise[]),
-    getUpcomingEarnings(ticker, 90).catch(() => null),
+    getFundamentals(ticker, { asOfDate: opts.asOfDate }).catch(() => null),
+    getEarningsHistory(ticker, 8, { asOfDate: opts.asOfDate }).catch(() => [] as EarningsSurprise[]),
+    getUpcomingEarnings(ticker, 90, { asOfDate: opts.asOfDate }).catch(() => null),
   ]);
 
   const flags: string[] = [];
@@ -88,9 +91,15 @@ export async function getEarningsIntel(ticker: string): Promise<EarningsIntel> {
     else if (latestSurprisePct < -10) flags.push('big_miss');
   }
 
+  // PIT-correct "now" — when asOfDate is supplied (backtest path), we
+  // compute days-until / days-since relative to it, not the wall clock.
+  const nowMs = opts.asOfDate
+    ? new Date(`${opts.asOfDate}T12:00:00Z`).getTime()
+    : Date.now();
+
   // Earnings proximity
   const daysUntilEarnings = upcoming?.date
-    ? Math.round((new Date(upcoming.date).getTime() - Date.now()) / 86400000)
+    ? Math.round((new Date(upcoming.date).getTime() - nowMs) / 86400000)
     : undefined;
 
   if (daysUntilEarnings !== undefined) {
@@ -103,7 +112,7 @@ export async function getEarningsIntel(ticker: string): Promise<EarningsIntel> {
   let postEarningsDrift = false;
   if (history.length > 0 && latestSurprisePct !== undefined && latestSurprisePct > 0) {
     const lastReportDate = new Date(history[0].date);
-    const daysSince = (Date.now() - lastReportDate.getTime()) / 86400000;
+    const daysSince = (nowMs - lastReportDate.getTime()) / 86400000;
     if (daysSince >= 3 && daysSince <= 14) {
       postEarningsDrift = true;
       flags.push('post_earnings_drift');

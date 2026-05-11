@@ -47,9 +47,10 @@ const COLLECTION = 'pitCache';
 
 /** Stable hash over the key — sorted-key JSON → sha1 → hex. */
 export function hashKey(key: PitCacheKey): string {
+  const source = key as unknown as Record<string, unknown>;
   const canonical: Record<string, unknown> = {};
-  for (const k of Object.keys(key).sort()) {
-    const v = (key as Record<string, unknown>)[k];
+  for (const k of Object.keys(source).sort()) {
+    const v = source[k];
     if (v !== undefined) canonical[k] = v;
   }
   return createHash('sha1').update(JSON.stringify(canonical)).digest('hex');

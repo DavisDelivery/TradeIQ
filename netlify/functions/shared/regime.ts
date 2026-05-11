@@ -4,8 +4,10 @@
 import { getMacroData } from './data-provider';
 import type { Regime } from './types';
 
-export async function computeRegime(): Promise<Regime> {
-  const m = await getMacroData();
+export async function computeRegime(
+  opts: { asOfDate?: string } = {},
+): Promise<Regime> {
+  const m = await getMacroData({ asOfDate: opts.asOfDate });
   const vix = m.vix ?? 18;
   const y10 = m.yield10y ?? 4.1;
   const spread = m.spread2s10sBps ?? 0;
