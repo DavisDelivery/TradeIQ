@@ -286,19 +286,40 @@ function monthEnds(fromYearMonth: string, toYearMonth: string): string[] {
 async function backfillRussell2kHistory(): Promise<Snapshot[]> {
   const dates = monthEnds('2022-01', '2026-04');
   const out: Snapshot[] = [];
-  for (const date of dates) {
-    try {
-      const tickers = await fetchIwmHoldingsCsv(date);
-      if (tickers.length < 100) {
-        console.log(`[iwm ${date}] only ${tickers.length} tickers — likely no-data wrapper; skipping`);
-        continue;
+  for (const monthEnd of dates) {
+    // iShares only archives on trading days. If the month-end falls on
+    // a weekend, roll back day-by-day until iShares returns data.
+    let tickers: string[] = [];
+    let used = monthEnd;
+    for (let rollback = 0; rollback < 5; rollback++) {
+      const probe = new Date(`${monthEnd}T00:00:00Z`);
+      probe.setUTCDate(probe.getUTCDate() - rollback);
+      const probeIso = probe.toISOString().slice(0, 10);
+      try {
+        const result = await fetchIwmHoldingsCsv(probeIso);
+        if (result.length >= 100) {
+          tickers = result;
+          used = probeIso;
+          break;
+        }
+      } catch (err) {
+        console.log(`[iwm ${probeIso}] fetch error: ${(err as Error).message}; continuing`);
       }
-      out.push({ date, index: 'russell2k', tickers: tickers.sort() });
-      console.log(`[iwm ${date}] ${tickers.length} tickers`);
-      await new Promise((r) => setTimeout(r, 250));
-    } catch (err) {
-      console.log(`[iwm ${date}] fetch failed: ${(err as Error).message}; continuing`);
+      await new Promise((r) => setTimeout(r, 150));
     }
+    if (tickers.length === 0) {
+      console.log(`[iwm ${monthEnd}] no data within 5 trading-day rollback; skipping`);
+      continue;
+    }
+    // Bucket the snapshot at the canonical month-end date so lookups land
+    // on the calendar boundary rather than the actual archive date.
+    out.push({ date: monthEnd, index: 'russell2k', tickers: tickers.sort() });
+    if (used !== monthEnd) {
+      console.log(`[iwm ${monthEnd}] ${tickers.length} tickers (from ${used} after rollback)`);
+    } else {
+      console.log(`[iwm ${monthEnd}] ${tickers.length} tickers`);
+    }
+    await new Promise((r) => setTimeout(r, 250));
   }
   return out;
 }
