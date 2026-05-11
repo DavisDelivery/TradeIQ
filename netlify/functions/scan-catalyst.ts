@@ -5,11 +5,11 @@
 // for fixing the silent A-G slice bug. Russell 2K full sweep runs ~10-12 min
 // at concurrency 8 with Quiver/Finnhub free-tier rate limits.
 
-import type { Handler } from '@netlify/functions';
-import { runCatalystScan, type CatalystUniverseKey } from '../shared/scan-catalyst';
-import { writeSnapshot, FRESHNESS_BUDGETS_MS, type UniverseKey } from '../shared/snapshot-store';
-import { MODEL_VERSION } from '../shared/model-version';
-import { logger } from '../shared/logger';
+import { schedule } from '@netlify/functions';
+import { runCatalystScan, type CatalystUniverseKey } from './shared/scan-catalyst';
+import { writeSnapshot, FRESHNESS_BUDGETS_MS, type UniverseKey } from './shared/snapshot-store';
+import { MODEL_VERSION } from './shared/model-version';
+import { logger } from './shared/logger';
 
 const PER_SCAN_BUDGET_MS = 14 * 60_000;
 
@@ -20,7 +20,7 @@ const UNIVERSES_TO_SCAN: Array<{ key: CatalystUniverseKey; storeKey: UniverseKey
   { key: 'russell2k', storeKey: 'russell2k' },
 ];
 
-export const handler: Handler = async () => {
+export const handler = schedule('0,30 13-21 * * 1-5', async () => {
   const log = logger.child({ fn: 'scan-catalyst' });
   const overallStart = Date.now();
   log.info('scheduled_scan_started', { board: 'catalyst' });
@@ -72,4 +72,4 @@ export const handler: Handler = async () => {
 
   log.info('scheduled_scan_complete', { totalMs: Date.now() - overallStart, summary });
   return { statusCode: 200, body: JSON.stringify({ ok: true, summary }) };
-};
+});

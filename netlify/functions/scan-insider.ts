@@ -9,15 +9,15 @@
 // and re-aggregates buy/award/sell dollars on the fly. One snapshot per
 // universe covers all 4 window variants without 4× the cost.
 
-import type { Handler } from '@netlify/functions';
+import { schedule } from '@netlify/functions';
 import {
   runInsiderScan,
   INSIDER_SCHEDULED_WINDOW_DAYS,
   type InsiderUniverseKey,
-} from '../shared/scan-insider';
-import { writeSnapshot, FRESHNESS_BUDGETS_MS, type UniverseKey } from '../shared/snapshot-store';
-import { MODEL_VERSION } from '../shared/model-version';
-import { logger } from '../shared/logger';
+} from './shared/scan-insider';
+import { writeSnapshot, FRESHNESS_BUDGETS_MS, type UniverseKey } from './shared/snapshot-store';
+import { MODEL_VERSION } from './shared/model-version';
+import { logger } from './shared/logger';
 
 const PER_SCAN_BUDGET_MS = 14 * 60_000;
 
@@ -28,7 +28,7 @@ const UNIVERSES_TO_SCAN: Array<{ key: InsiderUniverseKey; storeKey: UniverseKey 
   { key: 'russell2k', storeKey: 'russell2k' },
 ];
 
-export const handler: Handler = async () => {
+export const handler = schedule('30 21 * * 1-5', async () => {
   const log = logger.child({ fn: 'scan-insider' });
   const overallStart = Date.now();
   log.info('scheduled_scan_started', {
@@ -83,4 +83,4 @@ export const handler: Handler = async () => {
 
   log.info('scheduled_scan_complete', { totalMs: Date.now() - overallStart, summary });
   return { statusCode: 200, body: JSON.stringify({ ok: true, summary }) };
-};
+});

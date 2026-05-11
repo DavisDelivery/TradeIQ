@@ -3,7 +3,7 @@
 // Phase 1: snapshot-first.
 //
 // Default path: read the latest 30-day-window snapshot from Firestore (written
-// by scheduled/scan-earnings.ts twice daily) and filter setups down to the
+// by scan-earnings.ts twice daily) and filter setups down to the
 // user's requested window (3/7/14/30) at read time. One scheduled snapshot
 // covers all 4 window variants without re-running the calendar+history
 // fetches per request.

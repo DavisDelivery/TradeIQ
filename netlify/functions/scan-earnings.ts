@@ -17,19 +17,19 @@
 //
 // IMPORTANT: this scan does NOT call Claude/Anthropic. Rule-based scoring only.
 
-import type { Handler } from '@netlify/functions';
+import { schedule } from '@netlify/functions';
 import {
   runEarningsScan,
   EARNINGS_SCHEDULED_WINDOW_DAYS,
   POST_PRINT_LOOKBACK_DAYS,
-} from '../shared/scan-earnings';
-import { writeSnapshot, FRESHNESS_BUDGETS_MS } from '../shared/snapshot-store';
-import { MODEL_VERSION } from '../shared/model-version';
-import { logger } from '../shared/logger';
+} from './shared/scan-earnings';
+import { writeSnapshot, FRESHNESS_BUDGETS_MS } from './shared/snapshot-store';
+import { MODEL_VERSION } from './shared/model-version';
+import { logger } from './shared/logger';
 
 const PER_SCAN_BUDGET_MS = 14 * 60_000;
 
-export const handler: Handler = async () => {
+export const handler = schedule('30 11,21 * * 1-5', async () => {
   const log = logger.child({ fn: 'scan-earnings' });
   const overallStart = Date.now();
   log.info('scheduled_scan_started', {
@@ -88,4 +88,4 @@ export const handler: Handler = async () => {
       body: JSON.stringify({ ok: false, board: 'earnings', error: String(err?.message ?? err) }),
     };
   }
-};
+});
