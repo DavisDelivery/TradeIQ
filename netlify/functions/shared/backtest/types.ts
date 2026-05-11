@@ -88,6 +88,20 @@ export interface DailyEquityPoint {
 
 // --- attribution + ML-hook --------------------------------------------------
 
+/**
+ * Per-ticker scoring failure captured by the engine's rebalance loop.
+ * Phase 4a hotfix added this to replace the previous silent catch{}.
+ * One row per (rebalanceDate, ticker, error) tuple — kept as a sample
+ * (capped at 20 across the run) so the result document stays under
+ * Firestore's 1MiB limit.
+ */
+export interface TickerFailure {
+  rebalanceDate: string;
+  ticker: string;
+  message: string;
+  stage: string; // 'scoreTickerAtDate' for now; expand if other stages catch
+}
+
 export interface AttributionRecord {
   rebalanceDate: string;
   ticker: string;
@@ -170,6 +184,18 @@ export interface BacktestResult {
     coverageThrough: string | null; // earliest snapshot date used
   };
   warnings: string[];
+  /**
+   * Per-ticker failures from the scoring loop, with a summary aggregate.
+   * Added in Phase 4a hotfix to replace the previous silent catch{} that
+   * masked the Firestore-undefined-field bug. Sample is bounded to keep
+   * the result doc under Firestore's 1MiB ceiling.
+   */
+  tickerFailures: {
+    total: number;
+    totalAttempts: number;
+    failureRatePct: number;
+    sample: TickerFailure[]; // first 20 across the run
+  };
   completedAt: string;
   benchmark: {
     ticker: string;

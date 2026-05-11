@@ -81,6 +81,7 @@ export async function persistRunResult(
       metrics: result.metrics,
       universeSurvivorshipCorrected: result.universeSurvivorshipCorrected,
       warnings: result.warnings,
+      tickerFailures: result.tickerFailures,
       benchmark: result.benchmark,
     },
     { merge: true },
