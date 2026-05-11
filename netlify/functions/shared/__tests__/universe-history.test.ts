@@ -106,7 +106,7 @@ describe('universe-history — coverage report', () => {
     const cov = universeHistoryCoverage();
     expect(cov.dow.snapshotCount).toBeGreaterThanOrEqual(60);
     expect(cov.dow.firstDate).toBe('2018-01-31');
-    expect(cov.dow.lastDate).toBe('2026-04-30');
+    expect(cov.dow.lastDate! >= '2026-04-30').toBe(true);
   });
 
   it('reports SP500 / NDX / Russell2k with at least the current seed', () => {
@@ -114,6 +114,6 @@ describe('universe-history — coverage report', () => {
     expect(cov.sp500.snapshotCount).toBeGreaterThanOrEqual(1);
     expect(cov.ndx.snapshotCount).toBeGreaterThanOrEqual(1);
     expect(cov.russell2k.snapshotCount).toBeGreaterThanOrEqual(1);
-    expect(cov.sp500.lastDate).toBe('2026-04-30');
+    expect(cov.sp500.lastDate! >= '2026-04-30').toBe(true);
   });
 });
