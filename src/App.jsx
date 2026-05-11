@@ -42,7 +42,7 @@ import { useRegime } from './hooks/useRegime.js';
 import { useAnalystsStatus } from './hooks/useAnalystsStatus.js';
 
 
-const APP_VERSION = '0.12.0-alpha';
+const APP_VERSION = '0.13.0-alpha';
 
 // ======================================================================
 // ERROR BOUNDARY — catches React render errors in any child subtree and
