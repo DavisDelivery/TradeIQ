@@ -100,32 +100,58 @@ function validateConfig(config: BacktestConfig): void {
 }
 
 /**
- * Fetch bars (cached) for a ticker through asOfDate. The cache key
- * includes the asOfDate so different rebalances don't poison each other.
+ * Fetch bars (cached) for a ticker through `to`. Default lookback window
+ * is BAR_LOOKBACK_DAYS; pass an explicit `from` to extend the window
+ * backwards (e.g., when the caller needs bars spanning both before AND
+ * after a reference date, such as the ML-row write that captures entry
+ * price + forward returns).
+ *
+ * The cache key includes `from` + `to` so different windows for the same
+ * ticker don't collide.
  */
-async function getCachedBarsThrough(
+async function getCachedBars(
   ticker: string,
-  asOfDate: string,
+  from: string,
+  to: string,
 ): Promise<Bar[]> {
-  const from = addDays(asOfDate, -BAR_LOOKBACK_DAYS);
   const key: PitCacheKey = {
     provider: 'polygon',
     dataClass: 'bars',
     ticker,
-    asOfDate,
+    asOfDate: to,
     extra: `from=${from}`,
   };
-  return pitCacheWrap(key, () => getDailyBars(ticker, from, asOfDate));
+  return pitCacheWrap(key, () => getDailyBars(ticker, from, to));
 }
 
-/** Last close at or before date — used for trade reference price. */
-function lastCloseAtOrBefore(bars: Bar[], date: string): number | null {
+async function getCachedBarsThrough(
+  ticker: string,
+  asOfDate: string,
+): Promise<Bar[]> {
+  return getCachedBars(ticker, addDays(asOfDate, -BAR_LOOKBACK_DAYS), asOfDate);
+}
+
+/**
+ * Return the close price of the most recent bar whose trading day is on
+ * or before `date`. Bars are Polygon daily aggregates: `{ o, h, l, c, v, t }`
+ * where `t` is the Unix-ms timestamp at market open and `c` is the close.
+ * Bars are assumed sorted ascending by `t`.
+ *
+ * Returns null when no bar exists on or before `date` (e.g., date precedes
+ * the bar history).
+ *
+ * Exported for unit testing. Phase 4a hotfix-2 confirmed the helper itself
+ * was correct — the original `null entryPrice` symptom was in the caller's
+ * bar window, not here.
+ */
+export function lastCloseAtOrBefore(bars: Bar[], date: string): number | null {
+  if (!bars || bars.length === 0) return null;
   for (let i = bars.length - 1; i >= 0; i--) {
-    const barDate =
-      typeof bars[i].t === 'number'
-        ? new Date(bars[i].t as unknown as number).toISOString().slice(0, 10)
-        : ((bars[i] as unknown as { date?: string }).date ?? null);
-    if (barDate && barDate <= date) return bars[i].c;
+    const bar = bars[i];
+    if (typeof bar.t !== 'number' || !Number.isFinite(bar.t)) continue;
+    if (typeof bar.c !== 'number' || !Number.isFinite(bar.c)) continue;
+    const barDate = new Date(bar.t).toISOString().slice(0, 10);
+    if (barDate <= date) return bar.c;
   }
   return null;
 }
@@ -456,14 +482,19 @@ export async function runBacktest(
           regime: (ctx.regime?.regime as string | undefined) ?? null,
         });
 
-        // ML row — capture forward returns for the meta-ranker Phase 5
-        const longBars = await getCachedBarsThrough(
+        // ML row — capture forward returns for the meta-ranker (Phase 5).
+        // The window must span BOTH backward (so lastCloseAtOrBefore can
+        // resolve the entry close on asOfDate) AND ~400 calendar days
+        // forward (covering the 252-trading-day max forward horizon).
+        // Phase 4a hotfix-2 fix: previously called getCachedBarsThrough
+        // with asOfDate + 400d which yielded a window of (+100d, +400d),
+        // missing the rebalance date entirely → entryPrice null and all
+        // forward returns null → IC = 0.
+        const longBars = await getCachedBars(
           p.ticker,
+          addDays(asOfDate, -30), // small backward buffer so the entry bar is present
           addDays(asOfDate, 400),
         ).catch(() => []);
-        // Fundamentals at entry — currently unused for ML row beyond
-        // marketCap bucketing which Phase 4a defers (FundamentalsSnapshot
-        // doesn't expose marketCap; Phase 11 can add it).
         const entryClose = lastCloseAtOrBefore(longBars, asOfDate);
         mlRows.push({
           runId,
