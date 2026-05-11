@@ -1,7 +1,7 @@
 // PIT-aware per-ticker scoring for the backtest engine.
 //
 // Why this file exists:
-//   The live scan functions (scan-prophet.ts, scan-catalyst.ts, ...) inline
+//   The live scan functions (scan-prophet-*.ts, scan-catalyst-*.ts, ...) inline
 //   the per-ticker fetch+score into the scan loop, computing fetch windows
 //   from `new Date()`. Rewriting the live scan loops to be asOfDate-aware
 //   risks regressing production code; instead, we mirror only the

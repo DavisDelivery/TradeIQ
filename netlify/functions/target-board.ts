@@ -8,7 +8,7 @@
 //   - ?force=1: skip snapshot, run synchronous capped scan, return with
 //     `source: 'forced-partial'`. Escape hatch for the UI's "Force rescan" button.
 //
-// Snapshots are populated by netlify/functions/scan-target-board.ts
+// Snapshots are populated by netlify/functions/scan-target-board-{universe}.ts
 // every 30 min during US market hours.
 
 import type { Handler } from '@netlify/functions';
