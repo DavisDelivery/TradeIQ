@@ -1,0 +1,22 @@
+{
+  "_caveat": "SP500 history is current-seed only — backtest is survivorship-biased. Result will be stamped universeSurvivorshipCorrected=false; treat outputs as descriptive of CURRENT constituents, not investable historically.",
+  "universe": "sp500",
+  "startDate": "2024-01-01",
+  "endDate": "2024-12-31",
+  "rebalanceFrequency": "monthly",
+  "board": "prophet",
+  "portfolio": {
+    "topN": 20,
+    "weighting": "equal",
+    "maxPositionPct": 0.10,
+    "maxSectorPct": 0.35,
+    "cashSleeve": 0.05,
+    "minComposite": 55
+  },
+  "costs": {
+    "slippageBps": { "sp500": 5 },
+    "commission": 0
+  },
+  "initialCapital": 100000,
+  "scoringConcurrency": 5
+}

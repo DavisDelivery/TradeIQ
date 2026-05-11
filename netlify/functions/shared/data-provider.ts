@@ -329,13 +329,24 @@ export interface UpcomingEarning {
   revenueEstimate?: number;
 }
 
+/**
+ * PIT-cacheable: keyed by (ticker, daysAhead, asOfDate).
+ *
+ * When asOfDate is supplied, the calendar window is computed relative
+ * to it instead of "now" — the backtest knows that, on a past date,
+ * the next-known earnings would only be the ones whose announcement
+ * date is ≥ asOfDate.
+ */
 export async function getUpcomingEarnings(
   ticker: string,
   daysAhead = 60,
+  opts: { asOfDate?: string } = {},
 ): Promise<UpcomingEarning | null> {
   try {
-    const from = new Date().toISOString().slice(0, 10);
-    const to = new Date(Date.now() + daysAhead * 86400000).toISOString().slice(0, 10);
+    const asOf = opts.asOfDate ?? new Date().toISOString().slice(0, 10);
+    const asOfMs = new Date(`${asOf}T12:00:00Z`).getTime();
+    const from = asOf;
+    const to = new Date(asOfMs + daysAhead * 86400000).toISOString().slice(0, 10);
     const url = `${FINNHUB}/calendar/earnings?from=${from}&to=${to}&symbol=${ticker}&token=${finnhubKey()}`;
     const res = await fetch(url);
     if (!res.ok) return null;
@@ -345,7 +356,11 @@ export async function getUpcomingEarnings(
       { provider: 'finnhub', endpoint: 'calendar/earnings', ticker },
       { earningsCalendar: [] },
     );
-    const first = data.earningsCalendar?.[0];
+    // Post-filter for safety — Finnhub sometimes returns dates outside window.
+    const inWindow = (data.earningsCalendar ?? []).filter(
+      (e) => e.date >= from && e.date <= to,
+    );
+    const first = inWindow[0];
     if (!first) return null;
     return {
       ticker,
@@ -402,9 +417,22 @@ export interface EarningsSurprise {
   surprisePct?: number;
 }
 
-export async function getEarningsHistory(ticker: string, limit = 8): Promise<EarningsSurprise[]> {
+/**
+ * PIT-cacheable: keyed by (ticker, limit, asOfDate).
+ *
+ * When asOfDate is supplied, drops any report whose period > asOfDate.
+ * The provider returns up to `limit` most-recent reports, and a backtest
+ * at past date T must not see reports filed after T.
+ */
+export async function getEarningsHistory(
+  ticker: string,
+  limit = 8,
+  opts: { asOfDate?: string } = {},
+): Promise<EarningsSurprise[]> {
   try {
-    const url = `${FINNHUB}/stock/earnings?symbol=${ticker}&limit=${limit}&token=${finnhubKey()}`;
+    // Fetch extra to absorb post-filter losses when asOfDate is set.
+    const fetchLimit = opts.asOfDate ? Math.max(limit * 4, 32) : limit;
+    const url = `${FINNHUB}/stock/earnings?symbol=${ticker}&limit=${fetchLimit}&token=${finnhubKey()}`;
     const res = await fetch(url);
     if (!res.ok) return [];
     const data = parseOrFallback(
@@ -414,7 +442,7 @@ export async function getEarningsHistory(ticker: string, limit = 8): Promise<Ear
       [],
     );
     if (!Array.isArray(data)) return [];
-    return data
+    let rows = data
       .map((r) => ({
         date: r.period,
         epsActual: Number(r.actual),
@@ -422,6 +450,10 @@ export async function getEarningsHistory(ticker: string, limit = 8): Promise<Ear
         surprisePct: r.surprisePercent !== undefined ? Number(r.surprisePercent) : undefined,
       }))
       .filter((r) => Number.isFinite(r.epsActual) && Number.isFinite(r.epsEstimate));
+    if (opts.asOfDate) {
+      rows = rows.filter((r) => r.date <= opts.asOfDate!);
+    }
+    return rows.slice(0, limit);
   } catch {
     return [];
   }

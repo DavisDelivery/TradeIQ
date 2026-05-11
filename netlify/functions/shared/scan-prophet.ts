@@ -338,7 +338,7 @@ async function scoreTicker(
   };
 }
 
-function scoreInsider(a: any): number {
+export function scoreInsider(a: any): number {
   if (a.totalBuys === 0 && a.totalSells === 0) return 50;
   let raw = 0;
   if (a.clusters.length > 0) {
@@ -354,14 +354,14 @@ function scoreInsider(a: any): number {
   return Math.max(0, Math.min(100, 50 + Math.max(-50, Math.min(50, raw))));
 }
 
-function scorePolitical(p: any): number {
+export function scorePolitical(p: any): number {
   const net = p.netTrades ?? 0;
   const lobbyChange = (p.lobbyingVelocityPct ?? 0) / 100;
   const raw = net * 5 + (p.bipartisan ? 15 : 0) + (lobbyChange > 0.2 ? 10 : 0);
   return Math.max(0, Math.min(100, 50 + Math.max(-30, Math.min(40, raw))));
 }
 
-function scoreContracts(c: any): number {
+export function scoreContracts(c: any): number {
   const total = c.totalDollars ?? 0;
   const diversity = c.topAgencies?.length ?? 0;
   let raw = 0;
@@ -372,7 +372,7 @@ function scoreContracts(c: any): number {
   return Math.max(0, Math.min(100, 50 + raw));
 }
 
-function scorePatents(p: any): number {
+export function scorePatents(p: any): number {
   const velocity = p.velocityChange ?? 0;
   let raw = 0;
   if (velocity > 0.5) raw += 25;

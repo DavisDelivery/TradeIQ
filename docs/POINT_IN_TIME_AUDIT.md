@@ -108,10 +108,17 @@ Phase 4 / Phase 5 can plan around them:
    data beyond available snapshot history.
 
 3. **Quiver congressional disclosure lag.** STOCK Act gives 45 days; we
-   filter on transaction date. Phase 4 should layer a 45-day forward
-   shift before consuming this signal in backtest.
+   filter on transaction date. **(Resolved Phase 4a)** The backtest
+   engine threads political-data fetches through
+   `getPoliticalActivityForBacktest(ticker, lookbackDays, asOfDate)`
+   in `netlify/functions/shared/backtest/stock-act-shift.ts`, which
+   shifts `asOfDate` back by `STOCK_ACT_LAG_DAYS = 45` before calling
+   the provider. The conservative shift means a trade dated 2023-01-01
+   first appears in the scorer's input at asOfDate ≥ 2023-02-15.
 
 4. **Hot PIT path caching.** Phase 4 will call PIT functions thousands of
    times across parameter sweeps. Phase 3 marks every PIT function with
    `// PIT-cacheable: keyed by (...)` comments so a Firestore-backed cache
-   layer can wrap them cleanly. The cache itself is Phase 4 work.
+   layer can wrap them cleanly. **(Resolved Phase 4a)** Implemented in
+   `netlify/functions/shared/pit-cache.ts` — Firestore-backed,
+   stable-hash key derivation, `pitCacheWrap()` is the common idiom.
