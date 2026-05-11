@@ -46,6 +46,17 @@ export function getAdminDb(): Firestore {
   }
 
   _db = getFirestore();
+  // Strip undefined fields at write time instead of throwing. The PIT
+  // cache writes objects whose optional fields (e.g. EarningsIntel's
+  // daysUntilEarnings) can legitimately be undefined; without this
+  // setting, Firestore Admin SDK throws on every such write and the
+  // engine's per-ticker catch silently drops the ticker. Phase 4a
+  // smoke test surfaced this as an all-zeros backtest result.
+  //
+  // settings() must be called exactly once, before any read/write.
+  // Inside this singleton, the instance has only just been created
+  // and is not yet exposed, so we're safe.
+  _db.settings({ ignoreUndefinedProperties: true });
   return _db;
 }
 
