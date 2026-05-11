@@ -1,7 +1,7 @@
 // Shared scan orchestrator for the earnings board.
 //
 // Both the live endpoint (netlify/functions/earnings-board.ts) and the
-// scheduled background scan (netlify/functions/scheduled/scan-earnings.ts)
+// scheduled background scan (netlify/functions/scan-earnings.ts)
 // route through this module. Single source of truth for earnings scoring,
 // trigger computation, and play categorization.
 //

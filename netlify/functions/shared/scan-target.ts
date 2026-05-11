@@ -1,7 +1,7 @@
 // Shared scan orchestrator for the target board.
 //
 // Both the live endpoint (netlify/functions/target-board.ts) and the
-// scheduled full-universe scan (netlify/functions/scheduled/scan-target-board.ts)
+// scheduled full-universe scan (netlify/functions/scan-target-board.ts)
 // route through this module. Single source of truth for scoring math:
 // no duplication, no drift between live and scheduled.
 //

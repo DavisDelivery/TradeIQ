@@ -5,7 +5,7 @@
 // local setup detection. Patent fetch is stubbed (subscription-gated, weight 0).
 //
 // Both the live endpoint (catalyst-board.ts) and the scheduled full-universe
-// scan (scheduled/scan-catalyst.ts) route through runCatalystScan. Filters
+// scan (scan-catalyst.ts) route through runCatalystScan. Filters
 // (cluster/patents/political/contracts/setup) and minConviction apply at
 // READ time in the live endpoint — the snapshot stores ALL scored picks.
 

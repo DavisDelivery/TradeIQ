@@ -1,7 +1,7 @@
 // Shared scan orchestrator for the Prophet board (7-layer ensemble).
 //
 // Both the live endpoint (prophet-picks.ts) and the scheduled full-universe
-// scan (scheduled/scan-prophet.ts) route through runProphetScan. Pre-fetches
+// scan (scan-prophet.ts) route through runProphetScan. Pre-fetches
 // SPY + sector ETFs + sector rank once, then fans out per-ticker scoring.
 //
 // CRITICAL: this scan does NOT call Anthropic. Narrative generation is a

@@ -12,11 +12,11 @@
 // IMPORTANT: this scan does NOT call Claude/Anthropic. Rule-based scoring only.
 // AI surfaces (research, prophet narrative, chart-analysis) stay request-driven.
 
-import type { Handler } from '@netlify/functions';
-import { runTargetScan, type TargetUniverseKey } from '../shared/scan-target';
-import { writeSnapshot, FRESHNESS_BUDGETS_MS, type UniverseKey } from '../shared/snapshot-store';
-import { MODEL_VERSION } from '../shared/model-version';
-import { logger } from '../shared/logger';
+import { schedule } from '@netlify/functions';
+import { runTargetScan, type TargetUniverseKey } from './shared/scan-target';
+import { writeSnapshot, FRESHNESS_BUDGETS_MS, type UniverseKey } from './shared/snapshot-store';
+import { MODEL_VERSION } from './shared/model-version';
+import { logger } from './shared/logger';
 
 // 14 min — leaves 60s margin under the 15-min Netlify background timeout.
 const PER_SCAN_BUDGET_MS = 14 * 60_000;
@@ -40,7 +40,7 @@ const UNIVERSES_TO_SCAN: Array<{ key: TargetUniverseKey; storeKey: UniverseKey }
   { key: 'russell2k', storeKey: 'russell2k' },
 ];
 
-export const handler: Handler = async () => {
+export const handler = schedule('0,30 13-21 * * 1-5', async () => {
   const log = logger.child({ fn: 'scan-target-board' });
   const overallStart = Date.now();
   log.info('scheduled_scan_started', { board: 'target-board', universes: UNIVERSES_TO_SCAN.map(u => u.key) });
@@ -112,4 +112,4 @@ export const handler: Handler = async () => {
     statusCode: 200,
     body: JSON.stringify({ ok: true, totalMs, summary }),
   };
-};
+});
