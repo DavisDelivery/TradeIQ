@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Sparkles, TrendingUp, TrendingDown, Minus, Brain, Zap, AlertCircle,
   RefreshCw, Layers, Activity, Volume2, Gauge, Scale, Briefcase, Target,
