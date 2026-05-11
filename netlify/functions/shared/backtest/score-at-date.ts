@@ -49,6 +49,7 @@ import {
 import { computeRegime } from '../regime';
 import { pitCacheWrap, type PitCacheKey } from '../pit-cache';
 import { addDays } from './trading-calendar';
+import { getPoliticalActivityForBacktest } from './stock-act-shift';
 import type { BacktestBoard, ScoredCandidate } from './types';
 
 /**
@@ -170,8 +171,8 @@ async function scoreProphetAtDate(
       () => getInsiderActivity(ticker, 90, { asOfDate }).catch(() => null),
     ).then((v) => v as Awaited<ReturnType<typeof getInsiderActivity>> | null),
     pitCacheWrap<unknown>(
-      { provider: 'quiver', dataClass: 'political', ticker, asOfDate, extra: 'lb=180' },
-      () => getPoliticalActivity(ticker, 180, { asOfDate }).catch(() => null),
+      { provider: 'quiver', dataClass: 'political', ticker, asOfDate, extra: 'lb=180:stockact-shifted' },
+      () => getPoliticalActivityForBacktest(ticker, 180, asOfDate).catch(() => null),
     ).then((v) => v as Awaited<ReturnType<typeof getPoliticalActivity>> | null),
     pitCacheWrap<unknown>(
       { provider: 'quiver', dataClass: 'contracts', ticker, asOfDate, extra: 'lb=180' },
