@@ -46,6 +46,7 @@ import type {
   MLTrainingRow,
   PortfolioPosition,
   ScoredCandidate,
+  TickerFailure,
   TradeRecord,
   AttributionRecord,
 } from './types';
@@ -267,6 +268,15 @@ export async function runBacktest(
     const attribution: AttributionRecord[] = [];
     const mlRows: MLTrainingRow[] = [];
 
+    // Failure tracking — replaces the previous silent catch{} that
+    // masked Firestore undefined-rejection in Phase 4a. Bounded sample
+    // keeps the result doc under Firestore's 1MiB ceiling; aggregate
+    // counts capture the full picture.
+    const tickerFailureSample: TickerFailure[] = [];
+    let tickerFailureTotal = 0;
+    let tickerAttemptTotal = 0;
+    const FAILURE_SAMPLE_CAP = 20;
+
     // Pre-fetch benchmark bars once
     const benchTicker = BENCHMARK_BY_UNIVERSE[config.universe];
     const benchTo = finalMarkDate(config);
@@ -312,9 +322,11 @@ export async function runBacktest(
       const scoringConcurrency = config.scoringConcurrency ?? 5;
       const scored: ScoredCandidate[] = [];
       let nonProphetBoardWarned = false;
+      const rebalanceFailures: TickerFailure[] = [];
       await mapWithConcurrency(
         pool.tickers,
         async (ticker) => {
+          tickerAttemptTotal++;
           try {
             const result = await scoreTickerAtDate(
               ticker,
@@ -330,13 +342,38 @@ export async function runBacktest(
               );
             }
             if (result) scored.push(result);
-          } catch {
-            // skip on error — provider hiccup shouldn't abort the run
+          } catch (err) {
+            // Capture structured failure instead of silently dropping.
+            // Phase 4a smoke test surfaced the cost of the previous
+            // catch{} — a Firestore-undefined-rejection masquerading
+            // as a clean run. This catch records the failure so the
+            // result includes a faithful picture.
+            const failure: TickerFailure = {
+              rebalanceDate: asOfDate,
+              ticker,
+              message: err instanceof Error ? err.message : String(err),
+              stage: 'scoreTickerAtDate',
+            };
+            rebalanceFailures.push(failure);
+            tickerFailureTotal++;
+            if (tickerFailureSample.length < FAILURE_SAMPLE_CAP) {
+              tickerFailureSample.push(failure);
+            }
           }
           return null;
         },
         { batchSize: scoringConcurrency },
       );
+
+      // Surface a per-rebalance warning when failures dominate the
+      // pool — useful for spotting widespread issues (rate limits,
+      // provider outages, schema breaks) at the rebalance granularity.
+      if (rebalanceFailures.length > pool.tickers.length / 2) {
+        warnings.push(
+          `${asOfDate}: ${rebalanceFailures.length}/${pool.tickers.length} ticker scoring attempts failed ` +
+            `(sample: ${rebalanceFailures.slice(0, 3).map((f) => `${f.ticker}: ${f.message.slice(0, 80)}`).join('; ')})`,
+        );
+      }
 
       // 4. Portfolio target
       const target = buildPortfolio(scored, config.portfolio);
@@ -461,6 +498,21 @@ export async function runBacktest(
       }
     }
 
+    // Top-level sanity check: if more than half of all ticker scoring
+    // attempts failed, the run is fundamentally broken and the result
+    // should reflect that prominently. The previous Phase 4a smoke
+    // test would have surfaced 100% failure rate here instead of
+    // looking like a clean all-zeros backtest.
+    const failureRate =
+      tickerAttemptTotal > 0 ? tickerFailureTotal / tickerAttemptTotal : 0;
+    if (failureRate > 0.5) {
+      warnings.push(
+        `HIGH FAILURE RATE: ${(failureRate * 100).toFixed(1)}% of ticker scoring ` +
+          `attempts failed (${tickerFailureTotal}/${tickerAttemptTotal}). ` +
+          `Result is not trustworthy — inspect tickerFailures.sample to diagnose.`,
+      );
+    }
+
     const metrics = computeMetrics({
       dailyEquity,
       trades,
@@ -485,6 +537,12 @@ export async function runBacktest(
         coverageThrough: survivorship.coverageThrough,
       },
       warnings,
+      tickerFailures: {
+        total: tickerFailureTotal,
+        totalAttempts: tickerAttemptTotal,
+        failureRatePct: +(failureRate * 100).toFixed(2),
+        sample: tickerFailureSample,
+      },
       completedAt: new Date().toISOString(),
       benchmark: {
         ticker: benchTicker,
