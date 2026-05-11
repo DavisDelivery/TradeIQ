@@ -1,3 +1,13 @@
+# ⚠️ SUPERSEDED
+
+This brief is **superseded** by `briefs/phase-3-followup-etf-sourced-universe-brief.md`.
+
+Reason: this brief targeted Wikipedia as a data source for historical S&P 500 / NDX constituents. Wikipedia is not acceptable for a trading app (no SLA, parse fragility, no audit trail, not vendor-of-record). The replacement brief uses ETF sponsors (State Street SPY/DIA, Invesco QQQ, iShares IWM) as vendors of record.
+
+Do not execute this brief. Use the ETF-sourced version instead.
+
+---
+
 # Phase 3 Follow-up Brief (Narrowed) — Russell 2000 Universe Backfill
 
 You attempted the broader universe-backfill brief and correctly stopped at the egress gate: Wikipedia is hostname-blocked (403) but iShares is reachable (200). This narrower brief scopes the work to **Russell 2000 only** — the index iShares serves and the one most valuable for TradeIQ's small-cap thesis (insider, political, patent, short-interest signals have most edge in small-cap names).

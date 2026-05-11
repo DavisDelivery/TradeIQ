@@ -1,3 +1,13 @@
+# ⚠️ SUPERSEDED
+
+This brief is **superseded** by `briefs/phase-3-followup-etf-sourced-universe-brief.md`.
+
+Reason: this brief targeted Wikipedia as a data source for historical S&P 500 / NDX constituents. Wikipedia is not acceptable for a trading app (no SLA, parse fragility, no audit trail, not vendor-of-record). The replacement brief uses ETF sponsors (State Street SPY/DIA, Invesco QQQ, iShares IWM) as vendors of record.
+
+Do not execute this brief. Use the ETF-sourced version instead.
+
+---
+
 # Phase 3 Follow-up Brief — Universe History Backfill
 
 You are running a small follow-up after the Phase 3 merge. Phase 3 landed on `main` at commit `bd677f9` (v0.12.0-alpha, live). Phase 3's universe history shipped Dow at full spec but SP500 / NDX / Russell2k at current-seed only because the original Phase 3 agent's environment had egress blocks to Wikipedia and iShares. Your job is to run the existing generator script in an unrestricted environment, verify the output meets the brief spec, commit the regenerated `universe-history.ts` to a small follow-up branch, and open a PR for CI to gate.
