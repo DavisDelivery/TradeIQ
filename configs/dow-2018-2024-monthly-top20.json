@@ -1,0 +1,21 @@
+{
+  "universe": "dow",
+  "startDate": "2018-01-31",
+  "endDate": "2024-12-31",
+  "rebalanceFrequency": "monthly",
+  "board": "prophet",
+  "portfolio": {
+    "topN": 20,
+    "weighting": "equal",
+    "maxPositionPct": 0.10,
+    "maxSectorPct": 0.40,
+    "cashSleeve": 0.05,
+    "minComposite": 50
+  },
+  "costs": {
+    "slippageBps": { "dow": 3 },
+    "commission": 0
+  },
+  "initialCapital": 100000,
+  "scoringConcurrency": 5
+}
