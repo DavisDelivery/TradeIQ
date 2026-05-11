@@ -558,7 +558,11 @@ Updated each session. `pending` → `in-progress` → `done` (with version + dat
 | 1 | Universe coverage + snapshot infrastructure | done | 0.9.1-alpha | 2026-05-07 | All 7 boards snapshot-first end-to-end; FreshnessPill on all 7 views; HistoryView replay surface; backfill script for tradeLog reconstruction. Phase 0 still pending — see PR notes. |
 | 2 | Refactor foundation (schemas + monolith split + TanStack Query) | done | 0.11.0-alpha | 2026-05-08 | Zod at 5 provider boundaries (10 fetch sites + 5 Quiver datasets); App.jsx 2965 -> 331 lines; 16 hooks + provider wrap; all 13 views wired to hooks (zero remaining useState+useEffect+fetch patterns for server data); fixed pre-existing W2 bug in EarningsView (missing imports); 127 tests (62 baseline + 54 schema + 11 hook); +12kB gzipped under 820kB budget. |
 | 3 | Point-in-time data layer | done | 0.12.0-alpha | 2026-05-10 | All 5 providers as-of capable; FRED vintage_dates (gold-standard PIT for macro), Polygon fundamentals/news, Finnhub recommendations (hybrid: live filter + snapshot fallback), Quiver political/patents/contracts; universe history covers Dow 2018-01-31..2026-04-30 monthly (full coverage), sp500/ndx/russell current seed only (Wikipedia/iShares hostname-blocked at egress in this env — runbook documents how to extend); PIT audit doc enumerates every data class with workarounds for non-PIT vendors; 55 new PIT correctness tests. |
-| 4a | Real backtest v2 — engine + correctness | done | 0.13.0-alpha | 2026-05-11 | Walk-forward engine; hot PIT cache (Firestore-backed); portfolio + costs + slippage; per-analyst attribution; ML hook data (forward 5d/20d/60d/252d returns persisted to backtestRuns/{runId}/mlTraining/); STOCK Act 45-day forward-shift; walk-forward integrity tests (11 P0); Dow + Russell fully backtest-able with survivorship correction stamp; SP500/NDX uncorrected (current seed only) with required disclosure; CLI script + 3 sample configs; BACKTEST_LIMITATIONS.md. Prophet board only — other boards return null and emit warning. 279 tests green (up from 182 baseline; +97 new). UI in 4b. |
+| 4a | Real backtest v2 — engine + correctness | done | 0.13.0-alpha | 2026-05-11 | Walk-forward engine; hot PIT cache (Firestore-backed); portfolio + costs + slippage; per-analyst attribution; ML hook data (forward 5d/20d/60d/252d returns persisted to backtestRuns/{runId}/mlTraining/); STOCK Act 45-day forward-shift; walk-forward integrity tests (11 P0); Dow + Russell fully backtest-able with survivorship correction stamp; SP500/NDX uncorrected (current seed only) with required disclosure; CLI script + 3 sample configs; BACKTEST_LIMITATIONS.md. Prophet board only — other boards return null and emit warning. 279 tests green (up from 182 baseline; +97 new). UI in 4b. Two follow-up hotfixes required (see 4a-fix-1, 4a-fix-2 below). |
+| 4a-fix-1 | Phase 4a hotfix: cache undef-rejection + silent catch + missing happy-path test (PR #8) | done | 0.13.1-alpha | 2026-05-11 | Smoke test against Dow 2018-2024 monthly produced all-zeros result on first run (NAV held at $100K for 7 years, 0 trades). Root cause: Firestore Admin SDK rejects `undefined` field values by default; `getEarningsIntel` returned objects whose optional fields stay undefined; cache writes threw; engine's silent `catch{}` dropped every ticker. Three-layer fix: (1) `firebase-admin.ts` `settings({ ignoreUndefinedProperties: true })`; (2) `engine.ts` replaced silent catch with structured `TickerFailure` tracking + HIGH FAILURE RATE warning on >50% rate; (3) new happy-path integrity test that empirically catches the original bug at PR time (verified by reverting the engine fix). 281 tests green (+2). Re-run smoke test confirmed honest numbers: Sharpe 0.224, CAGR 1.03%, win rate 56.8%, 350 trades, 0% failure rate, NAV $95k–$113k over the window. |
+| 4a-fix-2 | Phase 4a hotfix #2: ML-row bar window (PR #9) | done | 0.13.3-alpha | 2026-05-11 | Smoke test (post 4a-fix-1) confirmed engine produces honest numbers but ML training rows had `entryPrice: null` and all forward-return horizons null on every one of 206 rows; IC came back 0.000. Brief diagnosed wrong field — actual root cause was the caller's bar window math. `getCachedBarsThrough(ticker, asOfDate + 400d)` computed `(asOfDate + 100d, asOfDate + 400d)`, starting 100 days AFTER the rebalance; `lastCloseAtOrBefore(longBars, asOfDate)` had no entry bar to find. Fix: new `getCachedBars(ticker, from, to)` helper with explicit window; ML-row site uses `getCachedBars(asOfDate - 30d, asOfDate + 400d)`. Sibling audit found no other Bar field-name bugs. 9 new unit tests on `lastCloseAtOrBefore` (exported for testability). 290 tests green. Re-run smoke test: 100% of ML rows have non-null entryPrice + all 4 forward-return horizons; IC = -0.0951 (small honest signal, below leak threshold). Originally targeted 0.13.2-alpha; rebased to 0.13.3-alpha after PR #10 landed at 0.13.2 first. |
+| 4a-fix-3 | Hotfix: ProphetDetail useEffect ReferenceError (PR #10) | done | 0.13.2-alpha | 2026-05-11 | Sentry production alert: `ReferenceError: Can't find variable: useEffect` at `ProphetDetail` (src/ProphetView.jsx:303). Fired every time a user expanded a prophet pick row. Root cause: line-1 React destructure imported `useState` only; the row-expansion component added a `useEffect` to fetch chart data but the hook was never added to the import. One-line fix. Sibling audit across all `src/*.jsx`: `App.jsx` uses `React.useRef(...)` via the React namespace (not a bug). No other view file has a missing-hook import. 281 tests green. Landed first (prod-crash priority); PR #9 rebased to 0.13.3 after this merged. |
+| 4a-fix-4 | Production hotfix: seed-snapshots layout (no code PR yet) | diagnosed, code-fix pending | — | — | User report: "Earnings tab is not working at all." Live diagnosis: 0 of 7 boards have any snapshot doc in Firestore. Health endpoint shows every board on `fallback-partial`. Earnings stands out because its fallback (Finnhub calendar + per-ticker scoring) exceeds the 26s function timeout — other boards return small partial counts that mask the same root cause. Root cause: Netlify's function bundler silently drops files in `netlify/functions/scheduled/` subdirectory because the path matches neither auto-detect pattern (top-level file or per-function folder). Confirmed via Netlify API: `function_schedules: []` on every deploy back through Phase 1; the 7 `scan-*` functions don't appear in `available_functions` for any deploy. Cron registrations in `netlify.toml` point to functions that don't exist in build output, so the scheduler has never fired any board scan, ever. Fix is structural (move files up one level + rewrite `netlify.toml` schedule keys) — written up in `briefs/seed-snapshots-brief.md`. No code PR yet. After the layout fix lands and the first scheduled invocation completes, all 7 boards should flip from `fallback-partial` to `snapshot`. |
 | 4b | Real backtest v2 — BacktestView UI wired to engine | pending | — | — | — |
 | 5 | Calibration loop + ML refinement | pending | — | — | — |
 | 6 | Real options data | pending | — | — | — |
@@ -605,3 +609,57 @@ If you only have time for the top three: **Phase 0, Phase 1, Phase 4.** That get
 Phase 1 is the user-visible win — small caps suddenly become discoverable. Phase 4 is the credibility win — analyst weights stop being guesses. Phase 0 is the protection — neither of the above can be trusted without the engineering foundation underneath.
 
 Worst path: skipping Phase 0 to chase features. Cache poisoning recurs, Anthropic spend gets weird, a bad commit silently breaks prod. Done that movie three times already.
+
+---
+
+## Live operational state (post Phase 4a)
+
+Snapshot of what's open / in flight / blocked as of 2026-05-11. The status table above is the formal record; this section is the working-memory checklist.
+
+### Open PRs awaiting your merge call
+
+None. Hotfix queue cleared 2026-05-11:
+- PR #10 (useEffect import) merged at `4ca9a18` as `0.13.2-alpha`. Prod crash on prophet-row expansion: resolved.
+- PR #9 (ML-row bar window) rebased to `0.13.3-alpha` after #10 took the 0.13.2 slot; merged at `1b63427`. ML rows now populate `entryPrice` + forward returns; IC reports honest signal (-0.0951 on Dow 2018-2024).
+- PR #11 (this doc update) — merging now alongside the live-state refresh.
+
+Next code work (largest-first): seed-snapshots layout (diagnosed below), Phase 4b backtest viewer (brief at `briefs/phase-4b-brief.md`).
+
+### Diagnosed-but-no-PR-yet
+
+- **Seed-snapshots layout fix.** Root cause known: 7 scheduled scan functions in `netlify/functions/scheduled/` aren't deployed by Netlify because the subdirectory pattern isn't auto-detected. Brief written: `briefs/seed-snapshots-brief.md`. Needs an agent session to do the file-move + `netlify.toml` rewrite + verify schedules register. After the layout fix lands, first scheduled invocation will populate the cold cache and all 7 boards should flip from `fallback-partial` to `snapshot`. Earnings tab is the user-visible payoff.
+
+### Outstanding remediation items
+
+- 🚨 **Rotate the leaked Firebase service account key.** `private_key_id: c52711f114...` on `firebase-adminsdk-fbsvc@tradeiq-alpha.iam.gserviceaccount.com`. Every Netlify build of TradeIQ continues to use it. Action: Google Cloud Console → IAM → Service accounts → Keys → generate new + delete old → paste new JSON into Netlify env var `FIREBASE_SERVICE_ACCOUNT`. ~5 min from your phone.
+- **Health endpoint reports hardcoded `version: 0.10.0-alpha`.** Cosmetic, but worth syncing to the real `APP_VERSION` whenever a hotfix touches `netlify/functions/health.ts`.
+
+### Known second-tier issues surfaced by the Phase 4a smoke tests
+
+These aren't urgent — none is blocking, and the engine produces honest numbers without addressing them. File when ready:
+
+1. **Composite scores cluster at the `minComposite: 50` floor on early picks.** Attribution rows show `layers.fundamental: 0` consistently. The fundamental layer is probably returning a default-zero when Polygon fundamentals are thin for the older end of the 2018-2024 window. Separate scorer issue.
+2. **`recovery_days: null` on runs where the equity curve clearly does recover** intermediate drawdowns. Likely a bug in the recovery-days computation when the curve dips + rebounds multiple times. Separate metrics bug.
+3. **Quiver lobbying schema noise.** ~2,300 `schema_mismatch` warns per full Dow scan (`Issue: expected string, received null`). Warn-and-continue fallback works; no functional impact. Hygiene issue.
+4. **Quiver patents endpoint 403/404s.** 55 hits per full scan. Same warn-and-continue path. Quiver may have moved the endpoint.
+5. **`marketCapBucket: null` on every ML training row.** `FundamentalsSnapshot` doesn't expose `marketCap`. Phase 11 (analyst depth) is the natural place to add it; Phase 5 ML can read whatever's available without it.
+
+### What Phase 4b will need from this engine
+
+For when an agent picks up Phase 4b:
+
+- **Real run records exist** in Firestore at `backtestRuns/{runId}` from the smoke tests. UI can develop against them without needing to re-run the engine. Most recent honest run (post 4a-fix-2): `bt_20260511185505_ala21n` (Dow 2018-2024 monthly top-20 prophet board).
+- **`universeSurvivorshipCorrected` stamp** lives on every result document. The UI MUST surface a banner when `corrected: false` (i.e., any SP500 or NDX backtest). Brief says "Phase 4b UI must gate the run with an explicit disclosure" — this is the non-negotiable part.
+- **`tickerFailures` field** is also on every result (added in 4a-fix-1). UI should show a yellow warning when `failureRatePct > 5%` and a red banner when `> 50%`. Sample of first 20 failures is bounded so it's safe to render inline.
+- **Only the prophet board has a working PIT scoring path** in 4a. UI should either disable non-prophet board options or surface a "coming soon" state. Engine returns null + a `warnings` entry for other boards.
+
+### What Phase 5 will need from these runs
+
+The `backtestRuns/{runId}/mlTraining` subcollection is the training dataset. Each row has:
+- `composite` + per-layer scores at decision time
+- `regime` + `sector` at decision time
+- `forward5dReturn`, `forward20dReturn`, `forward60dReturn`, `forward252dReturn` (after PR #9 lands)
+- `entryPrice` (after PR #9 lands)
+- `marketCapBucket: null` (deferred — Phase 11 dependency)
+
+Most recent run has 183 ML rows (Dow 7-year monthly window). Russell 2k weekly window would yield substantially more — recommend running that config to seed the dataset before Phase 5 starts. The CLI is at `scripts/run-backtest.ts`; sample configs in `configs/`. Live env vars pull from Netlify (team slug `chad-gdxevza`).
