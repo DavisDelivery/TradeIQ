@@ -571,7 +571,7 @@ export async function getFinnhubInsiderTransactions(
 //   - For asOfDate older than ~4 months (or when the live response is
 //     empty/missing the required period), fall back to the catalyst
 //     board's snapshot store (catalyst board persists per-ticker
-//     recommendation data at scan time — see scan-catalyst.ts).
+//     recommendation data at scan time — see scan-catalyst-*.ts).
 //
 // We pick `catalyst` + `sp500` as the canonical fallback source because
 // the catalyst board is the broadest scan that consistently includes

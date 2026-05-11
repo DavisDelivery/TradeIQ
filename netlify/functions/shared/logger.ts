@@ -12,7 +12,7 @@
 //   log.info('request', { universe: 'core' });
 //
 //   import { logger } from './shared/logger';
-//   const log = logger.child({ fn: 'scan-target-board', universe }); // Phase 1
+//   const log = logger.child({ fn: 'scan-target-board-sp500', universe }); // Phase 1
 //   log.info('scan_started', { tickerCount: 1930 });
 //
 // Output: one JSON object per line on stdout (info/debug/warn) or stderr
