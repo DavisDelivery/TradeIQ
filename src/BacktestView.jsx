@@ -2,7 +2,6 @@ import React, { useState, useEffect, useMemo } from 'react';
 import {
   ChevronRight,
   AlertTriangle,
-  Activity,
   Loader2,
   Database,
 } from 'lucide-react';
@@ -15,6 +14,7 @@ import { DrawdownChart } from './components/DrawdownChart.jsx';
 import { AttributionChart } from './components/AttributionChart.jsx';
 import { RegimeBreakdownTable } from './components/RegimeBreakdownTable.jsx';
 import { TopTradesTable } from './components/TopTradesTable.jsx';
+import { BacktestLauncher } from './components/BacktestLauncher.jsx';
 
 // Phase 4b — Backtest run viewer.
 //
@@ -140,43 +140,6 @@ function RunListRow({ run, selected, onSelect }) {
         </span>
       </div>
     </button>
-  );
-}
-
-// ----- Launcher placeholder ------------------------------------------------
-
-function LauncherPlaceholder() {
-  return (
-    <div
-      className="border border-dashed border-neutral-700 bg-neutral-950/30 px-4 py-3 mb-5 rounded"
-      data-testid="launcher-placeholder"
-    >
-      <div className="flex items-start gap-3">
-        <Activity className="h-4 w-4 text-neutral-500 shrink-0 mt-0.5" aria-hidden="true" />
-        <div className="flex-1 text-[11px] font-mono">
-          <div className="text-neutral-300 mb-1">
-            Run launcher: coming in Phase 4b-2
-          </div>
-          <div className="text-neutral-500 leading-relaxed">
-            Launch new backtests via CLI:{' '}
-            <code className="text-neutral-300">
-              npx tsx scripts/run-backtest.ts --config configs/dow-2018-2024-monthly-top20.json
-            </code>
-            . Board: <code className="text-neutral-300">prophet</code> only (other
-            boards' PIT scoring landed partially in Phase 4a — see{' '}
-            <a
-              href="https://github.com/DavisDelivery/TradeIQ/blob/main/docs/BACKTEST_LIMITATIONS.md"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="underline text-neutral-400 hover:text-neutral-200"
-            >
-              BACKTEST_LIMITATIONS.md
-            </a>
-            ).
-          </div>
-        </div>
-      </div>
-    </div>
   );
 }
 
@@ -314,7 +277,7 @@ export const BacktestView = () => {
         </p>
       </div>
 
-      <LauncherPlaceholder />
+      <BacktestLauncher setSelectedRunId={setSelectedRunId} />
 
       {/* Recent Runs */}
       <div className="mb-6">
