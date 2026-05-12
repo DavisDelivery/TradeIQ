@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { renderHook, waitFor } from '@testing-library/react';
+import { renderHook, waitFor, act } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import React from 'react';
 import { useBacktestRuns } from '../useBacktestRuns';
@@ -178,5 +178,81 @@ describe('useBacktestRun', () => {
     const { result } = renderHook(() => useBacktestRun('bt_missing'), { wrapper });
     await waitFor(() => expect(result.current.isError).toBe(true));
     expect(result.current.error?.message).toBe('run not found');
+  });
+});
+
+// Phase 4b-2 — poll-while-incomplete behavior added to useBacktestRun.
+//
+// The refetchInterval callback inspects query.state.data?.run?.status
+// and returns 5000 for pending/running, false otherwise. We verify the
+// transition by varying the mocked status across successive fetches and
+// using vitest's fake timers to advance the 5-second interval.
+
+describe('useBacktestRun polling', () => {
+  let fetchSpy;
+  const statusSequence = []; // pop values as the hook re-fetches
+  beforeEach(() => {
+    statusSequence.length = 0;
+    fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => {
+      const status = statusSequence.shift() ?? 'complete';
+      return jsonResponse({
+        ok: true,
+        run: { runId: 'bt_poll', status },
+        dailyEquity: [],
+        trades: [],
+        attribution: [],
+        mlTrainingCount: 0,
+      });
+    });
+  });
+  afterEach(() => {
+    fetchSpy.mockRestore();
+    vi.useRealTimers();
+  });
+
+  it('refetches every ~5s while status is pending or running, stops on complete', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    statusSequence.push('pending', 'running', 'complete');
+    const { wrapper } = makeWrapper();
+    const { result } = renderHook(() => useBacktestRun('bt_poll'), { wrapper });
+
+    // First fetch: status=pending
+    await waitFor(() => expect(result.current.data?.run.status).toBe('pending'));
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+
+    // Advance 5s → triggers second fetch (running). Wrap in act() because
+    // TanStack's internal refetch fires a React state update; without
+    // act() React warns even though the assertion below settles on the
+    // post-update value correctly.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5_100);
+    });
+    await waitFor(() => expect(result.current.data?.run.status).toBe('running'));
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+
+    // Advance 5s → triggers third fetch (complete)
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5_100);
+    });
+    await waitFor(() => expect(result.current.data?.run.status).toBe('complete'));
+    expect(fetchSpy).toHaveBeenCalledTimes(3);
+
+    // Advance 30s → polling should be OFF now. No more fetches.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(30_000);
+    });
+    expect(fetchSpy).toHaveBeenCalledTimes(3);
+  });
+
+  it('does NOT poll a terminal-state run (status=complete on first fetch)', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    statusSequence.push('complete');
+    const { wrapper } = makeWrapper();
+    const { result } = renderHook(() => useBacktestRun('bt_done'), { wrapper });
+    await waitFor(() => expect(result.current.data?.run.status).toBe('complete'));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(20_000);
+    });
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
   });
 });
