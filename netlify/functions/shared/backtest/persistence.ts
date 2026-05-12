@@ -3,7 +3,15 @@
 // Storage layout:
 //   backtestRuns/{runId}
 //     - config (BacktestConfig)
-//     - status: 'running' | 'complete' | 'failed'
+//     - status: 'pending' | 'running' | 'complete' | 'failed'
+//        - 'pending' (Phase 4b-2): trigger endpoint wrote the row,
+//          background function has not started yet.
+//        - 'running': background function is actively executing the
+//          engine (or, for CLI runs, persistRunStart wrote this on
+//          engine entry).
+//        - 'complete' / 'failed': terminal states. Once 'complete', the
+//          subcollections (dailyEquity/trades/attribution/mlTraining)
+//          are fully written.
 //     - startedAt, completedAt
 //     - metrics (PerformanceMetrics)
 //     - universeSurvivorshipCorrected (the stamp Phase 4b UI reads)
@@ -60,6 +68,46 @@ export async function persistRunStart(
       status: 'running',
       startedAt: new Date().toISOString(),
     });
+}
+
+/**
+ * Phase 4b-2 — write a 'pending' row from the trigger endpoint, before
+ * fire-and-forgetting to the background function. The runId is returned
+ * synchronously to the launcher so the UI can navigate straight to the
+ * run-detail view and start polling. The background function will flip
+ * this to 'running' via persistRunRunning() once it begins.
+ *
+ * Separate from persistRunStart() because:
+ *   - CLI runs (scripts/run-backtest.ts) go directly to 'running' (no
+ *     queued window — they invoke runBacktest synchronously).
+ *   - UI-triggered runs go through 'pending' for the queued window
+ *     (typically <1s, but visible in case of background cold-start lag).
+ */
+export async function persistRunPending(
+  runId: string,
+  config: BacktestConfig,
+): Promise<void> {
+  await db()
+    .collection(COLLECTION)
+    .doc(runId)
+    .set({
+      runId,
+      config,
+      status: 'pending',
+      startedAt: new Date().toISOString(),
+    });
+}
+
+/**
+ * Phase 4b-2 — flip a 'pending' row to 'running' once the background
+ * function begins. Uses a merge write so the existing config/startedAt
+ * survive.
+ */
+export async function persistRunRunning(runId: string): Promise<void> {
+  await db()
+    .collection(COLLECTION)
+    .doc(runId)
+    .set({ status: 'running' }, { merge: true });
 }
 
 /**

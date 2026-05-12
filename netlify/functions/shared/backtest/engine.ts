@@ -70,9 +70,23 @@ export interface RunBacktestOptions {
     totalRebalances?: number;
     msg?: string;
   }) => void;
+  /**
+   * Phase 4b-2: reuse a pre-existing runId instead of generating a new
+   * one. The Phase 4b-2 launcher trigger endpoint writes a 'pending' row
+   * via persistRunPending(), then fires the background function with the
+   * runId attached. The background function calls runBacktest with
+   * resumeRunId set so that:
+   *   - generateRunId() is skipped
+   *   - persistRunStart() is skipped (the trigger already wrote the row;
+   *     re-running set() would clobber 'pending' → 'running' transition
+   *     done by persistRunRunning())
+   * persistRunResult / persistRunFailure write to the same runId at the
+   * end of the run as usual.
+   */
+  resumeRunId?: string;
 }
 
-function validateConfig(config: BacktestConfig): void {
+export function validateConfig(config: BacktestConfig): void {
   if (config.startDate > config.endDate) {
     throw new Error(
       `BacktestConfig: startDate (${config.startDate}) > endDate (${config.endDate})`,
@@ -256,11 +270,16 @@ export async function runBacktest(
   options: RunBacktestOptions = {},
 ): Promise<BacktestResult> {
   validateConfig(config);
-  const runId = generateRunId();
+  // Phase 4b-2: if a runId was pre-allocated by the trigger endpoint,
+  // reuse it (and skip the persistRunStart write — the trigger wrote
+  // 'pending', and the background function flipped it to 'running'
+  // before calling us). Otherwise allocate a fresh runId and write
+  // the 'running' row as in the CLI path.
+  const runId = options.resumeRunId ?? generateRunId();
   const warnings: string[] = [];
   const startedAt = new Date().toISOString();
 
-  if (!options.noPersist) {
+  if (!options.noPersist && !options.resumeRunId) {
     await persistRunStart(runId, config);
   }
 
