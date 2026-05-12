@@ -35,4 +35,9 @@ export const queryKeys = {
   optionsFlow: () => ['tradeiq', 'optionsFlow'],
   backtest: (lookback, tickers) => ['tradeiq', 'backtest', lookback, tickers],
   engineTest: (ticker) => ['tradeiq', 'engineTest', ticker],
+
+  // Phase 4b — backtest run viewer (reads from backtestRuns/{runId} in Firestore).
+  // Distinct from `backtest` above which is the legacy engine-test backtest.
+  backtestRuns: (limit) => ['tradeiq', 'backtestRuns', limit ?? 20],
+  backtestRun: (runId) => ['tradeiq', 'backtestRun', runId],
 };
