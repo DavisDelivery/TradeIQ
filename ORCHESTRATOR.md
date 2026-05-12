@@ -1,8 +1,10 @@
 # TradeIQ — Orchestrator
 
-**Purpose.** Sequence every fix and capability gap identified in the v0.7.25 review into a phased build plan. One doc, persistent in repo, updated each session. Each phase is a shippable unit ending in a green deploy and a status update at the bottom of this doc.
+**Purpose.** Sequence every fix and capability gap into a phased build plan. One doc, persistent in repo, updated each session. Each phase is a shippable unit ending in a green deploy and a status update at the bottom of this doc.
 
-**Rule of the road.** This is a personal tool, but every commit goes through CI gates established in Phase 0 once that phase ships. No manual prod pushes after Phase 0 lands. Status table at the bottom is the single source of truth on what's done.
+**Rule of the road.** Personal tool, but every commit goes through CI gates. The status table at the bottom is the single source of truth on what's done. The phase deep-dives are reference material for whoever picks up the next workstream.
+
+**Current state (2026-05-12).** Production at `v0.15.0-alpha` on `https://tradeiq-alpha.netlify.app`. Phases 0 through 4b-2 shipped + all four 4a hotfixes landed. Three briefs sitting on the runway awaiting agent execution: `phase-4c-1-brief.md`, `phase-4c-2-brief.md`, `phase-5a-brief.md`. Two security items still outstanding (PAT + FB SA key rotations — see Outstanding remediation below).
 
 ---
 
@@ -16,6 +18,42 @@
 - Each phase ships its own `vX.Y.Z-alpha` version bump. No combining unrelated phases into one bump.
 - Every phase that touches scoring or alpha logic must add a regression test before merge.
 - Every phase ends by updating the Status table at the bottom of this doc.
+- Briefs never contain literal secrets. Use `<read-only-PAT, provided per session>` placeholders. Lesson from the secrets-scan incident — see Lessons-learned section.
+- Smoke-test every new HTTP route on the deploy preview BEFORE merging to main. Unit tests can't catch Netlify routing quirks. Lesson from PR #17/#18.
+
+---
+
+## Stack reference (read first if you're a fresh conversation)
+
+- **Repo:** `DavisDelivery/TradeIQ`
+- **Netlify site:** `tradeiq-alpha.netlify.app` (site ID `8e90d525-78f3-4288-9c15-8b1968e994c1`)
+- **Firebase project:** `tradeiq-alpha`
+- **Production:** `https://tradeiq-alpha.netlify.app`
+- **Netlify team:** business account `chad@davisdelivery.com`
+- **Read-only `GITHUB_PAT`:** `<provided per session>`. Chad provides write-scoped PAT separately per session when push needed. Do not commit literal values to briefs.
+- **`FIREBASE_SERVICE_ACCOUNT`:** JSON in Netlify env vars across all contexts. Service-account credentials used by every backend function via `netlify/functions/shared/firebase-admin.ts`.
+- **Anthropic, Polygon, Finnhub, Quiver, FRED:** all keys in Netlify env, configured across all contexts.
+- **Frontend stack:** React + Vite + TanStack Query + Recharts + Tailwind. Mobile-first, neutral dark theme.
+- **Backend stack:** Netlify Functions (TypeScript), Firestore via firebase-admin, Zod at every external provider boundary.
+- **Persistence schema:**
+  - `boardSnapshots/{board}/{universe}/{snapshotId}` — full scan results, model version stamped
+  - `backtestRuns/{runId}` + subcollections `dailyEquity / trades / attribution / mlTraining`
+  - `pitCache/{key}` — point-in-time data cache, Firestore-backed
+  - `tradeLog/{tradeId}` — user-logged trades
+- **Boards (7 total):** target, prophet, catalyst, williams, lynch, insider, earnings. Each has a `scan-{board}-{universe}.ts` scheduled function + a live API endpoint. After Phase 1 + 4a-fix-4, all boards are snapshot-first with fallback-partial live scan.
+- **Universes (4):** `dow` (30), `sp500` (~500), `ndx` (~100), `russell2k` (~2037). The russell2k pool is large enough to require a sieve architecture for prophet — see Phase 4c-2.
+
+### Code-path landmarks
+
+- Backtest engine: `netlify/functions/shared/backtest/engine.ts` (+ `walk-forward.ts`, `costs.ts`, `metrics.ts`, `attribution.ts`, `persistence.ts`, `types.ts`)
+- Backtest UI: `src/BacktestView.jsx` + `src/components/{BacktestLauncher,SurvivorshipBanner,RunMetricsTiles,EquityCurveChart,DrawdownChart,AttributionChart,RegimeBreakdownTable,TopTradesTable,KpiCard,ChartPanel}.jsx`
+- Backtest hooks: `src/hooks/{useBacktestRuns,useBacktestRun,useStartBacktest}.js`
+- Background functions: `run-backtest-background.ts`, `seed-scan-background.ts` (filename suffix `-background.ts` gives 15-min container; same pattern used for both)
+- Scheduled scan functions: `netlify/functions/scan-{board}-{universe}.ts` — 23 files post-4a-fix-4 (one per board × universe; earnings stays monolithic by design)
+- Snapshot store: `netlify/functions/shared/snapshot-store.ts`
+- PIT layer: `netlify/functions/shared/{data-provider,insider-provider,political-provider,patent-provider,govcontracts-provider,universe-history,pit-cache}.ts`
+- Zod schemas: `netlify/functions/shared/schemas/{polygon,finnhub,quiver,fred,index}.ts`
+- Frontend prophet detail: `src/ProphetView.jsx` (contains LAYER_META, renders the 7-layer panels conditionally on `pick.layers`)
 
 ---
 
@@ -23,409 +61,286 @@
 
 **Goal.** Stop bleeding before doing anything else: tests, CI, spend cap, error tracking, backups, dead code purge.
 
-**Why.** Cache-poisoning regressions hit three times (v0.7.18, 19, 21). Opus 4.7 on every AI surface means a runaway loop costs real money. Trade log lives only in Firestore with no backup. None of these need code to write — they need infrastructure that's missing.
+**Shipped @ 0.10.0-alpha (2026-05-08).** Tests + CI + circuit breaker + structured logger + Sentry hooks + weekly Firestore backups all landed. **Partial:** the Anthropic budget cap was explicitly DROPPED by user decision (2026-05-12) — "I'm not worried about a budget for Anthropic." Future phases that increase API spend (Phase 4c-1 W4, Phase 5b ML inference) ship without a cap; surface a warning log instead of refusing.
 
-**Scope.**
+### Scope (reference)
 
-| Workstream | Files | Action |
+| Workstream | Files | Status |
 |---|---|---|
-| Test harness | `vitest.config.ts`, `src/**/*.test.jsx`, `netlify/functions/**/*.test.ts` | New. Vitest for both frontend + functions. |
-| Regression tests for known bug families | `netlify/functions/__tests__/cache-poisoning.test.ts` | New. Test that empty results never poison `resultCache`. One test per affected endpoint (target-board, prophet, earnings-board, insider-board). |
-| Layer scorer unit tests | `netlify/functions/shared/__tests__/prophet-layers.test.ts` | New. Fixture-based unit tests for all 7 layers in `prophet-layers.ts`. |
-| CI gates | `.github/workflows/ci.yml`, `.github/workflows/deploy.yml` | New. Run lint + tsc + vitest on every PR. Block merge to main on red. |
-| Anthropic spend cap | `netlify/functions/shared/anthropic-budget.ts` | New. Daily spend ceiling stored in Netlify Blobs or Firestore. Every Claude call checks remaining budget; over cap → 503 with friendly message. |
-| Anthropic circuit breaker | same file | New. Open circuit on 5 errors/min for 5 min. |
-| Error tracking | `src/lib/sentry.js`, function wrapper | New. Sentry free tier or Logtail. Wrap all functions with capture, frontend ErrorBoundary calls Sentry. |
-| Structured logging | `netlify/functions/shared/logger.ts` | New. Replace `console.log` with structured JSON logger. Every function logs request, duration, cache-hit, error. |
-| Firestore backup | `.github/workflows/backup-firestore.yml` | New. Cron weekly. Uses `firestore-export-import` or `gcloud firestore export` to GCS bucket. |
-| Dead code purge | `app/` directory | Delete. Recovery artifact from v1, not built, confusing. |
-| README hygiene | `README.md` | Update. Reflect current state, link to this doc. |
-
-**Dependencies.** None. This is the bedrock.
-
-**Success criteria.**
-- `npm run test` runs ≥ 30 tests, all green.
-- A PR that breaks a layer scorer is blocked by CI.
-- An empty-result response never gets cached (regression test passes).
-- `/api/research?ticker=NVDA` while over daily Anthropic budget returns 503 with `{error: 'budget_exhausted'}`.
-- An exception in `/api/prophet-picks` shows up in Sentry within 30s.
-- Firestore tradeLog is in GCS bucket `tradeiq-backups` with daily snapshots ≥ 7 days retained.
-- `app/` directory is gone, repo size drops noticeably.
-
-**Estimate.** 1–2 sessions. Heaviest piece is the test harness — once Vitest is wired, subsequent test work is fast.
+| Vitest harness | `vitest.config.ts`, `src/**/*.test.jsx`, `netlify/functions/**/*.test.ts` | done |
+| Cache-poisoning regression tests | `netlify/functions/__tests__/cache-poisoning.test.ts` | done |
+| Layer scorer unit tests | `netlify/functions/shared/__tests__/prophet-layers.test.ts` | done |
+| CI gates | `.github/workflows/ci.yml`, `deploy.yml` | done |
+| Anthropic spend cap | `netlify/functions/shared/anthropic-budget.ts` | **DROPPED by decision** |
+| Anthropic circuit breaker | same | done |
+| Sentry | `src/lib/sentry.js`, function wrapper | done |
+| Structured logger | `netlify/functions/shared/logger.ts` | done |
+| Firestore backup workflow | `.github/workflows/backup-firestore.yml` | done |
+| `app/` dead code purge | repo root | done |
 
 ---
 
 ## Phase 1 — Universe coverage + snapshot infrastructure
 
-**Goal.** Every board scans the FULL configured universe (all 1,930 Russell 2000, all S&P 500, all NDX, all Dow), not the first 80–200 alphabetical. Comprehensive results delivered instantly to the UI by reading from a shared store populated by scheduled background jobs. Snapshots are model-version stamped and double as the historical archive that downstream phases (backtest, calibration, replay) read from.
+**Goal.** Every board scans the FULL configured universe — not the first 80–200 alphabetical. Snapshots double as the historical archive for backtest, calibration, replay.
 
-**Why this is in Phase 1 and not later.** Every current board caps at 80–200 tickers and slices alphabetically (`tickers.slice(0, 80)`). When the user selects Russell 2000 (1,930 tickers), only A-G ever get scanned. Tickers from H-Z are invisible to the model. This is the worst possible failure mode for small-cap discovery — exactly where insider, political, patent, and short-interest signals have the most edge. It's a silent product gap that makes the app's small-cap claims structurally false. Fix this immediately after the engineering foundation lands.
+**Shipped @ 0.9.1-alpha (2026-05-07).** Reordering between 0 and 1 ended up with 1 shipping first; doc records the actual sequence. **All 7 boards snapshot-first end-to-end.** FreshnessPill on every view. HistoryView replay surface. Backfill script for tradeLog reconstruction.
 
-**Architectural shape.**
+**Critical follow-on:** the scheduled scan functions had a layout bug (functions in `netlify/functions/scheduled/` were never deployed) — diagnosed early, fixed in Phase 4a-fix-4.
 
-The fix is not "raise the limits" — Netlify functions cap at 26s sync, which is nowhere near enough for a deep 1,930-ticker scan. The fix is decoupling scan time from request time:
+### Scope (reference)
 
-1. Scheduled background functions (Netlify scheduled functions, up to 15-minute background timeout) scan the full universe across all boards, multiple times daily.
-2. Each run writes results to Firestore as `boardSnapshots/{board}/{date}/{snapshotId}` with full ticker results, model version, scan duration, freshness timestamp.
-3. Live API endpoints (`/api/target-board?universe=russell2k` etc.) read from the most recent snapshot first. Fall back to a live partial scan only if the snapshot is older than the freshness budget for that board.
-4. UI shows a freshness pill: "Live · 8 min ago" or "Refreshing…" or "Fallback (partial scan)".
-5. Manual "Force rescan" button triggers a synchronous capped scan (current behavior, kept as an escape hatch).
-
-**Scope.**
-
-| Workstream | Files | Action |
+| Workstream | Files | Status |
 |---|---|---|
-| Firebase Admin in functions | `netlify/functions/shared/firebase-admin.ts` | New. Service-account-backed Firestore writer for use from scheduled functions. Distinct from frontend `firebase.js`. Reads `FIREBASE_SERVICE_ACCOUNT` env var (JSON). |
-| Snapshot store abstraction | `netlify/functions/shared/snapshot-store.ts` | New. Read/write API for all snapshot data: `writeSnapshot(board, universe, snapshot)`, `latestSnapshot(board, universe)`, `snapshotAge(board, universe)`. Backed by Firestore. |
-| Model version stamp | `netlify/functions/shared/model-version.ts` | New. Single `MODEL_VERSION` constant bumped on any scoring change. Stamped on every snapshot. |
-| Scheduled scan: target-board | `netlify/functions/scheduled/scan-target-board.ts` | New. Runs at 06:00, 09:30, 12:00, 15:30, 17:00 ET. Scans full universe per index (sp500, ndx, russell2k, dow). Writes per-universe snapshots. |
-| Scheduled scan: prophet | `netlify/functions/scheduled/scan-prophet.ts` | New. Same cadence. Full 7-layer ensemble across full universe. |
-| Scheduled scan: catalyst | `netlify/functions/scheduled/scan-catalyst.ts` | New. Same cadence. |
-| Scheduled scan: insider | `netlify/functions/scheduled/scan-insider.ts` | New. Daily at 17:30 ET (insider data updates after close). |
-| Scheduled scan: williams | `netlify/functions/scheduled/scan-williams.ts` | New. Same cadence as catalyst. |
-| Scheduled scan: lynch | `netlify/functions/scheduled/scan-lynch.ts` | New. Daily after close (fundamentals don't move intraday). |
-| Scheduled scan: earnings | `netlify/functions/scheduled/scan-earnings.ts` | New. 06:00 and 17:00 ET. |
-| Live API rewire — target-board | `netlify/functions/target-board.ts` | Modify. Query path: snapshot-first, fallback partial. Remove the alphabetical 80-cap when serving from snapshot. |
-| Live API rewire — prophet | `netlify/functions/prophet-picks.ts` | Modify. Same pattern. |
-| Live API rewire — catalyst, insider, williams, lynch, earnings | each `*-board.ts` / `*-picks.ts` | Modify. Same pattern. |
-| Snapshot freshness budget | `shared/snapshot-store.ts` | New. Per-board: target-board 30min, prophet 30min, catalyst 1hr, insider 12hr, williams 1hr, lynch 24hr, earnings 12hr. |
-| Universe iteration utility | `shared/full-scan-iterator.ts` | New. Concurrency-controlled async generator that yields ticker batches across full universe. Respects rate limits per provider. |
-| Health endpoint surfaces snapshot age | `netlify/functions/health.ts` | Modify. Return last snapshot age for every board+universe. |
-| Frontend freshness pill | every view component | Modify. Show data age + "force rescan" affordance. |
-| HistoryView | `src/views/HistoryView.jsx` | New. Pick a past date, see exact board snapshot. Tab in nav. |
-| Backfill from journal | `scripts/backfill-snapshots.ts` | New (one-shot). Reconstruct partial historical snapshots from existing journal entries' loggedAt timestamps. |
-| netlify.toml schedule config | `netlify.toml` | Modify. Add `[[scheduled.functions]]` blocks for each scheduled scan with cron expression and timeout=900s (background). |
-
-**One-time setup the user must do (document in PR):**
-1. Create a Firebase service account JSON for `tradeiq-alpha` project (separate from the one created for backups in Phase 0 if needed; can reuse).
-2. Set the JSON as Netlify env var `FIREBASE_SERVICE_ACCOUNT`.
-3. Verify Firestore rules allow service-account writes to `boardSnapshots/**` (default Firestore rules with service account work fine — service accounts bypass security rules).
-
-**Dependencies.** Phase 0 (structured logging, Sentry, Anthropic budget cap — without these, scheduled scans are a black box and could burn budget silently).
-
-**Success criteria.**
-- A request to `/api/target-board?universe=russell2k` returns results covering tickers across the entire alphabet (smoke check: confirm at least one ticker starting with "Z" appears in some board's results, given current Russell composition).
-- Snapshot for each board exists for current day, age < freshness budget during market hours.
-- A scheduled function failure (e.g., Polygon outage) is surfaced via Sentry within 5 minutes.
-- The "force rescan" button still works and explicitly tells the user the result is partial.
-- Anthropic / Polygon / Finnhub API spend per day is within budget (verify via dashboards from Phase 0).
-- HistoryView displays a snapshot from yesterday accurately.
-
-**Estimate.** 2–3 sessions. Heaviest piece is wiring Firebase Admin + service account + the seven scheduled scans + rewiring seven live endpoints. The scheduled scan logic itself is mostly factoring-out of existing in-handler code.
+| Firebase Admin in functions | `netlify/functions/shared/firebase-admin.ts` | done |
+| Snapshot store | `netlify/functions/shared/snapshot-store.ts` | done |
+| Model version stamp | `netlify/functions/shared/model-version.ts` | done |
+| 7 board scheduled scans (later split to 23 per-universe) | `netlify/functions/scan-{board}-{universe}.ts` | done (post-4a-fix-4) |
+| 7 live API rewires (snapshot-first + fallback-partial) | each `*-board.ts` / `*-picks.ts` | done |
+| Freshness pill | `src/components/FreshnessPill.jsx` | done |
+| History view | `src/HistoryView.jsx` | done |
+| Backfill script | `scripts/backfill-tradelog.ts` | done |
 
 ---
 
 ## Phase 2 — Refactor foundation: schemas + monolith split + server state
 
-**Goal.** Make the codebase reviewable on a phone and protect every external API boundary with Zod.
+**Goal.** Refactor App.jsx, add Zod at every provider boundary, replace ad-hoc fetch with TanStack Query.
 
-**Why.** App.jsx at 2,927 lines is the same anti-pattern that took MarginIQ.jsx to 10,500 lines before it became unmaintainable. TanStack Query gives free dedup, retry, focus revalidation. Zod at the boundary catches Polygon/Finnhub schema drift at one log line instead of three calls deep when something is `undefined`.
+**Shipped @ 0.11.0-alpha (2026-05-08).** Zod at 5 provider boundaries (10 fetch sites + 5 Quiver datasets). App.jsx went from 2965 → 331 lines. 16 hooks + provider wrap. All 13 views wired to hooks. Bundle +12kB gzipped, still under 820kB budget.
 
-**Scope.**
+### Scope (reference)
 
-| Workstream | Files | Action |
+| Workstream | Files | Status |
 |---|---|---|
-| Zod inbound schemas | `netlify/functions/shared/schemas/polygon.ts`, `finnhub.ts`, `quiver.ts`, `fred.ts`, `anthropic.ts` | New. One Zod schema per external API endpoint actually called. Wrap fetches with `.parse()`. |
-| Schema-fail logging | `netlify/functions/shared/data-provider.ts` | Modify. On parse fail, log structured event + return safe default. |
-| Split App.jsx | `src/views/TargetBoardView.jsx`, `EarningsView.jsx`, `OptionsFlowView.jsx`, `BacktestView.jsx`, `ResearchView.jsx`, `EngineTestView.jsx` | New. Move each view out of App.jsx into its own file, matching the existing `WilliamsView.jsx` / `LynchView.jsx` / etc. pattern. |
-| Mock data extraction | `src/lib/mockData.js` | New. All `MOCK_*` constants out of App.jsx. |
-| TanStack Query | `package.json`, `src/main.jsx`, every view | Add `@tanstack/react-query`. Wrap app in `QueryClientProvider`. Replace every `useEffect + fetch` with `useQuery`. |
-| Server-state cache invalidation | `src/lib/queryKeys.js` | New. Centralized query keys so invalidations are explicit. |
-| Frontend Zod (optional, low priority) | `src/lib/zodFrontend.js` | New. Validate API responses on the frontend too. Backstop for the existing `validateResponse.js` shapes. |
-
-**Dependencies.** Phase 0 (CI catches refactor regressions). Phase 1 (frontend changes need to play nice with snapshot-backed endpoints).
-
-**Success criteria.**
-- App.jsx is under 800 lines and contains only routing/shell.
-- Tab switches no longer refetch already-fresh data.
-- Bundle size is the same or smaller (verify via Vite build output).
-- A Polygon schema change in a fixture test fails at the schema layer, not in JSX.
-- All 7 view files exist and pass their own ErrorBoundary.
-
-**Estimate.** 2 sessions. Split App.jsx is mostly mechanical; TanStack Query wiring is the careful part.
+| Zod schemas | `netlify/functions/shared/schemas/{polygon,finnhub,quiver,fred,index}.ts` | done |
+| Split App.jsx | `src/views/*.jsx` (7 views) | done |
+| Mock data extraction | `src/lib/mockData.js` | done |
+| TanStack Query | every view | done |
+| Centralized query keys | `src/lib/queryKeys.js` | done |
+| 16 hooks | `src/hooks/use*.js` | done |
 
 ---
 
 ## Phase 3 — Point-in-time data layer
 
-**Goal.** Audit every external data source for "as-of" semantics. Wrap each provider call with explicit point-in-time guarantees or document where PIT is impossible.
+**Goal.** Audit every external data source for "as-of" semantics. Wrap each provider with explicit PIT guarantees or document where PIT is impossible.
 
-**Why.** A backtest that uses today's restated fundamentals to "predict" 2024 outcomes is overstating edge. Polygon revises financials. Finnhub recommendations get backfilled. Quiver sometimes amends. The look-ahead bias risk is real and pervasive.
+**Shipped @ 0.12.0-alpha (2026-05-10).** All 5 providers as-of capable. FRED `vintage_dates` (gold-standard PIT for macro). Polygon fundamentals/news. Finnhub recommendations (hybrid: live filter + snapshot fallback). Quiver political/patents/contracts. **Universe history covers Dow 2018-01-31..2026-04-30 monthly (full coverage).** sp500/ndx/russell current seed only (Wikipedia/iShares hostname-blocked at egress in build env; `docs/UNIVERSE_HISTORY_RUNBOOK.md` documents how to extend from a network that allows the hosts).
 
-**Scope.**
+PIT audit doc enumerates every data class with workarounds for non-PIT vendors. 55 new PIT correctness tests.
 
-| Workstream | Files | Action |
+### Scope (reference)
+
+| Workstream | Files | Status |
 |---|---|---|
-| PIT audit doc | `docs/POINT_IN_TIME_AUDIT.md` | New. Per data class (bars, fundamentals, news, earnings, insider, political, patent, recommendations): does the API support as-of? If yes, how? If no, what's the workaround? |
-| Bars (Polygon) | `data-provider.ts` | Confirm. Daily bars are PIT-safe (historical OHLCV doesn't revise). Add comment. |
-| Fundamentals (Polygon) | `data-provider.ts:getFundamentals` | Modify. Add `asOfDate` param. Filter results to only those filed before asOfDate. |
-| News (Polygon) | `data-provider.ts:getNews` | Modify. Filter by `published_utc` ≤ asOf. |
-| Insider (QuiverQuant/Finnhub) | `insider-provider.ts` | Modify. Filter by transaction date or filing date ≤ asOf, whichever is appropriate. |
-| Recommendations (Finnhub) | `data-provider.ts` | Audit. Likely no PIT support. Document and use snapshot from Phase 2 when backtesting. |
-| Politcal/patents/contracts (Quiver) | `political-provider.ts` etc. | Audit + filter by date. |
-| Universe history | `netlify/functions/shared/universe-history.ts` | New. Snapshot of S&P 500 / Russell 2000 constituents at month-ends going back ≥ 5 years. Source: a one-shot scrape from Wikipedia history or buy from a vendor. Critical for survivorship-bias correction. |
-
-**Dependencies.** Phase 2 (snapshot infrastructure provides one source of truth for "what was scoreable on date X").
-
-**Success criteria.**
-- `docs/POINT_IN_TIME_AUDIT.md` covers every provider with a Yes/No/Workaround per data class.
-- `getFundamentals('NVDA', { asOfDate: '2023-06-01' })` returns only filings dated before 2023-06-01.
-- Universe-history can answer "was AAPL in S&P 500 on 2018-03-15?" deterministically.
-
-**Estimate.** 1–2 sessions. The universe-history backfill is the heaviest piece; everything else is mechanical filtering.
+| PIT audit | `docs/POINT_IN_TIME_AUDIT.md` | done |
+| Bars (Polygon, PIT-safe by nature) | `data-provider.ts` | done |
+| Fundamentals (Polygon, filter by filed-before) | `data-provider.ts:getFundamentals` | done |
+| News (Polygon, filter by published_utc) | `data-provider.ts:getNews` | done |
+| Insider (Finnhub + Quiver, filter by filing date) | `insider-provider.ts` | done |
+| Political/patents/contracts (Quiver, filter by date) | `political-provider.ts` etc. | done |
+| Recommendations (Finnhub, hybrid live + snapshot) | `data-provider.ts` | done |
+| Universe history | `netlify/functions/shared/universe-history.ts` | done (Dow full; others seed) |
 
 ---
 
-## Phase 4 — Real backtest v2 (the alpha proof)
+## Phase 4 — Real backtest
 
-**Goal.** Replace the current technical-only backtest with a full-stack walk-forward backtest covering all 10 analysts, with transaction costs, survivorship correction, and proper statistics.
+### 4a — Engine + correctness (shipped @ 0.13.x-alpha, 2026-05-11)
 
-**Why.** Current backtest is the single biggest credibility hole. Without it, all analyst weights are priors and every recommendation is faith-based.
+Walk-forward engine with hot PIT cache (Firestore-backed). Portfolio + costs + slippage. Per-analyst attribution. ML hook data (forward 5d/20d/60d/252d returns persisted to `backtestRuns/{runId}/mlTraining/`). STOCK Act 45-day forward-shift. Walk-forward integrity tests (11 P0). Dow + Russell fully backtest-able with `corrected: true` survivorship stamp; SP500/NDX uncorrected with required disclosure. CLI script + 3 sample configs. `BACKTEST_LIMITATIONS.md`. **Prophet board only** — other boards return null and emit warning (Phase 5b territory).
 
-**Scope.**
+Required four follow-on hotfixes:
 
-| Workstream | Files | Action |
-|---|---|---|
-| Backtest engine v2 | `netlify/functions/backtest-v2.ts`, `netlify/functions/shared/backtest/engine.ts` | New. Replays historical snapshots (Phase 2) against PIT data (Phase 3). |
-| Walk-forward harness | `backtest/walk-forward.ts` | New. Train/test split by quarter. OOS-only stats reported. |
-| Transaction costs | `backtest/costs.ts` | New. Bps per round-trip + ADV-relative slippage. Configurable. |
-| Performance stats | `backtest/stats.ts` | New. Sharpe (annualized), Sortino, max DD, Calmar, win rate, avg win / avg loss, profit factor, recovery time. |
-| Per-analyst attribution | `backtest/attribution.ts` | New. For each trade, compute marginal contribution of each analyst score. Output: per-analyst alpha, hit rate, info ratio. |
-| Monte Carlo | `backtest/monte-carlo.ts` | New. Resample trade sequence ≥ 1000 times. Output: 95% CI on alpha, P(drawdown > X). |
-| Universe selection (PIT) | uses `universe-history.ts` | Wire. Backtest universe at date T = constituents on date T, not today. |
-| Frontend backtest view | `src/views/BacktestView.jsx` | Rewrite. Show: equity curve, OOS vs IS alpha, per-tier stats, per-analyst attribution, Monte Carlo distribution, drawdown chart. |
-| Backtest persistence | Firestore `backtestRuns/{runId}` | New. Every backtest run is saved with config + results so you can compare runs. |
+- **4a-fix-1** (PR #8, `0.13.1-alpha`): Firestore Admin SDK rejected `undefined` field values; `getEarningsIntel` returned objects with optional undefined fields; cache writes threw; engine's silent `catch{}` dropped every ticker → all-zeros backtest. Three-layer fix: `ignoreUndefinedProperties: true` setting; structured `TickerFailure` tracking with HIGH FAILURE RATE warning >50%; happy-path integrity test that empirically catches the bug. Post-fix smoke: Sharpe 0.224, CAGR 1.03%, 350 trades, 0% failure rate.
+- **4a-fix-2** (PR #9, `0.13.3-alpha`): ML training rows had `entryPrice: null` and forward returns null on all 206 rows; IC=0.000. Root cause was bar window math — `getCachedBarsThrough(ticker, asOfDate + 400d)` started 100 days AFTER the rebalance, so `lastCloseAtOrBefore(longBars, asOfDate)` had nothing to find. Fix: new `getCachedBars(ticker, from, to)` with explicit window. Post-fix IC=-0.0951 (small honest signal, below leak threshold).
+- **4a-fix-3** (PR #10, `0.13.2-alpha`): Sentry prod alert `ReferenceError: Can't find variable: useEffect` on prophet row expansion. Line-1 React destructure imported `useState` only. One-line fix. Sibling audit confirmed no other view file had the bug.
+- **4a-fix-4** (PRs #12/#13/#14, `0.13.4-alpha`, 2026-05-11): scheduled scan functions in `netlify/functions/scheduled/` subdirectory were silently dropped by Netlify's bundler — `function_schedules: []` on every deploy since Phase 1; the 7 `scan-*` functions never appeared in `available_functions`. **Cron had never fired any board scan, ever.** Three-PR fix: (#12) moved 7 scan files to flat `netlify/functions/` + switched to `schedule(CRON, async () => {})` wrapper from `@netlify/functions`; (#13) split 6 multi-universe scans into 23 per-universe functions (`scan-{board}-{universe}.ts`) to fit within Netlify's 15-min cap × 4 universes; (#14) added `netlify/functions/seed-scan-background.ts` — HTTP-invokable fire-and-forget seeder using `-background.ts` filename suffix to bypass the 211s gateway timeout. After fix-4, scheduled scans actually run.
 
-**Dependencies.** Phase 2 (snapshots), Phase 3 (PIT data + universe-history).
+### 4b — Backtest UI
 
-**Success criteria.**
-- A backtest of `2022-01-01 → 2025-06-30` runs end-to-end in under 5 minutes (cached PIT data).
-- OOS alpha is reported separately from IS alpha. If IS >> OOS, UI flags overfitting.
-- Per-analyst attribution shows which analysts are pulling weight and which are noise.
-- Monte Carlo CI is shown on the equity curve.
-- A regression test runs a known fixture and asserts deterministic Sharpe.
+**4b-1 — Run viewer (read-only, shipped @ 0.14.0-alpha, 2026-05-12).** Two endpoints (`/api/backtest-runs`, `/api/backtest-runs/:runId`). Two hooks. BacktestView rewritten. Seven run-detail subcomponents including the non-negotiable `SurvivorshipBanner` (renders only when `corrected: false`, links to `BACKTEST_LIMITATIONS.md`). Mobile-first 375px tested. Bundle 256.18 kB gzipped. 331 tests green.
 
-**Estimate.** 2–3 sessions. The biggest single unit of work in this whole orchestrator.
+**4b-2 — Run launcher (shipped @ 0.15.0-alpha, 2026-05-12).** UI launch via Netlify background function. `-background.ts` filename suffix gives the 15-min container window even when invoked via HTTP. Trigger endpoint `POST /api/backtest-runs/start` (synchronous <1s) validates config via engine's exported `validateConfig`, enforces prophet-only, runs single-flight check (30-min window), writes `pending` record, fires-and-forgets to `run-backtest-background`. Background flips `pending → running` via new `persistRunRunning(runId)` helper. Frontend: `useStartBacktest` mutation hook returning annotated errors (409 deeplinks to existing run); `useBacktestRun` patched with `refetchInterval` 5s while in-flight. `BacktestLauncher` form replaces 4b-1's placeholder. Bundle 259.68 kB (+3.5 kB). 367 tests green.
+
+**Routing lesson during 4b-2:** the original brief specified `conditions = { method = ["POST"] }` in `netlify.toml` to split GET (list) from POST (trigger) on `/api/backtest-runs`. PR #17 shipped it that way. Netlify silently dropped the method condition, both rules matched, GET fallback won, POSTs hit the list endpoint. Caught in production via smoke test 5 min after merge. **PR #18 hotfix moved the trigger to a distinct literal path `/api/backtest-runs/start`** + added a defense-in-depth `'start'`-reserved-word guard in the get endpoint. Lesson absorbed into Standing rules above.
+
+**4b-3 — Cancellation + presets + saved templates (pending, no brief yet).** Three improvements deferred from 4b-2: (1) Firestore-backed cancellation token the engine polls between rebalances; (2) hand-curated config presets (Dow 2018-2024 monthly top-20 as the canonical template); (3) user-saved configs in Firestore listable in the launcher. Also folds in granular progress ("Rebalance 6 of 84") which requires the engine to write per-rebalance events to Firestore.
+
+### 4c — Prophet board completeness (briefs ready, pending agent execution)
+
+User report from a PWR screenshot (2026-05-12): the prophet detail view shows only 3 of 7 analyst panels above the fold, the AI Thesis block is missing on most picks, and EPS-beats counts read `0/4` for most tickers.
+
+**4c-1 — Prophet narrative + EPS bug (brief at `briefs/phase-4c-1-brief.md`).** Five workstreams: (W1) UI placeholder block when `pick.narrative` is null with a "→ Generate AI thesis" button; (W2) `POST /api/prophet-narrate` lazy endpoint reusing the extracted `narrative-cache.ts` + `narrative-generator.ts` modules; (W3) `useGenerateNarrative` mutation that patches the cached prophet query; (W4) narrate-all in `scan-prophet-{largecap,russell,all}.ts` — ships freely now that budget cap is dropped; (W5) EPS-beats diagnostic-first fix that renders `null` as `— / 4 beats` not `0 / 4` so the user can distinguish "missed" from "unknown." Target: `0.15.1-alpha`, ~16 files, ~700 lines, ≥372 tests.
+
+**4c-2 — Russell sieve architecture (brief at `briefs/phase-4c-2-brief.md`).** Replaces the single-pass russell scan (which can't reach the back half of 2037 names within Netlify's 15-min cap) with a 3-stage sieve: Stage 1 bars-only signals on all 2037 in ~2 min → ~400 survivors; Stage 2 +fundamentals +RS-vs-SPY in ~4 min → ~80; Stage 3 full 7-layer scoring in ~8 min. Snapshot stamps `sieve.stage{1,2,3}` metadata; new `SieveCoverageStrip` UI renders `2037 → 412 → 87 → 23` ladder; amber when any stage stamps partial. Confined to russell only — largecap + all keep single-pass. Target: `0.16.0-alpha`, ~17 files, ~1300 lines, ≥377 tests.
 
 ---
 
 ## Phase 5 — Calibration loop + ML refinement
 
-**Goal.** Close the loop: backtest tells you which analysts have edge, which weights are wrong, which regimes invert signal. Use that to retune the production model. Layer real machine learning on top of the rule-based composite — meta-ranker, similarity search, online weight updates, anomaly detection — so picks improve continuously as more outcome data accumulates.
+**Hard dependency:** Phase 3 (PIT data) and Phase 4a (real backtest with forward-return labels) — both shipped.
 
-**Why.** Right now the composite weights (15/8/13/10/10/7/7/14/6/10) are priors. After Phase 4, you have OOS alpha per analyst — that should drive the weights, not gut. Beyond weight tuning, the rule-based composite is a deterministic ranker. ML adds: a learned re-ranker that catches patterns the rules don't, a "this looks like X past cases" reality check on every candidate, gradual weight adaptation as the world changes, and outlier flags for unusual setups. None of this is hype — these are standard, interpretable techniques used across systematic trading desks.
+**Honest caveat (kept from original spec).** ML on stock picking is hype-prone. Three guardrails: (1) all ML is interpretable — gradient boosting + SHAP, k-NN explanations, no deep nets; (2) all ML re-ranks on top of the rule-based composite, never replaces it; (3) every ML output ships with a fallback so a model failure degrades gracefully. Auto-disable rule: if meta-ranker IC < composite-alone for 2 consecutive weeks, disable.
 
-**ML scope is gated on Phase 3 + Phase 4.** No labeled training data without point-in-time history (Phase 3) and forward returns from the backtest (Phase 4). Don't try to shortcut.
+The brief work-stream splits Phase 5 into three sub-phases:
 
-**Scope.**
+### 5a — Training pipeline + discovery (brief at `briefs/phase-5a-brief.md`, pending agent)
 
-| Workstream | Files | Action |
+Discovery phase. The engine has been writing `mlTraining` rows since Phase 4a. Brief asks: does any ML model beat the existing hand-tuned composite scorer by a statistically meaningful margin, under methodology that survives scrutiny?
+
+Methodology, non-negotiable per the brief:
+- Purged walk-forward CV with embargo expressed in rebalances
+- Cross-sectional rank-IC as the primary metric
+- Paired Wilcoxon signed-rank test vs composite baseline, Bonferroni-corrected per config
+- Per-config IC reporting when multiple configs survive deduplication
+- 5 model classes (linear, ridge, LightGBM ranker, LightGBM binary, LightGBM full-feature) + Model 0 baseline (existing composite)
+
+Polyglot decision: introduces Python under `scripts/ml/`. Confined, not on the hot path. The deliverable is `reports/phase-5a/findings.md`, which selects one of three paths for 5b: A (deploy winning model), B (more data/features needed), C (inconclusive, repeat in 6 months).
+
+**No frontend changes; no `APP_VERSION` bump.**
+
+### 5b — Production rollout (pending, blocked on 5a finding)
+
+If 5a's Path A: deploy the winning model into the scorer. Open question 5b answers: how do we ship a Python-trained model artifact back into the TypeScript Netlify function tier? Three candidates — (a) re-implement inference in TS (only feasible for linear models), (b) export to ONNX and load via Node ONNX runtime, (c) stand up a separate Python inference service (Cloud Run or Cloud Functions). Decision in 5b.
+
+### 5c — Monitoring + retraining cadence (pending, blocked on 5b)
+
+Weekly retrain schedule. Calibration dashboard (per-analyst hit rate, alpha, info ratio rolling 30/90/180 days). Auto-disable rule wired. Model version stamped on every snapshot.
+
+### Phase 5 broader scope (from original spec, retained for reference)
+
+| Workstream | Files | Notes |
 |---|---|---|
-| Weight optimizer | `backtest/optimize-weights.ts` | New. Grid search over weight space (or Bayesian opt) maximizing OOS Sharpe. Hard cap weight changes per cycle to avoid overfit-to-recent. |
-| Regime-conditional weights | `analyst-runner.ts` | Modify. Weights become a function of `Regime`, not a constant. Optimizer outputs one weight vector per regime (risk_on / neutral / risk_off). |
-| Post-trade AI review | `netlify/functions/scheduled/post-trade-review.ts` | New. Daily scheduled function. For each closed trade ≥ 10 days old, call Opus with: original thesis (analyst contributions, top signals), actual price path, news that hit during the trade. Opus classifies: thesis-confirmed / thesis-invalidated-but-profitable / thesis-failed / externally-driven. Result stored on the trade entry. |
-| Calibration dashboard | `src/views/CalibrationView.jsx` | New. Per-analyst hit rate, alpha, info ratio rolling 30/90/180 days. Chart of weight evolution over time. |
-| Weight version control | `modelVersions/{version}` collection | Use existing from Phase 1. Every weight change is a new version with full diff. Boards record which version generated them. |
-| **Meta-ranker (gradient boosting)** | `ml/meta-ranker.ts`, `scripts/train-meta-ranker.ts` | **New.** Train XGBoost/LightGBM on `(composite, layer_scores, regime, sector, marketCap, liquidity) → forward_5d_return / forward_20d_return / forward_60d_return`. Train weekly via scheduled function from `boardSnapshots` + `tradeLog` outcomes. Production inference re-ranks candidates on top of composite. Highest-leverage real ML application — interpretable (SHAP values per feature), computationally cheap (sub-100ms inference), industry-proven. |
-| **Case-based reasoning / similarity search** | `ml/similarity.ts`, `src/components/SimilarCasesPanel.jsx` | **New.** k-NN over historical signal vectors. For each new candidate, find the K most-similar past setups in `boardSnapshots` and surface "matches 14 prior cases — avg +X% over 20d, hit rate Z%, drawdown -Y%". Reality check on the composite without forcing the user to trust a black box. Stored as ANN index in Firestore or in-memory FAISS depending on snapshot count. |
-| **Bayesian online weight updates** | `ml/bayes-weights.ts` | **New.** Replace quarterly grid-search with Beta posteriors per analyst, updated continuously as outcomes land. Faster adaptation when an analyst stops working. Coexists with the optimizer — optimizer for big rebalances, Bayesian update for slow drift. |
-| **Anomaly flag** | `ml/anomaly.ts`, frontend pill | **New.** Train an isolation forest on historical signal vectors. Flag any candidate whose vector is far from training distribution as either unusual opportunity or data error. Reduces false positives during data outages or vendor schema changes. Surface as a small icon on the candidate card. |
-| **Regime classifier upgrade** | `ml/regime.ts` (replaces existing rule-based regime) | **New.** Current regime is rule-based on VIX + 10Y + 2Y10Y. Train a classifier (logistic regression or gradient boosting) on a wider macro feature set: HY/IG credit spreads, breadth (NH/NL, % above 50dma, McClellan), DXY, gold/oil, sector momentum dispersion, AAII/NAAIM sentiment. Output: continuous regime score plus discrete 3- or 5-state classification. Drives Phase 5's regime-conditional weights with richer signal than 3 fixed yield curves can provide. |
-
-**Dependencies.** Phase 3 (point-in-time data — required for honest training labels), Phase 4 (real backtest — generates the forward-return labels). Hard dependency. No earlier.
-
-**Success criteria.**
-- Running the optimizer outputs a new weight vector that beats current weights OOS by ≥ 10% in Sharpe on a held-out window.
-- Regime-conditional weights show meaningfully different vectors across regimes.
-- Post-trade review has classified ≥ 50 closed trades.
-- Calibration view shows per-analyst hit rate / alpha / info ratio over rolling windows.
-- Meta-ranker beats composite-alone OOS by ≥ 5% in IC (information coefficient) over the held-out window.
-- Similarity panel renders for every candidate with at least 5 historical matches.
-- Anomaly flag fires on test fixtures (e.g., a deliberately corrupted signal vector).
-- Regime classifier produces a more granular regime label than the rule-based version (verifiable by showing different weight vectors fired for the same VIX level on different breadth conditions).
-
-**Estimate.** 3–4 sessions (was 2; ML workstreams add a session worth). Train once, ship many times — meta-ranker training is a weekly scheduled job, not request-time.
-
-**Honest caveat.** ML on stock picking is hype-prone. Most ML overfits to backtest. Three guardrails baked in: (1) all ML is interpretable — gradient boosting + SHAP, k-NN explanations, isolation forest scores, no deep nets; (2) all ML re-ranks on top of the rule-based composite, never replaces it (composite stays the floor); (3) every ML output ships with a fallback so a model failure degrades to the existing rule-based behavior, not zero results. If meta-ranker IC drops below composite-alone for two consecutive weeks, it auto-disables.
+| Weight optimizer | `backtest/optimize-weights.ts` | Grid or Bayesian. Cap weight changes per cycle. |
+| Regime-conditional weights | `analyst-runner.ts` | One weight vector per regime. |
+| Post-trade AI review | `netlify/functions/scheduled/post-trade-review.ts` | Daily; classifies closed trades via Opus. |
+| Calibration dashboard | `src/views/CalibrationView.jsx` | Per-analyst rolling metrics. |
+| Meta-ranker (gradient boosting) | `ml/meta-ranker.ts`, `scripts/train-meta-ranker.ts` | XGBoost/LightGBM on layer scores → forward returns. Weekly retrain. |
+| Case-based reasoning | `ml/similarity.ts`, `src/components/SimilarCasesPanel.jsx` | k-NN over historical signal vectors. |
+| Bayesian online weight updates | `ml/bayes-weights.ts` | Beta posteriors per analyst, continuous update. |
+| Anomaly flag | `ml/anomaly.ts` | Isolation forest. |
+| Regime classifier upgrade | `ml/regime.ts` | Replace rule-based regime with logistic/gradient boosting on wider macro features. |
 
 ---
 
 ## Phase 6 — Real options data
 
-**Goal.** Replace the volume-and-realized-vol proxy in `options-flow.ts` with actual OPRA chain data. Every "long straddle / iron condor" recommendation references real IV percentile, term structure, and skew.
+**Goal.** Replace the volume-and-realized-vol proxy in `options-flow.ts` with actual OPRA chain data.
 
-**Why.** The earnings-board hands out specific strike geometry. Without IV data, the strikes are guesses. Either get real or pull back the specificity.
-
-**Scope.**
+### Scope (reference)
 
 | Workstream | Files | Action |
 |---|---|---|
-| Provider selection | `docs/OPTIONS_PROVIDER.md` | New. Compare Tradier (free for OPRA delayed), Polygon Options (paid), TradeStation (account-gated), Alpaca. Pick one, document why. |
-| Options data provider | `netlify/functions/shared/options-provider.ts` | New. Wraps chosen vendor. Functions: `getChain(ticker, expiration)`, `getIV30(ticker)`, `getIVRank(ticker, lookback)`, `getSkew(ticker)`. |
-| IV percentile + IV rank | same | New. 252-trading-day rolling. Cached daily. |
-| Term structure | same | New. Front-month vs back-month IV. |
-| Skew | same | New. 25-delta call IV vs 25-delta put IV. |
-| Options-flow rewrite | `netlify/functions/options-flow.ts` | Rewrite. Real chain volume, OI changes, unusual flow detection (volume > 3x OI, etc.). |
-| Earnings board IV plumbing | `earnings-board.ts` | Modify. Vol plays now use real IV percentile (not proxy). Strike selection uses real chain data. |
-| Strike picker | `shared/options-strike-picker.ts` | New. Given setup type + bias + expiration, pick actual strikes from chain that match the strategy parameters. |
+| Provider selection | `docs/OPTIONS_PROVIDER.md` | New. Compare Tradier (free OPRA delayed), Polygon Options, TradeStation, Alpaca. |
+| Options data provider | `netlify/functions/shared/options-provider.ts` | New. `getChain`, `getIV30`, `getIVRank`, `getSkew`. |
+| IV percentile + IV rank | same | New. 252-trading-day rolling. |
+| Term structure + skew | same | New. Front vs back month; 25-delta call vs put. |
+| Options-flow rewrite | `netlify/functions/options-flow.ts` | Real chain volume, OI changes, unusual flow detection. |
+| Earnings IV plumbing | `earnings-board.ts` | Real IV percentile, not proxy. |
+| Strike picker | `shared/options-strike-picker.ts` | New. Setup + bias + expiration → real chain strikes. |
 
-**Dependencies.** Phase 0 (spend cap, since options chain calls can balloon).
-
-**Success criteria.**
-- An earnings setup for NVDA shows IV percentile derived from a 252-day true IV history.
-- Strike picks for a straddle are real chain strikes within the bid/ask, not synthetic.
-- Options-flow surfaces unusual activity that would actually appear on a Bloomberg or LiveVol screen.
-
-**Estimate.** 1–2 sessions. Tradier free tier is the fastest path; paid Polygon gives more.
+**Dependencies.** Phase 0 spend awareness (chain calls can balloon).
 
 ---
 
 ## Phase 7 — Portfolio layer
 
-**Goal.** Stop scoring tickers in isolation. Every recommendation respects portfolio-level constraints: correlation, sector caps, exposure bands, beta-adjusted sizing.
+**Goal.** Stop scoring tickers in isolation. Every recommendation respects portfolio constraints: correlation, sector caps, exposure bands, beta-adjusted sizing.
 
-**Why.** Right now nothing prevents the user from holding 10 longs that are all the same trade dressed up. Pro discipline starts at the portfolio level.
-
-**Scope.**
+### Scope (reference)
 
 | Workstream | Files | Action |
 |---|---|---|
-| Correlation matrix | `netlify/functions/shared/correlation.ts` | New. Rolling 60-day correlation between all currently held tickers + watchlist. Updated daily, cached. |
-| Sector exposure caps | `portfolio/exposure.ts` | New. Hard caps per sector (configurable, default 25%). Soft caps per sub-industry (15%). |
-| Factor exposure | `portfolio/factors.ts` | New. Estimate book exposure to: momentum, value, quality, size, vol. Display in dashboard. |
-| Gross / net by regime | `portfolio/exposure.ts` | New. Risk_on: 100/100 gross/long. Neutral: 70/70. Risk_off: 40/30 (gross can stay if net comes down via shorts). |
-| Beta-adjusted sizing | `portfolio/beta-size.ts` | New. Position size in $ adjusted for beta — so 1% account risk on a 1.5-beta name uses smaller dollar size than on a 0.7-beta name. |
-| Portfolio VaR | `portfolio/var.ts` | New. 1-day 95% historical VaR computed daily from current holdings. |
-| Portfolio dashboard | `src/views/PortfolioView.jsx` | New. Tab in nav. Shows current exposure, factor tilts, correlation heat-map, VaR, drawdown vs peak. |
-| Recommendation filter | `runAnalystsForTicker` | Modify. Before surfacing a target, check it against current portfolio: if it would breach sector cap or correlation > 0.8 with existing position, flag the conflict in the rationale. |
-
-**Dependencies.** Trade journal must reflect actual sizes (Phase 8 enforces this; this phase can ship with manual size entry first).
-
-**Success criteria.**
-- Portfolio view shows current sector breakdown summing to 100%.
-- Adding a 7th tech long when book is already 28% tech surfaces a "would breach 25% cap" warning.
-- VaR is computed and tracked daily.
-
-**Estimate.** 1–2 sessions.
+| Correlation matrix | `netlify/functions/shared/correlation.ts` | New. Rolling 60-day, daily update. |
+| Sector exposure caps | `portfolio/exposure.ts` | New. Hard caps per sector (default 25%); sub-industry 15%. |
+| Factor exposure | `portfolio/factors.ts` | New. Momentum, value, quality, size, vol. |
+| Gross / net by regime | `portfolio/exposure.ts` | New. Risk_on 100/100; neutral 70/70; risk_off 40/30. |
+| Beta-adjusted sizing | `portfolio/beta-size.ts` | New. |
+| Portfolio VaR | `portfolio/var.ts` | New. 1-day 95% historical. |
+| Portfolio dashboard | `src/views/PortfolioView.jsx` | New. |
+| Recommendation filter | `runAnalystsForTicker` | Modify. Flag sector-cap breaches + 0.8+ correlations. |
 
 ---
 
 ## Phase 8 — Position sizing engine
 
-**Goal.** Three sizing modes, properly enforced: equal-weight, vol-target, fractional Kelly. Trade journal captures intended vs actual size.
+**Goal.** Three sizing modes properly enforced: equal-weight, vol-target, fractional Kelly.
 
-**Why.** SPEC.md describes these but they're stubs. Pros size differently for high-vol vs low-vol, high-conviction vs low-conviction. Equal-weight is the lazy default that costs alpha.
-
-**Scope.**
+### Scope (reference)
 
 | Workstream | Files | Action |
 |---|---|---|
-| Realized vol per ticker | `shared/realized-vol.ts` | New. Rolling 30-day annualized realized vol from daily bars. Cached. |
-| Sizing modes | `portfolio/sizing.ts` | New. Three pure functions: `equalWeight(targets)`, `volTarget(targets, targetPortfolioVol)`, `fractionalKelly(targets, kellyFraction=0.25)`. |
-| Per-setup sizing rules | `earnings-board.ts`, `prophet-picks.ts` | Modify. Each setup type has a sizing recommendation: vol plays 0.5%, directional 1%, PEAD 1.5%, etc. Now sourced from a config not magic numbers. |
-| Hit-rate-aware Kelly | `portfolio/sizing.ts` | New. Fractional Kelly uses realized hit rate from journal (Phase 5 attribution), not a flat assumption. |
-| Sizing enforcer in journal | `src/JournalView.jsx`, `tradeLog.js` | Modify. logTrade captures `recommendedSize` and `actualSize`. UI warns when actual > recommended × 1.5. |
-| Portfolio rebalancer | `portfolio/rebalance.ts` | New. Given current book + new targets + chosen mode, output the trade list to get to target weights. |
+| Realized vol per ticker | `shared/realized-vol.ts` | New. Rolling 30-day annualized. |
+| Sizing modes | `portfolio/sizing.ts` | New. Three pure functions. |
+| Per-setup sizing rules | `earnings-board.ts`, `prophet-picks.ts` | Modify. Config-driven. |
+| Hit-rate-aware Kelly | `portfolio/sizing.ts` | New. Uses Phase 5 attribution. |
+| Sizing enforcer in journal | `src/JournalView.jsx`, `tradeLog.js` | Modify. recommended vs actual. |
+| Rebalancer | `portfolio/rebalance.ts` | New. Trade list to target weights. |
 
 **Dependencies.** Phase 5 (Kelly needs hit rates), Phase 7 (sizing is portfolio-aware).
 
-**Success criteria.**
-- A vol-target backtest produces lower realized vol than equal-weight at same gross exposure.
-- Journal flags a 5%-of-account trade as oversize for a setup with a 1% recommendation.
-- Rebalancer produces a coherent trade list in $ terms given current and target weights.
-
-**Estimate.** 1–2 sessions.
-
 ---
 
-## Phase 9 — Exit / trade management system
+## Phase 9 — Exit / trade management
 
-**Goal.** Trades have a lifecycle, not just an entry. Trailing stops, scale-out ladders, news-event triggers, correlation-break alerts, time-based exits.
+**Goal.** Trades have a lifecycle. Trailing stops, scale-out ladders, news-event triggers, correlation-break alerts, time-based exits.
 
-**Why.** Stops and targets are computed at entry then the app stops thinking. PnL is decided at exit, not entry.
-
-**Scope.**
+### Scope (reference)
 
 | Workstream | Files | Action |
 |---|---|---|
-| Trade state machine | `shared/trade-lifecycle.ts` | New. States: open, T1-hit, T2-hit, stopped, time-exited, manually-closed. Transitions logged. |
-| Trailing stop logic | `lifecycle/trailing-stop.ts` | New. ATR-based trailing stop that activates after T1. |
-| Scale-out ladders | `lifecycle/scale-out.ts` | New. Default: take 1/3 at T1, 1/3 at T2, let 1/3 ride with trailing stop. Configurable per setup type. |
-| News-event triggers | `netlify/functions/scheduled/news-watch.ts` | New. Scheduled. For every open position, scan news daily. Material events (earnings revision, downgrade, lawsuit, M&A) trigger an alert in the journal. |
-| Correlation-break trigger | `lifecycle/correlation-break.ts` | New. If SPY breaks below 50-day on volume, every position with > 0.7 correlation to SPY gets flagged. |
-| Time-based exits | `lifecycle/time-exit.ts` | New. Vol plays close 1 day post-earnings regardless. PEAD trades close at 30 or 60 days. Pre-earnings directional closes day before. |
-| Open positions view | `src/views/OpenPositionsView.jsx` | New. Tab in nav. Live state of every open trade — current PnL, alerts firing, T1/T2 status, days remaining if time-bound. |
-| Notifications | `src/lib/notifications.js` | New. Browser push (when supported) for alerts. Phone-first for Chad. |
-
-**Dependencies.** Phase 0 (Sentry-class for the scheduled functions).
-
-**Success criteria.**
-- An open NVDA long with T1 hit shows "scaled out 1/3 at $1,050 — trailing stop now active at $987".
-- An earnings revision on a held name triggers an alert visible in the journal within an hour of the news hitting.
-- A SPY break-below-50dma flags every correlated long.
-
-**Estimate.** 1–2 sessions.
+| Trade state machine | `shared/trade-lifecycle.ts` | New. Open / T1-hit / T2-hit / stopped / time-exited / manually-closed. |
+| ATR trailing stop | `lifecycle/trailing-stop.ts` | New. Activates after T1. |
+| Scale-out ladders | `lifecycle/scale-out.ts` | New. Default 1/3 at T1, 1/3 at T2, 1/3 runner. |
+| News-event triggers | `netlify/functions/scheduled/news-watch.ts` | New. Daily scan; flag material events. |
+| Correlation-break trigger | `lifecycle/correlation-break.ts` | New. SPY 50dma break flags correlated longs. |
+| Time-based exits | `lifecycle/time-exit.ts` | New. Vol plays close +1 post-earnings; PEAD 30/60 days. |
+| Open positions view | `src/views/OpenPositionsView.jsx` | New. |
+| Notifications | `src/lib/notifications.js` | New. Browser push, phone-first. |
 
 ---
 
 ## Phase 10 — Missing data classes
 
-**Goal.** Plug the data gaps a serious desk would never trade without.
+**Goal.** Plug the data gaps a serious desk wouldn't trade without.
 
-**Why.** Short interest dynamics, dark pool prints, options skew, breadth, sentiment — these are all signals that move alpha and the app currently ignores or proxies.
-
-**Scope.**
+### Scope (reference)
 
 | Workstream | Files | Action |
 |---|---|---|
-| Short interest + days-to-cover | `shared/short-interest-provider.ts` | New. Source: FINRA biweekly + Finra-vendor for daily where available. |
-| Borrow rate | same | New. Source: IBKR if account access, otherwise Quiver borrow data. |
-| Dark pool prints | `shared/darkpool-provider.ts` | New. Source: Quiver dark pool or FINRA ATS. |
-| Options skew | `options-provider.ts:getSkew` | Already in Phase 6. Surface in catalyst layer. |
-| Block trade tape | `shared/block-trade-provider.ts` | New. Polygon trades with size > 10000 shares + cross-exchange flag. |
-| Breadth indicators | `shared/breadth-provider.ts` | New. NH/NL ratio, % stocks above 50dma, McClellan oscillator. Daily, cached. |
-| Sentiment indicators | `shared/sentiment-provider.ts` | New. AAII bull/bear, NAAIM exposure index. Weekly. |
-| Credit spread layer | `shared/regime.ts` | Modify. Add HY OAS and IG OAS to regime computation, not just 2y10y. |
-| New analysts | `analysts/short-pressure.ts`, `breadth.ts`, `sentiment.ts` | New. Each gets a layer in the composite. |
-| Weight rebalance | `analyst-runner.ts` | Modify. Rebalance weights to include new analysts. Re-run optimizer (Phase 5) to set values. |
+| Short interest + days-to-cover | `shared/short-interest-provider.ts` | New. FINRA biweekly + vendor for daily. |
+| Borrow rate | same | New. IBKR if available, else Quiver. |
+| Dark pool prints | `shared/darkpool-provider.ts` | New. Quiver dark pool or FINRA ATS. |
+| Options skew | `options-provider.ts:getSkew` | From Phase 6. Surface in catalyst layer. |
+| Block trade tape | `shared/block-trade-provider.ts` | New. Polygon trades >10k shares + cross-exchange flag. |
+| Breadth indicators | `shared/breadth-provider.ts` | New. NH/NL, %>50dma, McClellan. |
+| Sentiment | `shared/sentiment-provider.ts` | New. AAII bull/bear, NAAIM. |
+| Credit spread layer | `shared/regime.ts` | Modify. Add HY OAS, IG OAS. |
+| New analysts | `analysts/short-pressure.ts`, `breadth.ts`, `sentiment.ts` | New, each a composite layer. |
+| Weight rebalance | `analyst-runner.ts` | Modify. Re-run optimizer with new analysts. |
 
-**Dependencies.** Phase 5 (so new analyst weights are calibrated, not guessed), Phase 6 (skew).
-
-**Success criteria.**
-- Each new data class has a provider, a unit test, and is consumed by at least one analyst or board.
-- Composite score now reflects ≥ 13 inputs instead of 10.
-
-**Estimate.** 2 sessions.
+**Dependencies.** Phase 5 (new weights calibrated, not guessed), Phase 6 (skew).
 
 ---
 
 ## Phase 11 — Analyst depth
 
-**Goal.** Lynch view becomes actually Lynch. Fundamental analyst becomes actually fundamental. Build the dedicated short-side analyst SPEC.md flagged.
+**Goal.** Lynch view becomes actually Lynch. Fundamental analyst becomes actually fundamental. Build the dedicated short-side analyst.
 
-**Why.** Lynch view is shallow — no PEG with analyst growth, no debt comp vs sector median, no insider-vs-buyback signal. Fundamental analyst is two growth metrics with a name on it. Short side is disabled because shorts in v1 were -3% alpha, but the fix isn't disabling — it's a dedicated short analyst with different signals.
-
-**Scope.**
+### Scope (reference)
 
 | Workstream | Files | Action |
 |---|---|---|
-| Lynch depth | `analysts/lynch.ts`, `src/LynchView.jsx` | Rewrite. PEG vs analyst LT growth. Debt/equity vs sector median. Earnings stability score (5y std dev of EPS growth). Insider transactions vs buyback ratio. Classify as: fast-grower, stalwart, slow-grower, cyclical, turnaround, asset-play. |
-| Fundamental depth | `analysts/core.ts:runFundamental` | Rewrite. Add ROIC, FCF yield, share count drift (1y / 3y), debt structure (short-term vs long-term, fixed vs floating). |
-| Dedicated short analyst | `analysts/short-side.ts` | New. Different signals than long-side: insider selling clusters, debt covenant stress, declining estimates, channel checks, rising days-payable, options put/call inversion, short interest acceleration with no squeeze setup. |
-| Earnings interpreter | `netlify/functions/shared/earnings-interpreter.ts` | New. SPEC.md B3. Reads transcript via Opus, returns structured signals. |
-| Arbitrator | `netlify/functions/shared/arbitrator.ts` | New. SPEC.md B2. Resolves analyst conflicts via Opus when conflictLevel is moderate or severe. |
-| Claude-as-PM | `netlify/functions/scheduled/pm-decision.ts` | New. SPEC.md B1. Daily scheduled. Reads top targets, regime, current portfolio, correlation matrix. Outputs structured PM decision (additions, trims, holds) for review. |
+| Lynch depth | `analysts/lynch.ts`, `src/LynchView.jsx` | Rewrite. PEG vs analyst LT growth; D/E vs sector median; 5y EPS std; insider vs buyback; six-bucket classification. |
+| Fundamental depth | `analysts/core.ts:runFundamental` | Rewrite. Add ROIC, FCF yield, share count drift, debt structure. |
+| Dedicated short analyst | `analysts/short-side.ts` | New. Insider selling clusters, debt covenant stress, declining estimates, etc. |
+| Earnings interpreter | `netlify/functions/shared/earnings-interpreter.ts` | New. Reads transcript via Opus, structured signals out. |
+| Arbitrator | `netlify/functions/shared/arbitrator.ts` | New. Resolves analyst conflicts via Opus. |
+| Claude-as-PM | `netlify/functions/scheduled/pm-decision.ts` | New. Daily structured PM decision. |
 
 **Dependencies.** Phase 6 (skew for short signals), Phase 10 (short interest data).
-
-**Success criteria.**
-- Lynch view shows a Lynch classification per ticker.
-- Short-side analyst running on a known stress fixture (e.g., a name pre-blowup) flags it with a high score.
-- Earnings interpreter on a real transcript fixture produces structured output with sentiment, themes, red flags.
-- Arbitrator on a high-conflict ticker produces a different score than the naive weighted-average.
-
-**Estimate.** 2 sessions.
 
 ---
 
@@ -433,93 +348,79 @@ The fix is not "raise the limits" — Netlify functions cap at 26s sync, which i
 
 **Goal.** Firebase Auth on the app, per-user Firestore rules, daily backups verified by a restore drill.
 
-**Why.** Firestore rules are open until 2026-10-01. App is on a public URL. Anyone who finds it can read/write your trade log. Even though it's a personal tool, this is the kind of thing you should never carry into the next year of usage.
-
-**Scope.**
+### Scope (reference)
 
 | Workstream | Files | Action |
 |---|---|---|
-| Firebase Auth wiring | `src/firebase.js`, `src/lib/auth.js`, `src/components/AuthGate.jsx` | New. Google sign-in. App-wide AuthGate component blocks unauthenticated UI. |
-| Per-user Firestore rules | `FIRESTORE_RULES.md` + Firebase console | Update. `request.auth.uid == resource.data.ownerUid` on every write. Read same. |
-| ownerUid on every record | `tradeLog.js`, all snapshot writers | Modify. Every write includes `ownerUid`. Migration script for existing records. |
-| Auth-aware functions | `netlify/functions/shared/auth.ts` | New. Verify Firebase ID token on inbound. Reject if invalid. |
-| Frontend auth state | `src/lib/useAuth.js` | New. Hook that surfaces current user across components. |
-| Backup verification | `scripts/restore-drill.ts` | New. Quarterly: restore last week's backup to a sandbox project, verify count + spot-check 10 trades. |
-| Multi-device handling | covered by Auth | The user can now log in from phone, truck laptop, desktop and see same data. |
+| Firebase Auth wiring | `src/firebase.js`, `src/lib/auth.js`, `src/components/AuthGate.jsx` | New. Google sign-in. |
+| Per-user Firestore rules | `FIRESTORE_RULES.md` + console | Update. `request.auth.uid == resource.data.ownerUid`. |
+| ownerUid on every record | `tradeLog.js`, all snapshot writers | Modify. Migration script for existing records. |
+| Auth-aware functions | `netlify/functions/shared/auth.ts` | New. Verify Firebase ID token. |
+| Frontend auth state | `src/lib/useAuth.js` | New. |
+| Backup verification drill | `scripts/restore-drill.ts` | New. Quarterly. |
 
-**Dependencies.** Phase 0 (backups must already exist before requiring auth — don't lock yourself out).
-
-**Success criteria.**
-- An incognito tab with no auth sees a sign-in screen, not data.
-- Firestore rules deny reads/writes without `auth.uid == ownerUid`.
-- A restore drill succeeds against a sandbox project.
-
-**Estimate.** 1 session.
+**Dependencies.** Phase 0 backups must exist first.
 
 ---
 
 ## Phase 13 — Scale + caching + staging
 
-**Goal.** Caches survive cold starts. Functions don't get hammered by anyone. There's a staging URL so prod isn't dev.
+**Goal.** Caches survive cold starts. Functions don't get hammered. There's a staging URL.
 
-**Why.** In-memory `resultCache` is per-Lambda-instance. Two warm instances → inconsistent caches. No rate limiting → anyone can blow your Polygon quota. Single-site means one bad commit kills prod.
-
-**Scope.**
+### Scope (reference)
 
 | Workstream | Files | Action |
 |---|---|---|
-| Shared cache | `netlify/functions/shared/cache.ts` | New. Wraps Netlify Blobs (free, durable) or Upstash Redis. Replaces every `Map`-based resultCache. |
-| Edge rate limiting | `netlify/edge-functions/rate-limit.ts` | New. Per-IP rate limit (e.g., 60 requests/min) with bucket in Netlify Blobs. |
-| Staging environment | new Netlify site `tradeiq-staging.netlify.app` | New. Branch deploy from `develop` branch. Same env vars except a separate Firebase project so staging writes don't pollute prod. |
-| Promotion workflow | `.github/workflows/promote-to-prod.yml` | New. Manual trigger. Promotes a tested staging deploy to prod. |
+| Shared cache | `netlify/functions/shared/cache.ts` | New. Netlify Blobs or Upstash Redis. |
+| Edge rate limiting | `netlify/edge-functions/rate-limit.ts` | New. Per-IP, 60/min. |
+| Staging environment | new Netlify site `tradeiq-staging.netlify.app` | New. Separate Firebase project. |
+| Promotion workflow | `.github/workflows/promote-to-prod.yml` | New. |
 | Bundle splitting | `vite.config.js` | Modify. Code-split each view route. |
-| Service worker for offline | `src/sw.js` | New. PWA installability for phone-first usage. Offline read of last snapshot. |
-
-**Dependencies.** Phase 1 (smaller bundles depend on view splits), Phase 0 (CI gates promotion).
-
-**Success criteria.**
-- Two simultaneous requests to `/api/target-board` use the same cached value (verified via response timing).
-- 100 requests/min from one IP get 429ed.
-- Staging URL exists and points to a separate Firebase project.
-- Lighthouse mobile score on TradeIQ ≥ 90.
-
-**Estimate.** 1–2 sessions.
+| Service worker (PWA) | `src/sw.js` | New. Phone-first offline read. |
 
 ---
 
 ## Phase 14 — Audit trail + compliance hooks
 
-**Goal.** Every recommendation surfaced is logged with model version, inputs, time, user. Disclaimers per recommendation. Exportable audit log.
+**Goal.** Every recommendation logged with model version, inputs, time, user. Exportable audit log.
 
-**Why.** TradeIQ is "personal" today, but if it ever becomes shared or commercialized, this is mandatory. Building the audit log now is cheap; retrofitting later is expensive. Also: it's a useful reflection tool — "what was the app showing me on the day I made this trade".
-
-**Scope.**
+### Scope (reference)
 
 | Workstream | Files | Action |
 |---|---|---|
-| Recommendation log | Firestore `recommendationLog/{date}/{eventId}` | New. Every time a board surfaces a recommendation to the user, write event: ticker, board, score, rationale, model version, inputs hash, user, time. |
-| Per-recommendation disclaimer | UI components | Modify. Each card shows a small "v{model}/{date}" stamp. Tap to see exact inputs that produced it. |
-| Audit export | `src/views/AuditView.jsx`, `scripts/export-audit.ts` | New. Export to CSV / JSON for any date range. |
-| Compliance disclaimer surfacing | global footer + per-action | Modify. "Not financial advice" is currently in footer only. Add to: every "Add to journal" action confirmation, every recommendation card, every backtest result. |
-| Inputs hash | `shared/inputs-hash.ts` | New. Deterministic hash of all inputs that fed a score so audit log entries are reproducible. |
+| Recommendation log | Firestore `recommendationLog/{date}/{eventId}` | New. |
+| Per-recommendation disclaimer | UI components | Modify. v{model}/{date} stamp on each card. |
+| Audit export | `src/views/AuditView.jsx`, `scripts/export-audit.ts` | New. CSV / JSON for date range. |
+| Compliance disclaimer surfacing | global footer + per-action | Modify. "Not financial advice" beyond footer. |
+| Inputs hash | `shared/inputs-hash.ts` | New. Deterministic hash of all inputs. |
 
-**Dependencies.** Phase 2 (model versioning), Phase 12 (auth so user is identified).
-
-**Success criteria.**
-- Every recommendation card shows a model version and timestamp.
-- Audit log can answer "what did the app recommend for NVDA on 2025-12-04 and what data drove it" deterministically.
-- Export produces a CSV that survives a spot-audit by you, the user.
-
-**Estimate.** 1 session.
+**Dependencies.** Phase 12 auth so user is identified.
 
 ---
 
-## Cross-cutting concerns (track as the project grows)
+## Cross-cutting concerns
 
-- **Anthropic spend monitoring.** Phase 0 sets a daily cap. Once the calibration loop (Phase 5) adds Claude-as-PM and post-trade review, daily spend grows. Budget alerts should land in your inbox at 50% / 75% / 100% of cap.
-- **Polygon / Finnhub / Quiver quota tracking.** Same shape — alert before hitting a wall.
-- **Test coverage drift.** After Phase 0, coverage report on every PR. Gate at 50% for shared/ files; aspire to 80% on scoring math.
-- **Documentation drift.** SPEC.md and this doc should be kept honest. Each phase's PR updates both.
+- **Polygon / Finnhub / Quiver / FRED quota tracking.** Alert before hitting walls. (Anthropic spend cap was dropped by decision.)
+- **Test coverage drift.** Coverage report on every PR. Gate at 50% for `shared/` files; aspire to 80% on scoring math.
+- **Documentation drift.** This doc + `SPEC.md` kept honest. Each phase's PR updates both.
+- **Briefs hygiene.** Never inline literal secrets. `SECRETS_SCAN_OMIT_PATHS = "briefs/*"` already in `netlify.toml` as belt-and-suspenders.
+
+---
+
+## Lessons learned (for whoever reads this fresh)
+
+These are the non-obvious gotchas the project has hit:
+
+1. **`undefined` in Firestore writes throws.** Set `ignoreUndefinedProperties: true` once in `firebase-admin.ts`; engine-level silent catches mask the problem ruinously (4a-fix-1).
+2. **Bar window math.** When fetching forward-return bars, the window must START at or before the rebalance date, not after. `getCachedBars(ticker, from, to)` with an explicit window is the safe primitive; `getCachedBarsThrough(ticker, end)` had implicit-start semantics that bit (4a-fix-2).
+3. **React hook imports.** Every view that uses a hook must import it. Line-1 React destructure is the single point of failure. Cross-view audit when fixing one (4a-fix-3).
+4. **Netlify scheduled functions in subdirectories don't deploy.** Files in `netlify/functions/scheduled/*.ts` are silently dropped by the bundler — `function_schedules: []` on every deploy. Keep scan functions flat at `netlify/functions/scan-*.ts` (4a-fix-4).
+5. **Per-universe scan splitting.** A single 4-universe scan function can't fit in Netlify's 15-min cap. Split into per-(board,universe) functions; earnings is the exception (calendar-driven, doesn't benefit) (4a-fix-4 PR #13).
+6. **The `-background.ts` filename suffix unlocks 15-min container even via HTTP.** Used by both `seed-scan-background.ts` and `run-backtest-background.ts`. Standard pattern for any work that exceeds the 211s gateway timeout.
+7. **Netlify method-conditioned redirects are silently dropped.** `conditions = { method = ["POST"] }` in `netlify.toml` doesn't work — the bundler treats the rule as malformed and silently ignores the condition; the unconditioned fallback wins. Use distinct literal paths for method-specific routing instead (4b-2 PR #18).
+8. **Smoke-test every new HTTP route on the deploy preview before merging.** Unit tests can't catch Netlify's redirect-layer quirks. The 4b-2 routing bug shipped to prod for 5 minutes before catch (4b-2 PR #18).
+9. **Briefs go in `briefs/` and shouldn't contain literal secrets.** Use `<read-only-PAT, provided per session>` placeholders. Real secrets in briefs trip Netlify's secrets scanner on every commit. Fix has been in place via `SECRETS_SCAN_OMIT_PATHS = "briefs/*"` env var, but the better fix is rotation + placeholders (this conversation's lesson).
+10. **Composite scores cluster at 50.** Phase 4a smoke tests showed this — post-sigmoid normalization compression. Phase 4c-1 W5 + Phase 5a explore this. Real artifact, not a data bug, but ML on raw layer scores (pre-sigmoid) may extract information the composite squashed.
 
 ---
 
@@ -529,9 +430,10 @@ When resuming work in a new conversation:
 
 1. Read this doc end-to-end before doing anything.
 2. Check the Status table — find the next phase marked `pending`.
-3. Read the phase's "Files" + "Success criteria" + "Dependencies".
-4. Verify dependencies are `done`. If not, surface that — don't skip.
-5. Set up the working tree:
+3. If a brief exists for it (see Briefs awaiting execution), read the brief.
+4. Read the phase's "Scope" + "Dependencies".
+5. Verify dependencies are `done`. If not, surface that — don't skip.
+6. Set up the working tree:
    ```bash
    cd /home/claude
    if [ ! -d tradeiq ]; then
@@ -541,127 +443,105 @@ When resuming work in a new conversation:
    git pull --rebase
    git checkout -b phase-N-<short-topic>
    ```
-6. Build. Test. Commit. Push. Open PR (or merge to main directly for personal-tool speed once CI is green).
-7. Update the Status table at the bottom of this doc with: phase number, version shipped, date, summary of changes, regressions noted.
-8. Bump `APP_VERSION`.
-9. Verify deploy is live and version matches in the bundle.
+7. Build. Test. Smoke-test on deploy preview. Commit. Push. Open PR.
+8. Update the Status table at the bottom of this doc with: phase number, version shipped, date, summary of changes, regressions noted.
+9. Bump `APP_VERSION` if any user-visible change.
+10. Verify deploy is live and version matches in the bundle.
 
 ---
 
 ## Status
 
-Updated each session. `pending` → `in-progress` → `done` (with version + date). One row per phase.
+`pending` → `in-progress` → `done` (with version + date). One row per phase. Single source of truth.
 
 | # | Phase | Status | Version | Date | Notes |
 |---|---|---|---|---|---|
-| 0 | Engineering foundation + safety nets | done | 0.10.0-alpha | 2026-05-08 | Tests + CI + spend cap + circuit breaker + structured logger + Sentry hooks + weekly Firestore backups; reconciled with Phase 1 + temperature hotfix |
-| 1 | Universe coverage + snapshot infrastructure | done | 0.9.1-alpha | 2026-05-07 | All 7 boards snapshot-first end-to-end; FreshnessPill on all 7 views; HistoryView replay surface; backfill script for tradeLog reconstruction. Phase 0 still pending — see PR notes. |
-| 2 | Refactor foundation (schemas + monolith split + TanStack Query) | done | 0.11.0-alpha | 2026-05-08 | Zod at 5 provider boundaries (10 fetch sites + 5 Quiver datasets); App.jsx 2965 -> 331 lines; 16 hooks + provider wrap; all 13 views wired to hooks (zero remaining useState+useEffect+fetch patterns for server data); fixed pre-existing W2 bug in EarningsView (missing imports); 127 tests (62 baseline + 54 schema + 11 hook); +12kB gzipped under 820kB budget. |
-| 3 | Point-in-time data layer | done | 0.12.0-alpha | 2026-05-10 | All 5 providers as-of capable; FRED vintage_dates (gold-standard PIT for macro), Polygon fundamentals/news, Finnhub recommendations (hybrid: live filter + snapshot fallback), Quiver political/patents/contracts; universe history covers Dow 2018-01-31..2026-04-30 monthly (full coverage), sp500/ndx/russell current seed only (Wikipedia/iShares hostname-blocked at egress in this env — runbook documents how to extend); PIT audit doc enumerates every data class with workarounds for non-PIT vendors; 55 new PIT correctness tests. |
-| 4a | Real backtest v2 — engine + correctness | done | 0.13.0-alpha | 2026-05-11 | Walk-forward engine; hot PIT cache (Firestore-backed); portfolio + costs + slippage; per-analyst attribution; ML hook data (forward 5d/20d/60d/252d returns persisted to backtestRuns/{runId}/mlTraining/); STOCK Act 45-day forward-shift; walk-forward integrity tests (11 P0); Dow + Russell fully backtest-able with survivorship correction stamp; SP500/NDX uncorrected (current seed only) with required disclosure; CLI script + 3 sample configs; BACKTEST_LIMITATIONS.md. Prophet board only — other boards return null and emit warning. 279 tests green (up from 182 baseline; +97 new). UI in 4b. Two follow-up hotfixes required (see 4a-fix-1, 4a-fix-2 below). |
-| 4a-fix-1 | Phase 4a hotfix: cache undef-rejection + silent catch + missing happy-path test (PR #8) | done | 0.13.1-alpha | 2026-05-11 | Smoke test against Dow 2018-2024 monthly produced all-zeros result on first run (NAV held at $100K for 7 years, 0 trades). Root cause: Firestore Admin SDK rejects `undefined` field values by default; `getEarningsIntel` returned objects whose optional fields stay undefined; cache writes threw; engine's silent `catch{}` dropped every ticker. Three-layer fix: (1) `firebase-admin.ts` `settings({ ignoreUndefinedProperties: true })`; (2) `engine.ts` replaced silent catch with structured `TickerFailure` tracking + HIGH FAILURE RATE warning on >50% rate; (3) new happy-path integrity test that empirically catches the original bug at PR time (verified by reverting the engine fix). 281 tests green (+2). Re-run smoke test confirmed honest numbers: Sharpe 0.224, CAGR 1.03%, win rate 56.8%, 350 trades, 0% failure rate, NAV $95k–$113k over the window. |
-| 4a-fix-2 | Phase 4a hotfix #2: ML-row bar window (PR #9) | done | 0.13.3-alpha | 2026-05-11 | Smoke test (post 4a-fix-1) confirmed engine produces honest numbers but ML training rows had `entryPrice: null` and all forward-return horizons null on every one of 206 rows; IC came back 0.000. Brief diagnosed wrong field — actual root cause was the caller's bar window math. `getCachedBarsThrough(ticker, asOfDate + 400d)` computed `(asOfDate + 100d, asOfDate + 400d)`, starting 100 days AFTER the rebalance; `lastCloseAtOrBefore(longBars, asOfDate)` had no entry bar to find. Fix: new `getCachedBars(ticker, from, to)` helper with explicit window; ML-row site uses `getCachedBars(asOfDate - 30d, asOfDate + 400d)`. Sibling audit found no other Bar field-name bugs. 9 new unit tests on `lastCloseAtOrBefore` (exported for testability). 290 tests green. Re-run smoke test: 100% of ML rows have non-null entryPrice + all 4 forward-return horizons; IC = -0.0951 (small honest signal, below leak threshold). Originally targeted 0.13.2-alpha; rebased to 0.13.3-alpha after PR #10 landed at 0.13.2 first. |
-| 4a-fix-3 | Hotfix: ProphetDetail useEffect ReferenceError (PR #10) | done | 0.13.2-alpha | 2026-05-11 | Sentry production alert: `ReferenceError: Can't find variable: useEffect` at `ProphetDetail` (src/ProphetView.jsx:303). Fired every time a user expanded a prophet pick row. Root cause: line-1 React destructure imported `useState` only; the row-expansion component added a `useEffect` to fetch chart data but the hook was never added to the import. One-line fix. Sibling audit across all `src/*.jsx`: `App.jsx` uses `React.useRef(...)` via the React namespace (not a bug). No other view file has a missing-hook import. 281 tests green. Landed first (prod-crash priority); PR #9 rebased to 0.13.3 after this merged. |
-| 4a-fix-4 | Production hotfix: seed-snapshots layout (no code PR yet) | diagnosed, code-fix pending | — | — | User report: "Earnings tab is not working at all." Live diagnosis: 0 of 7 boards have any snapshot doc in Firestore. Health endpoint shows every board on `fallback-partial`. Earnings stands out because its fallback (Finnhub calendar + per-ticker scoring) exceeds the 26s function timeout — other boards return small partial counts that mask the same root cause. Root cause: Netlify's function bundler silently drops files in `netlify/functions/scheduled/` subdirectory because the path matches neither auto-detect pattern (top-level file or per-function folder). Confirmed via Netlify API: `function_schedules: []` on every deploy back through Phase 1; the 7 `scan-*` functions don't appear in `available_functions` for any deploy. Cron registrations in `netlify.toml` point to functions that don't exist in build output, so the scheduler has never fired any board scan, ever. Fix is structural (move files up one level + rewrite `netlify.toml` schedule keys) — written up in `briefs/seed-snapshots-brief.md`. No code PR yet. After the layout fix lands and the first scheduled invocation completes, all 7 boards should flip from `fallback-partial` to `snapshot`. |
-| 4b-1 | Backtest run viewer UI (read-only) | done | 0.14.0-alpha | 2026-05-12 | Phase 4a engine writes auditable run records to `backtestRuns/{runId}` with subcollections (`dailyEquity`, `trades`, `attribution`, `mlTraining`); 4b-1 makes them visible. Two new endpoints (`/api/backtest-runs`, `/api/backtest-runs/:runId`) proxy Firestore reads from the browser. Two new hooks (`useBacktestRuns`, `useBacktestRun`) with TanStack Query — list staleTime 30s, detail staleTime Infinity (historical runs are immutable). `BacktestView.jsx` fully rewritten: header + launcher placeholder (Phase 4b-2) + run list grid + run detail. Seven new run-detail subcomponents: `SurvivorshipBanner` (renders only when `corrected: false`, with link to BACKTEST_LIMITATIONS.md — non-negotiable since Phase 4a's whole honesty argument depends on it surfacing on every SP500/NDX run), `RunMetricsTiles` (8 KpiCards + optional benchmark; engine writes Pct fields pre-multiplied by 100 so no client-side *100), `EquityCurveChart` (Recharts line with auto-benchmark overlay; stride-downsamples above 5000 points), `DrawdownChart` (computes underwater % client-side from dailyEquity peaks), `AttributionChart` (per-analyst bar; bucketing = attribute each row's contribution to the layer with highest score at entry — Phase 5 will refine), `RegimeBreakdownTable` and `TopTradesTable` (both sortable via `useSortable` + `SortableTh` per standing rule). Mobile-first single-column layout tested at 375px. Legacy `useBacktest` hook + `/api/backtest` endpoint + old BacktestView are now orphaned (zero consumers — EngineTestView actually uses `useEngineTest`, brief assumption was wrong); left in tree as dead code, removal is a separate housekeeping pass. Bundle 256kB gzipped (budget 820kB). 331 tests green (was 290 baseline; +41 new across 4 test files: 10 endpoint, 8 hook, 7 banner, 10 metrics, 6 attribution aggregation). Caveat: only Dow runs exist in Firestore at landing time (all `corrected: true`), so the survivorship banner is verified via tests rather than a live SP500 screenshot. |
-| 4b-2 | Backtest run launcher | done | 0.15.0-alpha | 2026-05-12 | UI launch via Netlify background function. The 15-minute background-function cap is leveraged via the `-background.ts` filename suffix (same trick `seed-scan-background.ts` uses); Netlify's bundler treats any function with that suffix as a background container regardless of how invoked, and the gateway returns 202 immediately while the engine works for up to 15 minutes. Architecture: trigger endpoint `POST /api/backtest-runs` (synchronous, <1s) validates the config via the engine's exported `validateConfig`, enforces prophet-only (other boards' PIT scoring is incomplete per BACKTEST_LIMITATIONS.md), runs a single-flight check (30-minute window, `status in ('pending','running')` single-field query so no composite index needed, time filter in code), allocates the runId, writes `backtestRuns/{runId}` with new `status: 'pending'`, then fires-and-forgets `POST /.netlify/functions/run-backtest-background` with `{runId, config}`. Background function flips `pending → running` via new `persistRunRunning(runId)` helper, then awaits `runBacktest(config, { resumeRunId })` — engine's `resumeRunId` option (new) skips the duplicate `generateRunId` + `persistRunStart` writes. Background URL built from the request's `x-forwarded-host` so deploy previews invoke their own background function rather than production's. Frontend: `useStartBacktest` mutation hook returns annotated errors (status, runId) so the launcher can deeplink 409 conflicts to the existing in-flight run; `useBacktestRun` patched with `refetchInterval` that returns 5000 while `status` is `pending|running` and `false` otherwise, so the run-detail view polls live until completion and stops the moment the terminal state lands. `BacktestLauncher` form (replaces 4b-1's `LauncherPlaceholder`): mobile-first single-column form with universe/board/dates/rebalance/topN/capital + collapsible Advanced section (minComposite, maxPositionPct, maxSectorPct, cashSleeve, weighting). Inline `SurvivorshipBanner` (reused, not forked) when sp500/ndx selected; amber Clock-icon pre-warning when russell2k selected. Non-prophet boards rendered but disabled with tooltip + BACKTEST_LIMITATIONS link. 202 → green CheckCircle2 banner + auto-select new runId in parent view; 409 → red banner with "View existing run" deeplink that calls `setSelectedRunId(error.runId)`. Bundle 259.68 kB gzipped (was 256.18 after 4b-1; +3.5 kB, brief budget was +5 kB). 367 tests green (+36 across 4 files: 7 background, 9 trigger, 4 mutation, 14 launcher + 2 polling). Persistence schema docstring updated to document the four-state lifecycle: `pending → running → complete\|failed`. |
-| 4b-3 | Run cancellation + config presets + saved templates | pending | — | — | Three closely-related improvements deferred from 4b-2. (1) Run cancellation: Firestore-backed cancellation token the engine polls between rebalances; without this, a regretted russell2k launch just sits until the 15-min cap kills it. (2) Config presets: a few hand-curated configs (e.g. "Dow 2018-2024 monthly top-20" used by Phase 4a tests) saved as one-click templates. (3) Saved templates: user-saved configs persisted to Firestore, listable in the launcher. Also folds in the granular progress signal ("Rebalance 6 of 84") which requires the engine to write per-rebalance progress events to Firestore — non-trivial engine touch. |
-| 5 | Calibration loop + ML refinement | pending | — | — | — |
-| 6 | Real options data | pending | — | — | — |
-| 7 | Portfolio layer | pending | — | — | — |
-| 8 | Position sizing engine | pending | — | — | — |
-| 9 | Exit / trade management | pending | — | — | — |
-| 10 | Missing data classes | pending | — | — | — |
-| 11 | Analyst depth | pending | — | — | — |
-| 12 | Auth + DR | pending | — | — | — |
-| 13 | Scale + caching + staging | pending | — | — | — |
-| 14 | Audit trail + compliance hooks | pending | — | — | — |
+| 0 | Engineering foundation + safety nets | done (partial) | 0.10.0-alpha | 2026-05-08 | Tests + CI + circuit breaker + structured logger + Sentry + weekly Firestore backups. **Anthropic budget cap DROPPED by decision 2026-05-12.** |
+| 1 | Universe coverage + snapshot infrastructure | done | 0.9.1-alpha | 2026-05-07 | All 7 boards snapshot-first; FreshnessPill on all views; HistoryView replay. Scheduled scan layout bug fixed later in 4a-fix-4. |
+| 2 | Refactor foundation (schemas + monolith split + TanStack Query) | done | 0.11.0-alpha | 2026-05-08 | Zod at 5 provider boundaries; App.jsx 2965→331 lines; 16 hooks; all 13 views wired. |
+| 3 | Point-in-time data layer | done | 0.12.0-alpha | 2026-05-10 | All 5 providers as-of capable; Dow universe history full 2018-2026 monthly; sp500/ndx/russell seed only with runbook. |
+| 4a | Real backtest v2 — engine + correctness | done | 0.13.0-alpha | 2026-05-11 | Walk-forward; PIT cache; portfolio + costs; attribution; ML hook data; 4 hotfixes followed. |
+| 4a-fix-1 | Cache undef-rejection + silent catch (PR #8) | done | 0.13.1-alpha | 2026-05-11 | `ignoreUndefinedProperties: true` + structured TickerFailure + happy-path test. |
+| 4a-fix-2 | ML-row bar window (PR #9) | done | 0.13.3-alpha | 2026-05-11 | New `getCachedBars(ticker, from, to)` with explicit window. Post-fix IC=-0.0951 (honest signal). |
+| 4a-fix-3 | ProphetDetail useEffect import (PR #10) | done | 0.13.2-alpha | 2026-05-11 | One-line fix + sibling audit. |
+| 4a-fix-4 | Scheduled function deployment (PRs #12/#13/#14) | done | 0.13.4-alpha | 2026-05-11 | Moved 7 scans flat + per-universe split (23 total) + `seed-scan-background.ts` helper. Scheduled scans now actually run. |
+| 4b-1 | Backtest run viewer UI | done | 0.14.0-alpha | 2026-05-12 | Two endpoints, two hooks, BacktestView rewritten, 7 detail subcomponents, mobile-first 375px. 331 tests. |
+| 4b-2 | Backtest run launcher | done | 0.15.0-alpha | 2026-05-12 | Background-function pattern via `-background.ts` suffix. PR #17 + #18 (routing hotfix to `/api/backtest-runs/start`). 367 tests. |
+| 4b-3 | Run cancellation + presets + saved templates | pending | — | — | No brief yet. Cancellation token + curated presets + user-saved templates + per-rebalance progress events. |
+| 4c-1 | Prophet detail completeness + EPS bug | pending (brief ready) | — | — | `briefs/phase-4c-1-brief.md`. Five workstreams: UI placeholder, lazy narrate endpoint, hook, narrate-all in scanner, EPS-beats null vs zero. Target 0.15.1-alpha. |
+| 4c-2 | Russell sieve architecture | pending (brief ready) | — | — | `briefs/phase-4c-2-brief.md`. 3-stage filter to score all 2037 Russell names within 15-min cap. Target 0.16.0-alpha. |
+| 5a | ML training pipeline (discovery) | pending (brief ready) | — | — | `briefs/phase-5a-brief.md`. Purged walk-forward CV with embargo; cross-sectional rank-IC vs composite baseline; Bonferroni-corrected Wilcoxon. 5 models + Model 0. No frontend, no version bump. Output: `reports/phase-5a/findings.md`. |
+| 5b | Production rollout of winning model | pending | — | — | Blocked on 5a finding (Path A only). Decides Python-to-TS deployment path: TS re-impl, ONNX, or separate Python service. |
+| 5c | Monitoring + retraining cadence | pending | — | — | Blocked on 5b. Weekly retrain; auto-disable if IC drops below composite; calibration dashboard. |
+| 6 | Real options data | pending | — | — | OPRA chain data; IV percentile + IV rank + skew; strike picker; rewrites options-flow. |
+| 7 | Portfolio layer | pending | — | — | Correlation matrix; sector caps; factor exposure; gross/net by regime; beta-adjusted sizing; VaR. |
+| 8 | Position sizing engine | pending | — | — | Three modes (equal-weight, vol-target, fractional Kelly); per-setup sizing; rebalancer. |
+| 9 | Exit / trade management | pending | — | — | Trade state machine; trailing stops; scale-out; news triggers; correlation-break; time exits; open positions view. |
+| 10 | Missing data classes | pending | — | — | Short interest + borrow rate + dark pool + block trade tape + breadth + sentiment + credit spread. |
+| 11 | Analyst depth | pending | — | — | Lynch depth; Fundamental depth; dedicated short-side; earnings interpreter; arbitrator; Claude-as-PM. |
+| 12 | Auth + DR | pending | — | — | Firebase Auth + per-user Firestore rules + ownerUid migration + backup restore drill. |
+| 13 | Scale + caching + staging | pending | — | — | Shared cache (Netlify Blobs); edge rate limiting; staging environment; bundle splitting; PWA. |
+| 14 | Audit trail + compliance hooks | pending | — | — | recommendationLog; per-card model version stamp; export CSV; inputs hash. |
 
 ---
 
-## Estimate roll-up
+## Current operational state (2026-05-12)
 
-|  | Sessions |
-|---|---|
-| Phase 0 | 1–2 |
-| Phase 1 | 2–3 |
-| Phase 2 | 2 |
-| Phase 3 | 1–2 |
-| Phase 4 | 2–3 |
-| Phase 5 | 3–4 |
-| Phase 6 | 1–2 |
-| Phase 7 | 1–2 |
-| Phase 8 | 1–2 |
-| Phase 9 | 1–2 |
-| Phase 10 | 2 |
-| Phase 11 | 2 |
-| Phase 12 | 1 |
-| Phase 13 | 1–2 |
-| Phase 14 | 1 |
-| **Total** | **22–32 sessions** |
+### Production
 
-At a session a week, this is ~5–7 months of evening/weekend work. At a couple sessions a week, ~3 months. Phases 0 and 1 are sequential and high-leverage. After Phase 1 several phases parallelize (e.g., 6 and 7 are independent; 10 and 11 are independent).
+- Live at `https://tradeiq-alpha.netlify.app` on `0.15.0-alpha`.
+- All 7 boards return data. Snapshots are written by the post-4a-fix-4 scheduled scans; live endpoints serve snapshot-first with `fallback-partial` outside cron windows.
+- Backtest runner end-to-end: launcher → trigger → background function → engine → Firestore → viewer. Polls live until completion.
 
----
+### Open PRs awaiting merge
 
-## Highest-leverage path if time gets compressed
+None. Hotfix queue cleared.
 
-If you only have time for the top three: **Phase 0, Phase 1, Phase 4.** That gets you tests + CI + spend cap + Sentry, comprehensive universe coverage with snapshots, and a real backtest. Everything else compounds off those.
+### Briefs awaiting agent execution
 
-Phase 1 is the user-visible win — small caps suddenly become discoverable. Phase 4 is the credibility win — analyst weights stop being guesses. Phase 0 is the protection — neither of the above can be trusted without the engineering foundation underneath.
+- `briefs/phase-4c-1-brief.md` — prophet detail completeness + EPS bug. Smallest scope, highest visible user impact. Target `0.15.1-alpha`.
+- `briefs/phase-4c-2-brief.md` — russell sieve architecture. Bigger, independent. Target `0.16.0-alpha`.
+- `briefs/phase-5a-brief.md` — ML training discovery. Polyglot (Python). Output is a report, not a deploy.
 
-Worst path: skipping Phase 0 to chase features. Cache poisoning recurs, Anthropic spend gets weird, a bad commit silently breaks prod. Done that movie three times already.
-
----
-
-## Live operational state (post Phase 4a)
-
-Snapshot of what's open / in flight / blocked as of 2026-05-11. The status table above is the formal record; this section is the working-memory checklist.
-
-### Open PRs awaiting your merge call
-
-None. Hotfix queue cleared 2026-05-11:
-- PR #10 (useEffect import) merged at `4ca9a18` as `0.13.2-alpha`. Prod crash on prophet-row expansion: resolved.
-- PR #9 (ML-row bar window) rebased to `0.13.3-alpha` after #10 took the 0.13.2 slot; merged at `1b63427`. ML rows now populate `entryPrice` + forward returns; IC reports honest signal (-0.0951 on Dow 2018-2024).
-- PR #11 (this doc update) — merging now alongside the live-state refresh.
-
-Next code work (largest-first): seed-snapshots layout (diagnosed below), Phase 4b backtest viewer (brief at `briefs/phase-4b-brief.md`).
-
-### Diagnosed-but-no-PR-yet
-
-- **Seed-snapshots layout fix.** Root cause known: 7 scheduled scan functions in `netlify/functions/scheduled/` aren't deployed by Netlify because the subdirectory pattern isn't auto-detected. Brief written: `briefs/seed-snapshots-brief.md`. Needs an agent session to do the file-move + `netlify.toml` rewrite + verify schedules register. After the layout fix lands, first scheduled invocation will populate the cold cache and all 7 boards should flip from `fallback-partial` to `snapshot`. Earnings tab is the user-visible payoff.
+Order is independent; any can ship in parallel. Recommended first: 4c-1 (smallest, fixes the user-reported screenshot issue).
 
 ### Outstanding remediation items
 
-- 🚨 **Rotate the leaked Firebase service account key.** `private_key_id: c52711f114...` on `firebase-adminsdk-fbsvc@tradeiq-alpha.iam.gserviceaccount.com`. Every Netlify build of TradeIQ continues to use it. Action: Google Cloud Console → IAM → Service accounts → Keys → generate new + delete old → paste new JSON into Netlify env var `FIREBASE_SERVICE_ACCOUNT`. ~5 min from your phone.
-- **Health endpoint reports hardcoded `version: 0.10.0-alpha`.** Cosmetic, but worth syncing to the real `APP_VERSION` whenever a hotfix touches `netlify/functions/health.ts`.
+- 🚨 **Rotate the leaked Firebase service account key.** `private_key_id: c52711f114...` on `firebase-adminsdk-fbsvc@tradeiq-alpha.iam.gserviceaccount.com`. Action: Google Cloud Console → IAM → Service accounts → Keys → generate new + delete old → paste new JSON into Netlify env var `FIREBASE_SERVICE_ACCOUNT`. ~5 min from phone. Longest-standing item.
+- 🚨 **Rotate the read-only GitHub PAT.** The literal `ghp_sgXH…` appears in 17 brief files in git history (every brief since `phase-0-brief.md`). Once rotated, the leaked string is a dead key and the briefs-sweep PR becomes cosmetic rather than mitigation.
+- **Briefs sweep PR** (cosmetic, post-rotation). Mechanical `s/ghp_…/<read-only-PAT, provided per session>/g` across 17 briefs + a CONTRIBUTING note. Defer until after rotation.
+- **Health endpoint hardcoded `version: 0.10.0-alpha`.** Cosmetic but wrong in prod. Sync to real `APP_VERSION` next time `netlify/functions/health.ts` is touched.
+- **Param-name normalization.** `?index=` vs `?universe=` is inconsistent across 7 boards. Cosmetic — frontend hooks already route per-board correctly. Small PR when convenient.
 
-### Known second-tier issues surfaced by the Phase 4a smoke tests
+### Known second-tier issues (non-blocking, file when ready)
 
-These aren't urgent — none is blocking, and the engine produces honest numbers without addressing them. File when ready:
+1. **Composite scores cluster at the `minComposite: 50` floor** on early picks. Attribution rows show `layers.fundamental: 0` consistently. The fundamental layer probably returns default-zero when Polygon fundamentals are thin (older end of 2018-2024 window, NKE/V/CVX). Phase 4c-1 W5 starts the diagnostic; Phase 5a may surface root cause.
+2. **`recovery_days: null`** on runs where the equity curve clearly recovers intermediate drawdowns. Bug in recovery-days computation with multiple dips. Separate metrics fix.
+3. **Quiver lobbying schema noise.** ~2,300 `schema_mismatch` warns per full Dow scan (`expected string, received null`). Warn-and-continue works; no functional impact.
+4. **Quiver patents endpoint 403/404s.** 55 hits per full scan. Same warn-and-continue. Quiver may have moved the endpoint.
+5. **`marketCapBucket: null` on every ML training row.** `FundamentalsSnapshot` doesn't expose `marketCap`. Natural fit for Phase 11 (analyst depth).
 
-1. **Composite scores cluster at the `minComposite: 50` floor on early picks.** Attribution rows show `layers.fundamental: 0` consistently. The fundamental layer is probably returning a default-zero when Polygon fundamentals are thin for the older end of the 2018-2024 window. Separate scorer issue.
-2. **`recovery_days: null` on runs where the equity curve clearly does recover** intermediate drawdowns. Likely a bug in the recovery-days computation when the curve dips + rebounds multiple times. Separate metrics bug.
-3. **Quiver lobbying schema noise.** ~2,300 `schema_mismatch` warns per full Dow scan (`Issue: expected string, received null`). Warn-and-continue fallback works; no functional impact. Hygiene issue.
-4. **Quiver patents endpoint 403/404s.** 55 hits per full scan. Same warn-and-continue path. Quiver may have moved the endpoint.
-5. **`marketCapBucket: null` on every ML training row.** `FundamentalsSnapshot` doesn't expose `marketCap`. Phase 11 (analyst depth) is the natural place to add it; Phase 5 ML can read whatever's available without it.
+### Phase 0 leftovers (acknowledged-skipped)
 
-### What Phase 4b will need from this engine
+- **Anthropic budget cap** — explicitly dropped by user decision 2026-05-12. Phases that increase API spend (4c-1 W4 narrate-all, future ML inference) ship without a cap. Surface a warning log if spend looks anomalous; don't refuse.
+- Other Phase 0 items (Sentry, vitest, structured logger, weekly backups) all landed.
 
-For when an agent picks up Phase 4b:
+---
 
-- **Real run records exist** in Firestore at `backtestRuns/{runId}` from the smoke tests. UI can develop against them without needing to re-run the engine. Most recent honest run (post 4a-fix-2): `bt_20260511185505_ala21n` (Dow 2018-2024 monthly top-20 prophet board).
-- **`universeSurvivorshipCorrected` stamp** lives on every result document. The UI MUST surface a banner when `corrected: false` (i.e., any SP500 or NDX backtest). Brief says "Phase 4b UI must gate the run with an explicit disclosure" — this is the non-negotiable part.
-- **`tickerFailures` field** is also on every result (added in 4a-fix-1). UI should show a yellow warning when `failureRatePct > 5%` and a red banner when `> 50%`. Sample of first 20 failures is bounded so it's safe to render inline.
-- **Only the prophet board has a working PIT scoring path** in 4a. UI should either disable non-prophet board options or surface a "coming soon" state. Engine returns null + a `warnings` entry for other boards.
+## What's already powering current work
 
-### What Phase 5 will need from these runs
+- **`backtestRuns/{runId}/mlTraining`** — the training dataset for Phase 5a. Each row has `composite`, per-layer scores, `regime`, `sector`, `forward5dReturn`, `forward20dReturn`, `forward60dReturn`, `forward252dReturn`, `entryPrice`, `inPortfolio` boolean. `marketCapBucket` deferred to Phase 11.
+- **`scan-{board}-{universe}.ts`** — 23 scheduled functions running on Netlify cron. After 4a-fix-4, these actually fire. Each writes to `boardSnapshots/{board}/{universe}/{snapshotId}`.
+- **`seed-scan-background.ts`** — HTTP-invokable fire-and-forget seeder for manually triggering a single board+universe scan. Useful for bootstrapping snapshots without waiting for cron.
+- **`run-backtest-background.ts`** — invoked by `POST /api/backtest-runs/start`. Wraps `runBacktest()` from the engine with the `-background.ts` suffix to get the 15-min container.
+- **`BACKTEST_LIMITATIONS.md`** — required disclosure for SP500/NDX backtests (uncorrected universes). `SurvivorshipBanner` renders on every uncorrected run + on the launcher when sp500/ndx is selected.
 
-The `backtestRuns/{runId}/mlTraining` subcollection is the training dataset. Each row has:
-- `composite` + per-layer scores at decision time
-- `regime` + `sector` at decision time
-- `forward5dReturn`, `forward20dReturn`, `forward60dReturn`, `forward252dReturn` (after PR #9 lands)
-- `entryPrice` (after PR #9 lands)
-- `marketCapBucket: null` (deferred — Phase 11 dependency)
+---
 
-Most recent run has 183 ML rows (Dow 7-year monthly window). Russell 2k weekly window would yield substantially more — recommend running that config to seed the dataset before Phase 5 starts. The CLI is at `scripts/run-backtest.ts`; sample configs in `configs/`. Live env vars pull from Netlify (team slug `chad-gdxevza`).
+## Highest-leverage path forward
+
+**Near-term (one to three sessions).** Rotate the two keys. Hand off 4c-1 first — it's small, fixes a user-visible bug, and surfaces the EPS-beats diagnostic findings that may feed Phase 5a. Then 4c-2 (russell sieve unlocks scoring quality on the 2000-name universe). Then 5a (the answer to "does ML beat the composite" determines the next year's roadmap).
+
+**Medium-term (three to ten sessions).** 5b deployment, then 4b-3 cancellation/templates, then Phase 6 (real options data), Phase 7 (portfolio), Phase 8 (sizing).
+
+**Long-term.** Phases 9–14 mostly parallelize once Phase 6/7/8 land. Phase 12 (auth) should land before any sharing or commercialization conversation. Phase 14 (audit trail) becomes mandatory if commercialization happens.
