@@ -113,6 +113,20 @@
   to = "/.netlify/functions/snapshot-history"
   status = 200
 
+# Phase 4b backtest run viewer (read-only).
+# List endpoint: /api/backtest-runs?limit=20
+[[redirects]]
+  from = "/api/backtest-runs"
+  to = "/.netlify/functions/backtest-runs-list"
+  status = 200
+
+# Detail endpoint: /api/backtest-runs/:runId → handler reads runId from
+# queryStringParameters (Netlify path-param convention).
+[[redirects]]
+  from = "/api/backtest-runs/:runId"
+  to = "/.netlify/functions/backtest-runs-get"
+  status = 200
+
 # SPA fallback
 [[redirects]]
   from = "/*"
