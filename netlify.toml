@@ -5,6 +5,12 @@
 
 [build.environment]
   NODE_VERSION = "20"
+  # Briefs (briefs/*.md) are agent hand-off documents containing the
+  # read-only GITHUB_PAT for in-session repo reads. They're checked in
+  # for reproducibility but never deployed to dist/. Tell Netlify's
+  # secrets-scanner to skip them so the build doesn't fail on
+  # documentation-as-code.
+  SECRETS_SCAN_OMIT_PATHS = "briefs/*"
 
 [functions]
   node_bundler = "esbuild"
