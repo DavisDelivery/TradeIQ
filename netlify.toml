@@ -113,6 +113,16 @@
   to = "/.netlify/functions/snapshot-history"
   status = 200
 
+[[redirects]]
+  from = "/api/backtest-runs/*"
+  to = "/.netlify/functions/backtest-runs-get/:splat"
+  status = 200
+
+[[redirects]]
+  from = "/api/backtest-runs"
+  to = "/.netlify/functions/backtest-runs-list"
+  status = 200
+
 # SPA fallback
 [[redirects]]
   from = "/*"
