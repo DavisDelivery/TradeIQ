@@ -118,7 +118,11 @@ Responsibilities:
 1. Initialize `firebase_admin` with the service account JSON. Project must match `tradeiq-alpha`.
 2. Iterate over all docs in `backtestRuns` (filter by `status == 'complete'` to skip failed/cancelled runs; do this server-side via a `where` clause so we don't pull failed runs into memory).
 3. For each run, stream `backtestRuns/{runId}/mlTraining` subcollection. Stream means `.stream()` with no `.get()` materializing the whole subcollection — for 100k+ rows this matters.
-4. Append every row to a list of dicts. Add columns: `_runId`, `_runConfig` (universe, cadence, topN — for grouping later), `_completedAt`.
+4. Append every row to a list of dicts. Add provenance columns:
+   - `_runId` — parent run identifier.
+   - `_runConfigHash` — first 12 chars of SHA-256 over canonical-JSON-encoded `run.config` (universe + cadence + topN + startDate + endDate). Stable identifier for "same config." Two runs of the same config produce the same hash; two runs that differ in any tracked field produce different hashes.
+   - `_runConfigSummary` — human-readable string like `"dow/monthly/top20/2018-01-01→2024-12-31"` for log and report rendering.
+   - `_completedAt` — used for ordering when deduplicating true duplicates (see Deduplication section below).
 5. Convert to a `pandas.DataFrame`.
 6. Write to `data/ml-training.parquet` with `compression='snappy'`. Mark the file with a sidecar `data/ml-training.parquet.meta.json` containing: row count, asOfDate min/max, unique runIds, SHA-256 of the parquet file, export timestamp.
 7. Print a summary table to stdout:
@@ -141,6 +145,28 @@ Run it once. Confirm output passes sanity:
 - All `asOfDate` values parse as valid dates.
 - Layer scores are within [0, 100] (or whatever range the scorer uses — check schema notes).
 - `compositeScore` distribution: histogram should NOT be a single spike at 50. If it is, the layer scores aren't being normalized into the composite correctly — flag and stop.
+
+### Deduplication and config grouping
+
+Two kinds of duplicates exist; handle them differently.
+
+**True duplicates** — same `_runConfigHash` AND same `(asOfDate, ticker)`. These arise whenever Chad re-launches the same config (4b-2 makes this trivial). The layer scores are deterministic given config + asOfDate + ticker, so the second run produces row-for-row identical data. Naive pooling double-counts these in every downstream metric: each duplicate gets two votes in IC, two members in the rank-loss group, two contributions to the Wilcoxon test, etc.
+
+Resolution: dedupe on `(_runConfigHash, asOfDate, ticker)`, keeping the row with the latest `_completedAt`. Log the count of dropped duplicates to stdout AND stamp it into the sidecar metadata JSON. If `dropped_duplicates / total_rows > 0.1`, surface a warning — that much duplication suggests something unexpected happened upstream.
+
+**Different-config rows that share `(asOfDate, ticker)`** — these are NOT duplicates and must NOT be deduped. The same ticker scored at the same date under different configs produces:
+
+- Same `layerScores` and `compositeScore` — these are config-independent at point-in-time.
+- DIFFERENT `forwardReturn`, `holdDays`, `inPortfolio` — these depend on the rebalance cadence and portfolio selection rule of the run that produced them.
+
+Pooling monthly and weekly rows blindly inflates the dataset and pools incomparable labels (a monthly `forwardReturn` covers ~21 trading days; a weekly one covers ~5). Two paths forward, both honest; agent picks one and documents the choice in the schema notes:
+
+- **Path 1 (preferred):** treat each `_runConfigHash` as its own dataset for training and evaluation. The pipeline runs once per config; the headline table has one row per (model × config). A pooled-across-configs row is reported separately, clearly labeled "POOLED — different cadences, interpret with care."
+- **Path 2:** restrict the entire pipeline to a single cadence (monthly is the canonical choice — most runs use it). Drop other-cadence rows at the export stage. Simpler to write up, throws away data.
+
+If the dataset coming out of W0 has only one config represented, this is moot — note it in the schema notes and proceed without the per-config dimension.
+
+The export script writes all surviving rows (true duplicates removed, distinct-config rows preserved) to the Parquet. The decision about how to group/segment for training happens in `run-all.py` (W11) based on what configs actually exist in the data.
 
 ## W3 — Feature engineering
 
@@ -318,9 +344,18 @@ In `scripts/ml/metrics.py`:
 
 Aggregate per model: mean ± std across folds for every metric.
 
+### Per-config IC reporting (mandatory when multiple configs survive W2)
+
+If the deduped dataset contains more than one `_runConfigHash`, every metric above (rank-IC, Pearson-IC, IR, decile spread, top-K hit rate) must be reported BOTH:
+
+- **Per-config:** one row per (model × config) in the headline table. This is the honest view — different configs have different label distributions (a weekly-cadence `forwardReturn` and a monthly one are not on the same scale), and pooling biases the metric toward whichever config contributes more rows.
+- **Pooled:** one row per model marked `POOLED`, footnoted with the list of configs included and an explicit warning about cadence-mismatch effects on `forwardReturn` magnitude. Acceptable as a summary line; not acceptable as the basis for the statistical test below.
+
+If only one config survives W2, the per-config dimension collapses and metrics are reported only at the model level. Note this in the report.
+
 ### Statistical test for "beats baseline"
 
-For each model, compare its per-asOfDate rank-IC distribution to Model 0's per-asOfDate rank-IC distribution using a **paired one-sided Wilcoxon signed-rank test** (paired because the same asOfDates appear in both). Report p-value. A model is declared to "beat the baseline" if p < 0.05 with a Bonferroni correction for the number of models tested (5 models → adjusted threshold p < 0.01).
+For each model AND each config (or just per model if only one config exists), compare its per-asOfDate rank-IC distribution to Model 0's per-asOfDate rank-IC distribution using a **paired one-sided Wilcoxon signed-rank test** (paired because the same asOfDates appear in both). Report p-value. A model is declared to "beat the baseline" on a given config if p < 0.05 with a Bonferroni correction for the number of models tested **within that config** (5 models → adjusted threshold p < 0.01). Each config is its own analysis with its own correction — a model that beats the baseline on monthly/dow but loses on weekly/sp500 is informative, and pooling the multiple comparisons across configs would mask that.
 
 The Wilcoxon is right because IC distributions are not normal. Don't use a paired t-test.
 
@@ -380,8 +415,9 @@ Required sections, in order:
 - Hyperparameters used (table). Acknowledge no grid search in 5a.
 
 ### 4. Results
-- **Headline table:** model × metric grid. Rows: Model 0–5. Columns: rank-IC mean ± std, Pearson-IC mean ± std, IR, decile spread, top-20 hit rate, p-value vs baseline.
-- **Per-fold IC chart:** boxplot or strip plot, one box per model.
+- **Headline table:** model × config × metric grid. If multiple configs survive W2 dedupe, the table has one row per (model, config) pair, with the config in the leftmost column. Columns: rank-IC mean ± std, Pearson-IC mean ± std, IR, decile spread, top-20 hit rate, p-value vs baseline (Bonferroni-corrected within config). If only one config exists, the per-config dimension collapses and the table is model × metric.
+- **Pooled summary row:** at the bottom of the headline table, add a `POOLED` row per model showing pooled-across-configs metrics. Footnote names the configs and warns about cadence-mismatch effects on `forwardReturn` magnitude. Pooled p-values are NOT reported — the test runs per-config only.
+- **Per-fold IC chart:** boxplot or strip plot, one box per model. If multiple configs exist, facet by config (one subplot per config).
 - **Per-regime IC chart:** model 3 global vs per-regime, one bar per regime.
 - **Decile spread time series:** for the best model, plot the cumulative decile spread over the test windows. Tells you if the alpha is steady or front-loaded into a single year.
 
