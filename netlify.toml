@@ -120,21 +120,27 @@
   status = 200
 
 # Phase 4b backtest run viewer (read-only).
-# List endpoint: /api/backtest-runs?limit=20
+# List endpoint:    GET  /api/backtest-runs?limit=20  → list
+# Detail endpoint:  GET  /api/backtest-runs/:runId    → get
+# Trigger endpoint: POST /api/backtest-runs/start     → trigger
 #
-# Phase 4b-2 — POST trigger MUST come first (more specific via method
-# condition). Netlify applies the first matching rule, so without the
-# explicit method=POST first, the unconditional GET redirect would
-# catch POSTs and route them to the list endpoint.
-[[redirects]]
-  from = "/api/backtest-runs"
-  to = "/.netlify/functions/backtest-runs-trigger"
-  status = 200
-  conditions = { method = ["POST"] }
-
+# Method-conditioned redirects (conditions = { method = ["POST"] }) are
+# not reliably honored by Netlify — they're silently ignored and both
+# rules match, causing the unconditional GET fallback to swallow POSTs.
+# Confirmed in production after the 4b-2 merge: a POST to
+# /api/backtest-runs returned the list payload, not the trigger.
+# Using a distinct trailing path for the trigger removes the ambiguity
+# entirely. /start matches REST action-verb convention.
 [[redirects]]
   from = "/api/backtest-runs"
   to = "/.netlify/functions/backtest-runs-list"
+  status = 200
+
+# Trigger MUST be listed BEFORE the dynamic :runId route so its
+# more-specific literal /start segment matches first.
+[[redirects]]
+  from = "/api/backtest-runs/start"
+  to = "/.netlify/functions/backtest-runs-trigger"
   status = 200
 
 # Detail endpoint: /api/backtest-runs/:runId → handler reads runId from

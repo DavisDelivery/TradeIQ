@@ -69,7 +69,7 @@ describe('useStartBacktest', () => {
     // Fetch shape
     expect(fetchSpy).toHaveBeenCalledTimes(1);
     const [url, init] = fetchSpy.mock.calls[0];
-    expect(url).toBe('/api/backtest-runs');
+    expect(url).toBe('/api/backtest-runs/start');
     expect(init.method).toBe('POST');
     expect(init.headers['Content-Type']).toBe('application/json');
     expect(JSON.parse(init.body)).toEqual(config);

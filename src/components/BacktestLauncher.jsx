@@ -15,10 +15,13 @@ import { SurvivorshipBanner } from './SurvivorshipBanner.jsx';
 // Phase 4b-2 — backtest launcher form.
 //
 // Replaces the LauncherPlaceholder note that 4b-1 dropped in. POSTs a
-// BacktestConfig to /api/backtest-runs and on 202 auto-selects the new
-// run in the parent view via setSelectedRunId. Polling-while-incomplete
-// lives in useBacktestRun (4b-1 hook patched in W4); the launcher itself
-// is fire-and-go.
+// BacktestConfig to /api/backtest-runs/start (the trigger endpoint —
+// distinct path from the GET list at /api/backtest-runs because
+// Netlify method-conditioned redirects aren't reliable, see
+// netlify.toml). On 202 auto-selects the new run in the parent view
+// via setSelectedRunId. Polling-while-incomplete lives in
+// useBacktestRun (4b-1 hook patched in W4); the launcher itself is
+// fire-and-go.
 //
 // Mobile-first single column on phone, 2 cols on sm+. All form state is
 // local React state (no React Hook Form, no Zod schema) — the field set

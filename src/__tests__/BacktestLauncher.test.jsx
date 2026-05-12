@@ -136,7 +136,7 @@ describe('BacktestLauncher', () => {
     // Fetch was called with the right shape.
     expect(fetchSpy).toHaveBeenCalledTimes(1);
     const [url, init] = fetchSpy.mock.calls[0];
-    expect(url).toBe('/api/backtest-runs');
+    expect(url).toBe('/api/backtest-runs/start');
     expect(init.method).toBe('POST');
     const body = JSON.parse(init.body);
     expect(body.universe).toBe('dow');

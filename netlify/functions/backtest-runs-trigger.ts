@@ -1,4 +1,4 @@
-// Phase 4b-2 — POST /api/backtest-runs trigger endpoint.
+// Phase 4b-2 — POST /api/backtest-runs/start trigger endpoint.
 //
 // Synchronous handler that:
 //   1. Validates the BacktestConfig (reuses runBacktest's own
@@ -20,11 +20,10 @@
 // function immediately. The trigger doesn't need the result — the engine
 // writes everything to Firestore.
 //
-// Two `/api/backtest-runs` redirects coexist in netlify.toml:
-//   GET  → backtest-runs-list  (4b-1)
-//   POST → backtest-runs-trigger (this file)
-// The conditioned redirect must precede the unconditional one in
-// netlify.toml; verified in the W2 commit.
+// Trigger lives at a DISTINCT path (/api/backtest-runs/start) from the
+// list (/api/backtest-runs). Method-conditioned Netlify redirects are
+// silently ignored, so separating paths is the only reliable routing.
+// See netlify.toml for the redirect ordering.
 
 import type { Handler } from '@netlify/functions';
 import {
