@@ -115,6 +115,17 @@
 
 # Phase 4b backtest run viewer (read-only).
 # List endpoint: /api/backtest-runs?limit=20
+#
+# Phase 4b-2 — POST trigger MUST come first (more specific via method
+# condition). Netlify applies the first matching rule, so without the
+# explicit method=POST first, the unconditional GET redirect would
+# catch POSTs and route them to the list endpoint.
+[[redirects]]
+  from = "/api/backtest-runs"
+  to = "/.netlify/functions/backtest-runs-trigger"
+  status = 200
+  conditions = { method = ["POST"] }
+
 [[redirects]]
   from = "/api/backtest-runs"
   to = "/.netlify/functions/backtest-runs-list"
