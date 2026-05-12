@@ -1,287 +1,366 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
-  BarChart, Bar, LineChart, Line, ResponsiveContainer, XAxis, YAxis,
-  Tooltip, Cell, CartesianGrid,
-} from 'recharts';
-import { tierColor } from './lib/formatters.jsx';
-import { useBacktest } from './hooks/useBacktest.js';
+  ChevronRight,
+  AlertTriangle,
+  Activity,
+  Loader2,
+  Database,
+} from 'lucide-react';
+import { useBacktestRuns } from './hooks/useBacktestRuns.js';
+import { useBacktestRun } from './hooks/useBacktestRun.js';
+import { SurvivorshipBanner } from './components/SurvivorshipBanner.jsx';
+import { RunMetricsTiles } from './components/RunMetricsTiles.jsx';
+import { EquityCurveChart } from './components/EquityCurveChart.jsx';
+import { DrawdownChart } from './components/DrawdownChart.jsx';
+import { AttributionChart } from './components/AttributionChart.jsx';
+import { RegimeBreakdownTable } from './components/RegimeBreakdownTable.jsx';
+import { TopTradesTable } from './components/TopTradesTable.jsx';
 
-// Co-located helpers (used only inside this view).
-const KpiCard = ({ label, value, color = 'neutral' }) => {
-  const colorClass = color === 'emerald' ? 'text-emerald-400' : color === 'rose' ? 'text-rose-400' : 'text-neutral-200';
+// Phase 4b — Backtest run viewer.
+//
+// Replaces the legacy BacktestView (which talked to the engine-test
+// /api/backtest endpoint with a ticker list + lookback). The legacy
+// useBacktest hook and /api/backtest endpoint are now unused by any
+// view (EngineTestView turned out to use a separate useEngineTest hook
+// against /api/engine-test). They're left in tree as dead code for
+// Phase 4b's mandate — removal is a separate housekeeping pass.
+//
+// This view reads Phase 4a auditable run records from Firestore via
+// /api/backtest-runs. Read-only in 4b-1; launcher is 4b-2.
+//
+// Layout (mobile-first, single column):
+//   - Header
+//   - Launcher placeholder (Phase 4b-2 note)
+//   - Recent Runs section: list of clickable rows
+//   - Run Detail section (when a run is selected):
+//       - SurvivorshipBanner (renders only when corrected: false)
+//       - RunMetricsTiles
+//       - EquityCurveChart + DrawdownChart
+//       - AttributionChart
+//       - RegimeBreakdownTable
+//       - TopTradesTable
+//
+// State: selectedRunId is sticky to the first run in the list once the
+// list resolves; the user can pick another row to drill in.
+
+function formatRelativeDate(iso) {
+  if (!iso) return '—';
+  try {
+    const d = new Date(iso);
+    const now = new Date();
+    const ms = now - d;
+    const mins = Math.floor(ms / 60000);
+    const hrs = Math.floor(ms / 3_600_000);
+    const days = Math.floor(ms / 86_400_000);
+    if (mins < 1) return 'just now';
+    if (mins < 60) return `${mins}m ago`;
+    if (hrs < 24) return `${hrs}h ago`;
+    if (days < 30) return `${days}d ago`;
+    return d.toISOString().slice(0, 10);
+  } catch {
+    return String(iso).slice(0, 10);
+  }
+}
+
+function fmtPct(v) {
+  if (v == null || !Number.isFinite(v)) return '—';
+  return `${Number(v).toFixed(2)}%`;
+}
+function fmtNum(v) {
+  if (v == null || !Number.isFinite(v)) return '—';
+  return Number(v).toFixed(3);
+}
+
+// ----- Section headers -----------------------------------------------------
+
+function SectionHeader({ children, hint }) {
   return (
-    <div className="border border-neutral-800 bg-neutral-950/40 p-3 sm:p-4">
-      <div className="text-[9px] uppercase tracking-[0.2em] text-neutral-500 font-mono mb-1.5">{label}</div>
-      <div className={`text-xl sm:text-2xl font-mono font-semibold tabular-nums ${colorClass}`}>{value}</div>
+    <div className="flex items-baseline justify-between mb-3">
+      <h2 className="text-[10px] uppercase tracking-[0.25em] text-neutral-400 font-mono font-semibold">
+        {children}
+      </h2>
+      {hint && (
+        <span className="text-[10px] text-neutral-600 font-mono">{hint}</span>
+      )}
     </div>
   );
-};
+}
 
-const ChartPanel = ({ title, subtitle, children, className = '' }) => (
-  <div className={`border border-neutral-800 bg-neutral-950/40 p-3 sm:p-4 ${className}`}>
-    <div className="flex items-baseline justify-between mb-3">
-      <div>
-        <div className="text-[10px] uppercase tracking-[0.2em] text-neutral-500 font-mono">{title}</div>
-        {subtitle && <div className="text-[10px] text-neutral-600 font-mono mt-0.5">{subtitle}</div>}
+// ----- Run-list row --------------------------------------------------------
+
+function RunListRow({ run, selected, onSelect }) {
+  const uncorrected =
+    run?.universeSurvivorshipCorrected &&
+    run.universeSurvivorshipCorrected.corrected === false;
+  const ret = run?.metrics?.totalReturnPct;
+  const retColor =
+    ret == null || !Number.isFinite(ret)
+      ? 'text-neutral-300'
+      : ret >= 0
+        ? 'text-emerald-300'
+        : 'text-rose-300';
+  const universe = run?.config?.universe ?? '?';
+  const board = run?.config?.board ?? '?';
+  const freq = run?.config?.rebalanceFrequency ?? '?';
+  return (
+    <button
+      type="button"
+      onClick={() => onSelect(run.runId)}
+      className={`w-full text-left border ${
+        selected
+          ? 'border-emerald-700/60 bg-emerald-950/15'
+          : 'border-neutral-800 bg-neutral-950/30 hover:bg-neutral-900/40'
+      } px-3 py-2.5 transition-colors`}
+    >
+      <div className="flex items-center justify-between gap-2 mb-1">
+        <div className="flex items-center gap-2 min-w-0">
+          {uncorrected && (
+            <AlertTriangle
+              className="h-3.5 w-3.5 text-rose-400 shrink-0"
+              aria-label="uncorrected universe"
+            />
+          )}
+          <span className="font-mono text-[11px] text-neutral-200 truncate">
+            {run.runId}
+          </span>
+        </div>
+        <ChevronRight className="h-3.5 w-3.5 text-neutral-600 shrink-0" aria-hidden="true" />
+      </div>
+      <div className="flex items-center justify-between gap-2 text-[10px] font-mono">
+        <div className="text-neutral-500 uppercase tracking-wider">
+          {universe} · {board} · {freq}
+        </div>
+        <div className="text-neutral-500">{formatRelativeDate(run.completedAt)}</div>
+      </div>
+      <div className="flex items-center gap-3 mt-1.5 text-[11px] font-mono tabular-nums">
+        <span className={retColor}>{fmtPct(ret)}</span>
+        <span className="text-neutral-500">Sharpe {fmtNum(run?.metrics?.sharpe)}</span>
+        <span className="text-neutral-500">
+          {run?.metrics?.tradeCount != null ? `${run.metrics.tradeCount} trades` : ''}
+        </span>
+      </div>
+    </button>
+  );
+}
+
+// ----- Launcher placeholder ------------------------------------------------
+
+function LauncherPlaceholder() {
+  return (
+    <div
+      className="border border-dashed border-neutral-700 bg-neutral-950/30 px-4 py-3 mb-5 rounded"
+      data-testid="launcher-placeholder"
+    >
+      <div className="flex items-start gap-3">
+        <Activity className="h-4 w-4 text-neutral-500 shrink-0 mt-0.5" aria-hidden="true" />
+        <div className="flex-1 text-[11px] font-mono">
+          <div className="text-neutral-300 mb-1">
+            Run launcher: coming in Phase 4b-2
+          </div>
+          <div className="text-neutral-500 leading-relaxed">
+            Launch new backtests via CLI:{' '}
+            <code className="text-neutral-300">
+              npx tsx scripts/run-backtest.ts --config configs/dow-2018-2024-monthly-top20.json
+            </code>
+            . Board: <code className="text-neutral-300">prophet</code> only (other
+            boards' PIT scoring landed partially in Phase 4a — see{' '}
+            <a
+              href="https://github.com/DavisDelivery/TradeIQ/blob/main/docs/BACKTEST_LIMITATIONS.md"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="underline text-neutral-400 hover:text-neutral-200"
+            >
+              BACKTEST_LIMITATIONS.md
+            </a>
+            ).
+          </div>
+        </div>
       </div>
     </div>
-    {children}
-  </div>
-);
+  );
+}
 
-export const BacktestView = () => {
-  const [lookback, setLookback] = useState(365);
-  const [windowDays, setWindowDays] = useState(20); // 5, 10, or 20 day forward window
-  const { data, error, isLoading: loading, refetch } = useBacktest(lookback);
+// ----- Empty state ---------------------------------------------------------
 
-  if (loading && !data) {
+function EmptyState() {
+  return (
+    <div className="border border-neutral-800 bg-neutral-950/30 p-8 text-center">
+      <Database className="h-6 w-6 text-neutral-600 mx-auto mb-3" aria-hidden="true" />
+      <div className="text-[12px] font-mono text-neutral-300 mb-2">
+        No backtest runs yet
+      </div>
+      <div className="text-[11px] font-mono text-neutral-500 max-w-md mx-auto leading-relaxed">
+        Run one via CLI:{' '}
+        <code className="text-neutral-300">
+          npx tsx scripts/run-backtest.ts --config configs/dow-2018-2024-monthly-top20.json
+        </code>
+        . Once the run finishes and writes to{' '}
+        <code className="text-neutral-300">backtestRuns/</code>, it will appear here.
+      </div>
+    </div>
+  );
+}
+
+// ----- Run detail ----------------------------------------------------------
+
+function RunDetail({ runId }) {
+  const { data, error, isLoading, refetch } = useBacktestRun(runId);
+
+  if (isLoading) {
     return (
-      <div className="px-3 py-4 sm:p-6 max-w-[1400px] mx-auto">
-        <div className="border border-neutral-800 p-8 text-center text-neutral-500 font-mono text-sm">
-          Running backtest across 10 tickers, 18 months of history…
-        </div>
+      <div className="border border-neutral-800 p-6 flex items-center justify-center text-neutral-500 font-mono text-[11px]">
+        <Loader2 className="h-4 w-4 animate-spin mr-2" />
+        Loading run detail…
       </div>
     );
   }
 
   if (error) {
     return (
-      <div className="px-3 py-4 sm:p-6 max-w-[1400px] mx-auto">
-        <div className="border border-rose-800/50 bg-rose-950/20 p-6 text-rose-300 font-mono text-sm">
-          Backtest failed: {error?.message ?? String(error)}
-          <button onClick={() => refetch()} className="ml-4 underline">retry</button>
-        </div>
+      <div className="border border-rose-800/50 bg-rose-950/20 p-4 font-mono text-[11px] text-rose-300">
+        Failed to load run: {error?.message ?? String(error)}
+        <button
+          type="button"
+          onClick={() => refetch()}
+          className="ml-3 underline hover:text-rose-100"
+        >
+          retry
+        </button>
       </div>
     );
   }
 
-  if (!data || !data.summary) {
-    return (
-      <div className="px-3 py-4 sm:p-6 max-w-[1400px] mx-auto">
-        <div className="border border-neutral-800 p-8 text-center text-neutral-500 font-mono text-sm">
-          Backtest data unavailable.
-          <button onClick={() => refetch()} className="ml-4 underline">retry</button>
-        </div>
+  if (!data?.run) return null;
+
+  const { run, dailyEquity, attribution } = data;
+  return (
+    <div data-testid="run-detail">
+      <SurvivorshipBanner universeStamp={run.universeSurvivorshipCorrected} />
+      <div className="mb-4 text-[11px] font-mono text-neutral-500">
+        <span className="text-neutral-300">{run.runId}</span>
+        {' · '}
+        {run.config?.universe?.toUpperCase()} · {run.config?.board}
+        {' · '}
+        {run.config?.startDate} → {run.config?.endDate}
+        {' · '}
+        {run.config?.rebalanceFrequency}
       </div>
-    );
-  }
+      <RunMetricsTiles metrics={run.metrics} benchmark={run.benchmark} />
+      <div className="grid grid-cols-1 gap-4 mb-4">
+        <EquityCurveChart dailyEquity={dailyEquity} />
+        <DrawdownChart dailyEquity={dailyEquity} />
+      </div>
+      <div className="mb-4">
+        <AttributionChart attribution={attribution} />
+      </div>
+      <div className="grid grid-cols-1 gap-4">
+        <RegimeBreakdownTable perRegime={run.metrics?.perRegime} />
+        <TopTradesTable attribution={attribution} />
+      </div>
+      {Array.isArray(run.warnings) && run.warnings.length > 0 && (
+        <div className="mt-4 border border-amber-800/50 bg-amber-950/15 px-3 py-2 font-mono text-[10px] text-amber-300/90">
+          <div className="font-semibold mb-1">Run warnings ({run.warnings.length})</div>
+          <ul className="list-disc list-inside space-y-0.5">
+            {run.warnings.map((w, i) => (
+              <li key={i}>{w}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </div>
+  );
+}
 
-  const summary = data.summary;
-  const windowKey = `fwd${windowDays}`;
-  const overall = summary[windowKey] || {};
+// ----- Main view -----------------------------------------------------------
 
-  const byTier = data.byTier || {};
-  const byDirection = data.byDirection || {};
-  const tierChartData = ['A', 'B', 'C'].map(tier => {
-    const s = byTier[tier]?.[windowKey] || {};
-    return {
-      tier: `Tier ${tier}`,
-      winRate: ((s.winRate || 0) * 100),
-      avgReturn: ((s.avgReturn || 0) * 100),
-      alpha: ((s.avgAlphaVsSPY || 0) * 100),
-      n: byTier[tier]?.n || 0,
-    };
-  });
+export const BacktestView = () => {
+  const { data, error, isLoading, refetch } = useBacktestRuns(20);
+  const runs = useMemo(() => data?.runs ?? [], [data]);
+  const [selectedRunId, setSelectedRunId] = useState(null);
 
-  const dirChartData = ['long', 'short'].map(dir => {
-    const s = byDirection[dir]?.[windowKey] || {};
-    return {
-      direction: dir === 'long' ? 'Long' : 'Short',
-      winRate: ((s.winRate || 0) * 100),
-      avgReturn: ((s.avgReturn || 0) * 100),
-      alpha: ((s.avgAlphaVsSPY || 0) * 100),
-      n: data.byDirection[dir]?.n || 0,
-    };
-  });
+  // Default-select the most recent run once the list resolves. We don't
+  // overwrite a user's explicit pick — only set the default when nothing
+  // is selected yet.
+  useEffect(() => {
+    if (!selectedRunId && runs.length > 0) {
+      setSelectedRunId(runs[0].runId);
+    }
+  }, [runs, selectedRunId]);
 
-  const tradesSample = data.trades?.sample || data.trades || [];
-  const sortedTrades = tradesSample
-    .filter(t => typeof t[windowKey] === 'number')
-    .slice()
-    .sort((a, b) => new Date(a.entryDate) - new Date(b.entryDate));
-
-  let cumLong = 0, cumShort = 0, cumAll = 0;
-  const equityData = sortedTrades.map((t, i) => {
-    const alpha = (t[`${windowKey}_alpha`] || 0) * 100;
-    cumAll += alpha;
-    if (t.direction === 'long') cumLong += alpha;
-    else if (t.direction === 'short') cumShort += alpha;
-    return {
-      idx: i,
-      date: t.entryDate,
-      cumAlpha: +cumAll.toFixed(2),
-      cumLong: +cumLong.toFixed(2),
-      cumShort: +cumShort.toFixed(2),
-    };
-  });
-
-  const rets = tradesSample.map(t => (t[windowKey] || 0) * 100).filter(v => !isNaN(v));
-  const buckets = [-20, -10, -5, -2, 0, 2, 5, 10, 20];
-  const distData = [];
-  for (let i = 0; i < buckets.length - 1; i++) {
-    const lo = buckets[i], hi = buckets[i + 1];
-    const label = i === 0 ? `<${hi}%` : i === buckets.length - 2 ? `>${lo}%` : `${lo} to ${hi}`;
-    const count = rets.filter(r => r >= lo && r < hi).length;
-    distData.push({ bucket: label, count, positive: lo >= 0 });
-  }
+  // Defensive: if the user's selected run vanishes from the list (e.g.
+  // a paginated refetch dropped it), reset to the first available run.
+  useEffect(() => {
+    if (selectedRunId && runs.length > 0 && !runs.some((r) => r.runId === selectedRunId)) {
+      setSelectedRunId(runs[0].runId);
+    }
+  }, [runs, selectedRunId]);
 
   return (
-    <div className="px-3 py-4 sm:p-6 max-w-[1400px] mx-auto">
-      <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-4 mb-5">
-        <div>
-          <div className="text-[10px] uppercase tracking-[0.2em] text-neutral-500 font-mono mb-2">Backtest</div>
-          <h1 className="font-serif text-2xl sm:text-3xl font-bold tracking-tight">
-            {summary.n ?? 0} <span className="text-neutral-500 italic font-light">historical trades</span>
+    <div className="px-3 py-4 sm:p-6 max-w-[1400px] mx-auto pb-20 sm:pb-6">
+      {/* Header */}
+      <div className="mb-5">
+        <div className="flex items-baseline gap-3 mb-1">
+          <h1 className="text-xl sm:text-2xl font-mono font-semibold text-neutral-100 tracking-tight">
+            BACKTEST
           </h1>
-          <div className="text-[11px] font-mono text-neutral-500 mt-2">
-            {data.config?.from ?? '—'} → {data.config?.to ?? '—'} · 10 mega-caps · sampled every {data.config?.sampleEvery ?? '—'}d
+          <span className="text-[10px] uppercase tracking-[0.2em] text-neutral-600 font-mono">
+            Phase 4a · read-only
+          </span>
+        </div>
+        <p className="text-[12px] text-neutral-500 leading-relaxed max-w-2xl">
+          Auditable historical backtest runs from the Phase 4a engine. Equity,
+          drawdown, attribution, regime, and trade-level outcomes are stored
+          immutably in Firestore and rendered here.
+        </p>
+      </div>
+
+      <LauncherPlaceholder />
+
+      {/* Recent Runs */}
+      <div className="mb-6">
+        <SectionHeader hint={runs.length > 0 ? `${runs.length} runs` : undefined}>
+          Recent runs
+        </SectionHeader>
+        {isLoading && (
+          <div className="border border-neutral-800 p-8 text-center text-neutral-500 font-mono text-[11px]">
+            <Loader2 className="h-4 w-4 animate-spin inline-block mr-2" />
+            Loading runs…
           </div>
-        </div>
-
-        <div className="flex flex-wrap items-center gap-2 text-[11px] font-mono">
-          <span className="text-neutral-500 uppercase tracking-widest">Window</span>
-          {[5, 10, 20].map(w => (
+        )}
+        {error && (
+          <div className="border border-rose-800/50 bg-rose-950/20 p-4 font-mono text-[11px] text-rose-300">
+            Failed to load runs: {error?.message ?? String(error)}
             <button
-              key={w}
-              onClick={() => setWindowDays(w)}
-              className={`px-2 h-7 ${windowDays === w ? 'bg-neutral-800 text-neutral-100' : 'text-neutral-500 hover:text-neutral-300'}`}
+              type="button"
+              onClick={() => refetch()}
+              className="ml-3 underline hover:text-rose-100"
             >
-              {w}d
+              retry
             </button>
-          ))}
+          </div>
+        )}
+        {!isLoading && !error && runs.length === 0 && <EmptyState />}
+        {!isLoading && !error && runs.length > 0 && (
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2" data-testid="run-list">
+            {runs.map((run) => (
+              <RunListRow
+                key={run.runId}
+                run={run}
+                selected={run.runId === selectedRunId}
+                onSelect={setSelectedRunId}
+              />
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Run Detail */}
+      {selectedRunId && (
+        <div className="mt-6">
+          <SectionHeader>Run detail</SectionHeader>
+          <RunDetail runId={selectedRunId} />
         </div>
-      </div>
-
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6">
-        <KpiCard label="Win Rate" value={`${((overall.winRate || 0) * 100).toFixed(1)}%`} color={overall.winRate > 0.5 ? 'emerald' : 'rose'} />
-        <KpiCard label="Avg Return" value={`${((overall.avgReturn || 0) * 100).toFixed(2)}%`} color={overall.avgReturn > 0 ? 'emerald' : 'rose'} />
-        <KpiCard label={`Alpha vs SPY`} value={`${((overall.avgAlphaVsSPY || 0) * 100).toFixed(2)}%`} color={overall.avgAlphaVsSPY > 0 ? 'emerald' : 'rose'} />
-        <KpiCard label="Sharpe" value={(overall.sharpe || 0).toFixed(2)} color={overall.sharpe > 0 ? 'emerald' : 'rose'} />
-      </div>
-
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
-        <ChartPanel title="Performance by Tier" subtitle={`${windowDays}-day forward`}>
-          <ResponsiveContainer width="100%" height={240}>
-            <BarChart data={tierChartData} margin={{ top: 8, right: 16, bottom: 8, left: 0 }}>
-              <CartesianGrid stroke="#1f2023" strokeDasharray="2 4" vertical={false} />
-              <XAxis dataKey="tier" stroke="#6b7280" style={{ fontSize: 11, fontFamily: 'monospace' }} />
-              <YAxis stroke="#6b7280" style={{ fontSize: 11, fontFamily: 'monospace' }} tickFormatter={v => `${v}%`} />
-              <Tooltip contentStyle={{ background: '#0a0b0d', border: '1px solid #2a2b2e', fontSize: 12 }} />
-              <Bar dataKey="winRate" fill="#14e89a" name="Win Rate %" />
-              <Bar dataKey="alpha" fill="#4dbaf2" name="Alpha vs SPY %" />
-            </BarChart>
-          </ResponsiveContainer>
-        </ChartPanel>
-
-        <ChartPanel title="Long vs Short" subtitle={`${windowDays}-day forward`}>
-          <ResponsiveContainer width="100%" height={240}>
-            <BarChart data={dirChartData} margin={{ top: 8, right: 16, bottom: 8, left: 0 }}>
-              <CartesianGrid stroke="#1f2023" strokeDasharray="2 4" vertical={false} />
-              <XAxis dataKey="direction" stroke="#6b7280" style={{ fontSize: 11, fontFamily: 'monospace' }} />
-              <YAxis stroke="#6b7280" style={{ fontSize: 11, fontFamily: 'monospace' }} tickFormatter={v => `${v}%`} />
-              <Tooltip contentStyle={{ background: '#0a0b0d', border: '1px solid #2a2b2e', fontSize: 12 }} />
-              <Bar dataKey="winRate" fill="#14e89a" name="Win Rate %" />
-              <Bar dataKey="alpha" fill="#4dbaf2" name="Alpha vs SPY %" />
-            </BarChart>
-          </ResponsiveContainer>
-        </ChartPanel>
-      </div>
-
-      <ChartPanel title="Cumulative Alpha vs SPY" subtitle={`${windowDays}-day forward returns, by direction`} className="mb-4">
-        <ResponsiveContainer width="100%" height={280}>
-          <LineChart data={equityData} margin={{ top: 8, right: 16, bottom: 8, left: 0 }}>
-            <CartesianGrid stroke="#1f2023" strokeDasharray="2 4" />
-            <XAxis dataKey="idx" stroke="#6b7280" style={{ fontSize: 10, fontFamily: 'monospace' }} tick={false} label={{ value: 'Trade #', position: 'insideBottom', offset: -2, style: { fill: '#6b7280', fontSize: 10 } }} />
-            <YAxis stroke="#6b7280" style={{ fontSize: 11, fontFamily: 'monospace' }} tickFormatter={v => `${v}%`} />
-            <Tooltip
-              contentStyle={{ background: '#0a0b0d', border: '1px solid #2a2b2e', fontSize: 12 }}
-              labelFormatter={(i) => equityData[i]?.date || ''}
-            />
-            <Line type="monotone" dataKey="cumAlpha" stroke="#f3f4f6" strokeWidth={2} dot={false} name="All trades" />
-            <Line type="monotone" dataKey="cumLong" stroke="#14e89a" strokeWidth={1.5} dot={false} name="Longs only" />
-            <Line type="monotone" dataKey="cumShort" stroke="#ff5577" strokeWidth={1.5} dot={false} name="Shorts only" />
-          </LineChart>
-        </ResponsiveContainer>
-      </ChartPanel>
-
-      <ChartPanel title="Return Distribution" subtitle={`${windowDays}-day forward returns, all trades`} className="mb-4">
-        <ResponsiveContainer width="100%" height={220}>
-          <BarChart data={distData} margin={{ top: 8, right: 16, bottom: 8, left: 0 }}>
-            <CartesianGrid stroke="#1f2023" strokeDasharray="2 4" vertical={false} />
-            <XAxis dataKey="bucket" stroke="#6b7280" style={{ fontSize: 10, fontFamily: 'monospace' }} />
-            <YAxis stroke="#6b7280" style={{ fontSize: 11, fontFamily: 'monospace' }} />
-            <Tooltip contentStyle={{ background: '#0a0b0d', border: '1px solid #2a2b2e', fontSize: 12 }} />
-            <Bar dataKey="count" name="Trades">
-              {distData.map((d, i) => (
-                <Cell key={i} fill={d.positive ? '#14e89a' : '#ff5577'} />
-              ))}
-            </Bar>
-          </BarChart>
-        </ResponsiveContainer>
-      </ChartPanel>
-
-      <div className="border border-neutral-800 bg-neutral-950/40 p-4 sm:p-5 mb-4">
-        <div className="text-[10px] uppercase tracking-[0.2em] text-neutral-500 font-mono mb-3">Findings</div>
-        <ul className="space-y-2 text-sm text-neutral-300">
-          {data.byDirection?.short?.[windowKey]?.avgAlphaVsSPY < -0.01 && (
-            <li className="flex gap-2">
-              <span className="text-rose-400">▾</span>
-              <span>Shorts underperform by <span className="text-rose-400 font-semibold">{((data.byDirection.short[windowKey].avgAlphaVsSPY) * 100).toFixed(1)}%</span> alpha — disabled in production by default.</span>
-            </li>
-          )}
-          {data.byTier?.A?.[windowKey]?.avgAlphaVsSPY > 0.005 && (
-            <li className="flex gap-2">
-              <span className="text-emerald-400">▴</span>
-              <span>Tier A generates <span className="text-emerald-400 font-semibold">+{((data.byTier.A[windowKey].avgAlphaVsSPY) * 100).toFixed(1)}%</span> alpha at {(data.byTier.A[windowKey].winRate * 100).toFixed(0)}% win rate.</span>
-            </li>
-          )}
-          {data.byTier?.C?.[windowKey]?.winRate < 0.5 && (
-            <li className="flex gap-2">
-              <span className="text-neutral-500">•</span>
-              <span>Tier C is below 50% win rate — current score floor (60) is effective.</span>
-            </li>
-          )}
-        </ul>
-      </div>
-
-      <ChartPanel title={`Recent Trades (${Math.min(20, sortedTrades.length)} of ${summary.n})`} subtitle="Sorted by entry date">
-        <div className="overflow-x-auto -mx-4 sm:mx-0">
-          <table className="w-full text-[11px] font-mono">
-            <thead className="text-neutral-500 border-b border-neutral-800">
-              <tr>
-                <th className="text-left px-2 py-2">Date</th>
-                <th className="text-left px-2 py-2">Ticker</th>
-                <th className="text-left px-2 py-2">Tier</th>
-                <th className="text-left px-2 py-2">Dir</th>
-                <th className="text-right px-2 py-2">Score</th>
-                <th className="text-right px-2 py-2">{windowDays}d Ret</th>
-                <th className="text-right px-2 py-2">{windowDays}d α</th>
-              </tr>
-            </thead>
-            <tbody>
-              {sortedTrades.slice(-20).reverse().map((t, i) => (
-                <tr key={i} className="border-b border-neutral-900 hover:bg-neutral-900/30">
-                  <td className="px-2 py-1.5 text-neutral-400">{t.entryDate}</td>
-                  <td className="px-2 py-1.5 text-neutral-100 font-semibold">{t.ticker}</td>
-                  <td className="px-2 py-1.5" style={{ color: tierColor(t.tier) }}>{t.tier}</td>
-                  <td className={`px-2 py-1.5 ${t.direction === 'long' ? 'text-emerald-400' : 'text-rose-400'}`}>{t.direction}</td>
-                  <td className="px-2 py-1.5 text-right text-neutral-300">{t.composite}</td>
-                  <td className={`px-2 py-1.5 text-right ${(t[windowKey] || 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                    {((t[windowKey] || 0) * 100).toFixed(2)}%
-                  </td>
-                  <td className={`px-2 py-1.5 text-right ${(t[`${windowKey}_alpha`] || 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                    {((t[`${windowKey}_alpha`] || 0) * 100).toFixed(2)}%
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </ChartPanel>
-
-      <div className="text-[10px] text-neutral-600 font-mono mt-4 text-center">
-        Technical + sector-rotation analysts only · news/fundamental/flow not backtested (historical data gaps)
-      </div>
+      )}
     </div>
   );
 };

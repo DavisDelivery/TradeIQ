@@ -2,8 +2,9 @@
 // /api/backtest-runs). Used by BacktestView's run-list section.
 //
 // Separate from the legacy `useBacktest` hook (which talks to
-// /api/backtest for the engine-test scanner). That one stays put for
-// EngineTestView; this one is for the auditable historical run viewer.
+// /api/backtest for the engine-test scanner). That one turns out to be
+// unused by any view (EngineTestView uses useEngineTest), but Phase 4b
+// leaves it in place — removal is a separate housekeeping pass.
 
 import { useQuery } from '@tanstack/react-query';
 import { queryKeys } from '../lib/queryKeys.js';
