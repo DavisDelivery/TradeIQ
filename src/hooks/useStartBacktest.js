@@ -19,7 +19,10 @@ export function useStartBacktest() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (config) => {
-      const r = await fetch('/api/backtest-runs', {
+      // POST /api/backtest-runs/start (NOT /api/backtest-runs).
+      // Netlify's method-conditioned redirects are unreliable, so the
+      // trigger lives at a distinct literal path — see netlify.toml.
+      const r = await fetch('/api/backtest-runs/start', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(config),

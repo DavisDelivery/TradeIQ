@@ -21,18 +21,25 @@ const log = createLogger('backtest-runs-get');
 const headers = { 'Content-Type': 'application/json' };
 
 function extractRunId(event: { path: string; queryStringParameters?: Record<string, string | undefined> | null }): string | null {
-  // Two paths reach this function:
+  // Three paths can reach this function:
   //   1. /api/backtest-runs/:runId via the netlify.toml redirect — Netlify's
   //      :runId placeholder lands in queryStringParameters.runId.
   //   2. Direct /.netlify/functions/backtest-runs-get/:runId — the runId
   //      is the trailing path segment.
-  // Try the query-param path first (production), fall back to path parsing.
+  //   3. (Defense-in-depth) /api/backtest-runs/start — that path is owned by
+  //      the trigger redirect which is listed BEFORE the dynamic :runId
+  //      route in netlify.toml. But if redirect ordering ever drifted and
+  //      this handler got invoked with runId='start', we'd silently 404
+  //      against a non-existent backtestRuns/start document. Explicit
+  //      reserved-word reject here means a misconfigured redirect produces
+  //      a loud, traceable 400 instead.
   const qsRunId = event.queryStringParameters?.runId;
+  if (qsRunId === 'start') return null;
   if (qsRunId) return qsRunId;
   const segments = (event.path || '').split('/').filter(Boolean);
   const last = segments[segments.length - 1];
   // Guard against the bare-function URL where last === 'backtest-runs-get'.
-  if (!last || last === 'backtest-runs-get' || last === 'backtest-runs') return null;
+  if (!last || last === 'backtest-runs-get' || last === 'backtest-runs' || last === 'start') return null;
   return last;
 }
 
