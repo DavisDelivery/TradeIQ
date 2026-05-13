@@ -57,6 +57,20 @@ The bar isn't "beats SPY in one cherry-picked window" — it's "beats SPY across
 4. Read `netlify/functions/shared/backtest/engine.ts`, `portfolio.ts`, `walk-forward.ts`, `score-at-date.ts`, `metrics.ts`, `costs.ts`. The backtest engine is the load-bearing piece — 4e-1's validation step delegates entirely to it, configured for the portfolio rebalance rule. If you don't understand `engine.ts`, stop and read until you do.
 5. Read `netlify/functions/shared/snapshot-store.ts` and how the per-board freshness budgets work. Portfolio state lives in a separate Firestore collection but the engine reads snapshots for scoring.
 6. Read `briefs/phase-4c-2-brief.md` for the sieve architecture's "earnings-quality gate" — the rebalance rule MUST respect the gate (don't swap into a fundamental-failing pick even if the composite ranks it top-10).
+7. **Stub-layer audit (added 2026-05-13 per Chad's screenshot of the ON ticker showing 5 of 10 Target analysts returning exactly 50).** Before running the backtest, sample a representative set of recent Prophet snapshots (largecap, last 90 days) and for each of the 7 layers (`structure`, `momentum`, `volume`, `volatility`, `relativeStrength`, `fundamental`, `catalyst`) compute:
+   - % of (asOfDate, ticker) rows where `layer.score === 50` exactly
+   - % where `layer.score === 0` or `layer.pass === false` for a "no data" reason
+   - Mean and standard deviation of `layer.score` across the sample
+   A layer is considered "live" if its score has stdev > 5 and ≤ 25% of rows are exactly 50. A layer that fails this is "stub-returning" — defaulting to a neutral midpoint instead of computing real values.
+
+   Output the audit table verbatim into `reports/phase-4e-1/backtest-validation.md` under a new section `## 0. Layer activity audit (run before backtest)`. The table goes BEFORE the verdict so a reader can see what the rule was actually built on.
+
+   **If ≥ 1 layer is stub-returning, the backtest harness must run TWO scenarios:**
+   - **Scenario A (as-is):** composite computed with all 7 layers including stubs. This is what the live system currently produces.
+   - **Scenario B (active-only):** composite recomputed using only live layers, with the stub layers' weight redistributed proportionally across the live ones. This isolates whether the strategy works on the *information that's actually present*.
+   - Both scenarios run the full validation window set. The headline verdict compares both, e.g. *"Scenario A beats SPY in 6/8 rolling windows; Scenario B beats SPY in 7/8. Stub layers (X, Y) are not adding edge."*
+
+   The verdict in `reports/phase-4e-1/backtest-validation.md` opens with a one-line statement of how many layers are live vs stub. If 0 layers are stub, omit Scenario B and note "all 7 layers active" — short circuit is allowed but the audit table is not skippable.
 
 ---
 
