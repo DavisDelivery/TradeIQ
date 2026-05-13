@@ -39,11 +39,9 @@ export FIREBASE_SERVICE_ACCOUNT="$(cat ~/path/to/tradeiq-alpha-sa.json)"
 export POLYGON_API_KEY="<polygon key>"
 
 # 2. Layer activity audit (run before backtest)
-#    A small one-off script that samples 90 days of Prophet largecap
-#    snapshots and computes per-layer mean/stdev/% exactly-50. Populate
-#    § 0 table below from its output. (Audit script can be added in a
-#    follow-up commit; W0 audit requires the same Firestore read access
-#    as the backtest itself.)
+npx tsx scripts/audit-prophet-layers.ts --days 90 --universe largecap \
+  > reports/phase-4e-1/layer-audit-largecap.md
+# Paste the resulting Markdown table into § 0 below.
 
 # 3. Full window + half-window + stress windows
 for W in full half-2018 half-2022 covid rate-hikes; do
@@ -76,6 +74,20 @@ If the verdict flips to SHIP or SHIP WITH CAVEATS in the follow-up,
 create `netlify/functions/scan-prophet-portfolio-rebalance.ts` (W5)
 in a separate PR and bump APP_VERSION to `0.17.0-alpha`. The brief's
 W5 spec covers schedule + body shape.
+
+### Pipeline sanity check (no credentials required)
+
+Before running with production credentials, you can verify the
+end-to-end harness pipeline against a synthetic dataset:
+
+```bash
+npx tsx scripts/run-portfolio-backtest.ts --window short-demo --demo
+```
+
+This writes `reports/phase-4e-1/demo-run.md` plus a JSON result file.
+The output is **clearly labeled DEMO** and contains synthetic numbers
+only — useful for verifying the harness + rule + CLI are wired
+correctly, NOT a substitute for the binding verdict.
 
 ---
 
