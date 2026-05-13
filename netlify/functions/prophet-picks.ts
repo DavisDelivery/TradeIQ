@@ -80,6 +80,9 @@ export const handler: Handler = async (event) => {
           modelVersion: snap.modelVersion,
           qualified: filtered.length,
           picks: sliced,
+          // 4c-2: pass through sieve telemetry so the UI can render the
+          // coverage strip (universe → s1 survivors → s2 → final).
+          sieve: snap.sieve ?? undefined,
         });
       }
       if (snap) log.warn('snapshot_stale', { ageMs: snapshotAgeMs(snap) });

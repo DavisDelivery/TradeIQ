@@ -35,15 +35,20 @@ export interface ProphetScore {
   invalidation: number | null;
 }
 
-// Base weights — will be regime-adjusted in the endpoint layer
+// Base weights — will be regime-adjusted in the endpoint layer.
+// 4c-2 rebalance: fundamental + catalyst raised from 46% to 55% of the
+// composite per Chad's product direction (earnings-heavy Prophet). The
+// other 5 layers shrink proportionally; technicals still matter for
+// ranking among earnings-quality candidates but they don't drive the
+// selection alone.
 const BASE_WEIGHTS = {
-  structure: 0.13,
-  momentum: 0.11,
-  volume: 0.12,
-  volatility: 0.07,
-  relativeStrength: 0.11,
-  fundamental: 0.20,  // raised: earnings growth + acceleration + beats history
-  catalyst: 0.26,
+  structure: 0.11,
+  momentum: 0.09,
+  volume: 0.10,
+  volatility: 0.06,
+  relativeStrength: 0.09,
+  fundamental: 0.25,  // up from 0.20 — earnings growth + accel + margin trend + multiple expansion
+  catalyst: 0.30,     // up from 0.26 — insider + political + contracts + patents + PEAD
 };
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -617,6 +622,14 @@ export interface FundInput {
   grossMargin?: number;
   priorOperatingMargin?: number;
   pe?: number;
+  /** P/E approximately 1 year ago (computed from price[-252] / priorEpsTTM-equivalent). */
+  pe1yAgo?: number;
+  /** Multiple expansion as a fraction: (pe - pe1yAgo) / pe1yAgo. Positive = multiple expanding. */
+  peExpansion?: number;
+  /** Operating margin YoY trend in percentage points (current - 4q-ago). Positive = improving. */
+  operatingMarginTrendPp?: number;
+  /** Gross margin YoY trend in percentage points (current - 4q-ago). Positive = improving. */
+  grossMarginTrendPp?: number;
   peg?: number;
   debtToEquity?: number;
   epsSurpriseBeats?: number;  // 0-4 out of last 4
@@ -641,7 +654,12 @@ export function layerFundamental(fund: FundInput | null): LayerResult {
   details.avg_surprise_pct = fund.avgSurpriseMagnitude !== undefined ? +fund.avgSurpriseMagnitude.toFixed(1) : null;
   details.operating_margin_pct = fund.operatingMargin !== undefined ? +(fund.operatingMargin * 100).toFixed(1) : null;
   details.gross_margin_pct = fund.grossMargin !== undefined ? +(fund.grossMargin * 100).toFixed(1) : null;
+  // 4c-2 surfacing: margin trend in pp + multiple expansion in %
+  details.op_margin_trend_pp = fund.operatingMarginTrendPp !== undefined ? +fund.operatingMarginTrendPp.toFixed(1) : null;
+  details.gross_margin_trend_pp = fund.grossMarginTrendPp !== undefined ? +fund.grossMarginTrendPp.toFixed(1) : null;
   details.pe = fund.pe ?? null;
+  details.pe_1y_ago = fund.pe1yAgo ?? null;
+  details.pe_expansion_pct = fund.peExpansion !== undefined ? +(fund.peExpansion * 100).toFixed(1) : null;
   details.peg = fund.peg ?? null;
   details.debt_equity = fund.debtToEquity ?? null;
   details.beats_4q = fund.epsSurpriseBeats ?? null;
@@ -661,7 +679,7 @@ export function layerFundamental(fund: FundInput | null): LayerResult {
   else if (rev > 0) score += 5;
   else if (rev < -0.05) score -= 15;
 
-  // EPS growth (max +25 — up from +20)
+  // EPS growth (max +25)
   if (eps > 0.50) { score += 25; flags.push('eps_growth_>50pct'); }
   else if (eps > 0.25) { score += 20; flags.push('eps_growth_>25pct'); }
   else if (eps > 0.10) score += 12;
@@ -669,7 +687,7 @@ export function layerFundamental(fund: FundInput | null): LayerResult {
   else if (eps < -0.10) { score -= 15; flags.push('eps_contracting'); }
   else if (eps < 0) score -= 8;
 
-  // NEW: EPS acceleration (max +15) — single strongest CANSLIM signal
+  // EPS acceleration (max +15) — single strongest CANSLIM signal
   if (fund.epsAcceleration !== undefined) {
     if (fund.epsAcceleration > 0.15) { score += 15; flags.push('eps_accelerating'); }
     else if (fund.epsAcceleration > 0.05) { score += 10; flags.push('eps_accel_modest'); }
@@ -677,37 +695,70 @@ export function layerFundamental(fund: FundInput | null): LayerResult {
     else if (fund.epsAcceleration < -0.15) { score -= 12; flags.push('eps_decelerating'); }
   }
 
-  // Margins
+  // Margins — current level
   if (om > 0.20) { score += 10; flags.push('margins_rich'); }
   else if (om > 0.10) score += 6;
   else if (om > 0.05) score += 2;
 
-  if (fund.priorOperatingMargin !== undefined && om > fund.priorOperatingMargin) {
-    score += 6; flags.push('margins_expanding');
+  // 4c-2: YoY operating-margin trend (max +12 / min -10). Chad's "margin
+  // improvement" signal. Per-pp scoring so small improvements still count.
+  if (fund.operatingMarginTrendPp !== undefined) {
+    const opt = fund.operatingMarginTrendPp;
+    if (opt > 3) { score += 12; flags.push('op_margin_expanding_strong'); }
+    else if (opt > 1) { score += 7; flags.push('op_margin_expanding'); }
+    else if (opt > 0) score += 3;
+    else if (opt < -2) { score -= 10; flags.push('op_margin_compressing'); }
+    else if (opt < 0) score -= 5;
+  } else if (fund.priorOperatingMargin !== undefined && om > fund.priorOperatingMargin) {
+    // Q/Q fallback if YoY baseline unavailable.
+    score += 4; flags.push('margins_expanding_qq');
   }
+
+  // 4c-2: YoY gross-margin trend (max +8 / min -6). Lower weight than
+  // operating margin (gross is noisier and less indicative of operating
+  // leverage), but still a real quality signal.
+  if (fund.grossMarginTrendPp !== undefined) {
+    const gmt = fund.grossMarginTrendPp;
+    if (gmt > 2) { score += 8; flags.push('gross_margin_expanding'); }
+    else if (gmt > 0.5) score += 4;
+    else if (gmt < -2) { score -= 6; flags.push('gross_margin_compressing'); }
+  }
+
   if (gm > 0.40) score += 5;
 
   // Valuation — PEG favor
   if (fund.peg !== undefined && fund.peg > 0 && fund.peg < 1.5) { score += 10; flags.push('peg_favorable'); }
   else if (fund.peg !== undefined && fund.peg > 4) score -= 8;
 
+  // 4c-2: multiple expansion (max +10 / min -8). Stocks tend to compound
+  // earnings growth AND multiple expansion when the market gives credit.
+  // Both directions matter: contracting multiple on flat earnings is a
+  // real warning signal even before earnings turn.
+  if (fund.peExpansion !== undefined) {
+    if (fund.peExpansion > 0.30) { score += 10; flags.push('multiple_expanding_strong'); }
+    else if (fund.peExpansion > 0.10) { score += 6; flags.push('multiple_expanding'); }
+    else if (fund.peExpansion > 0) score += 2;
+    else if (fund.peExpansion < -0.20) { score -= 8; flags.push('multiple_contracting'); }
+    else if (fund.peExpansion < -0.05) score -= 3;
+  }
+
   if (fund.debtToEquity !== undefined && fund.debtToEquity < 1.0) score += 3;
   else if (fund.debtToEquity !== undefined && fund.debtToEquity > 2.5) score -= 6;
 
-  // Beats count (max +12, up from +12 — same but with streak bonus)
+  // Beats count (max +12)
   if (fund.epsSurpriseBeats !== undefined) {
     score += fund.epsSurpriseBeats * 3;
     if (fund.epsSurpriseBeats >= 3) flags.push('beats_3plus_of_4');
   }
 
-  // NEW: Clean 4/4 streak bonus
+  // Clean 4/4 streak bonus
   if (fund.streak === 'beats' && fund.epsSurpriseBeats === 4) {
     score += 8; flags.push('perfect_beat_streak');
   } else if (fund.streak === 'misses') {
     score -= 10; flags.push('miss_streak');
   }
 
-  // NEW: Avg surprise magnitude
+  // Avg surprise magnitude
   if (fund.avgSurpriseMagnitude !== undefined) {
     if (fund.avgSurpriseMagnitude > 10) { score += 8; flags.push('blowout_avg'); }
     else if (fund.avgSurpriseMagnitude > 3) score += 4;
@@ -715,8 +766,67 @@ export function layerFundamental(fund: FundInput | null): LayerResult {
   }
 
   score = Math.max(0, Math.min(100, score));
-  const pass = rev >= -0.05 && eps >= -0.10 && (fund.peg === undefined || fund.peg < 4);
+
+  // 4c-2 earnings-quality gate. Even if other signals push the score up,
+  // a ticker must clear a baseline earnings-quality bar to PASS this layer.
+  // Chad's product direction (2026-05-13): Prophet should "really focus on
+  // earnings" — meaning multiple expansion, margin improvement, and EPS
+  // growth are not nice-to-haves; they're the prerequisites for inclusion.
+  //
+  // The gate uses available signals robustly: if YoY margin trend is
+  // unavailable (older data), we don't punish — only the present signals
+  // are evaluated. The gate fires only when the AVAILABLE signals are
+  // clearly weak.
+  const earningsQualityGate = computeEarningsQualityGate(fund);
+  details.earnings_quality_gate = earningsQualityGate.passed;
+  if (!earningsQualityGate.passed) {
+    flags.push(`gate_failed:${earningsQualityGate.reason}`);
+  }
+
+  const baselinePass = rev >= -0.05 && eps >= -0.10 && (fund.peg === undefined || fund.peg < 4);
+  const pass = baselinePass && earningsQualityGate.passed;
   return { score, pass, details, flags };
+}
+
+/**
+ * 4c-2 earnings-quality gate. Returns { passed, reason } so a failing
+ * layer can surface WHY it failed via flags. Designed to be lenient when
+ * data is missing (don't punish tickers for incomplete fundamentals) but
+ * strict when the present signals are clearly weak.
+ *
+ * The gate fails if ALL of these are true (clearly weak signal set):
+ *   - EPS growth available and < 5%
+ *   - At least ONE of: op margin trend < 0 (if available), multiple
+ *     contraction worse than -10% (if available)
+ *
+ * Or if EPS growth is sharply negative (< -15%) regardless of other signals.
+ */
+function computeEarningsQualityGate(fund: FundInput): { passed: boolean; reason: string } {
+  const eps = fund.epsGrowthYoY;
+
+  // Hard stop on deep earnings contraction.
+  if (eps !== undefined && eps < -0.15) {
+    return { passed: false, reason: 'eps_contraction_severe' };
+  }
+
+  // If EPS growth signal is missing, give the benefit of the doubt — other
+  // signals will drive the composite. Same for very early-stage tickers.
+  if (eps === undefined) return { passed: true, reason: 'no_eps_signal' };
+
+  // Anemic EPS growth — check if margins or multiple expansion can rescue.
+  if (eps < 0.05) {
+    const marginExpanding = (fund.operatingMarginTrendPp ?? 0) > 1;
+    const multipleExpanding = (fund.peExpansion ?? 0) > 0.05;
+    const accelerating = (fund.epsAcceleration ?? 0) > 0.05;
+    const beatsStreak = (fund.epsSurpriseBeats ?? 0) >= 3;
+
+    // Need at least ONE positive quality signal to pass with weak EPS.
+    if (!marginExpanding && !multipleExpanding && !accelerating && !beatsStreak) {
+      return { passed: false, reason: 'eps_weak_no_quality_offsets' };
+    }
+  }
+
+  return { passed: true, reason: 'ok' };
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

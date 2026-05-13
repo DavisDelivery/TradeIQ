@@ -78,17 +78,16 @@ Russell2k is large enough to require sieve architecture for prophet — see 4c-2
 ## Operational state
 
 ### Production
-- Live at `0.15.1-alpha` after 4c-1 merge. All 7 boards return data. Snapshots written by post-4a-fix-4 scheduled scans; scans now pre-narrate qualified picks before snapshot write so the Prophet board ships with full AI theses on first read. Live endpoints serve snapshot-first with `fallback-partial` outside cron windows.
-- Backtest runner end-to-end: launcher → trigger → background function → engine → Firestore → viewer. Polls live until completion.
+- Live at `0.16.0-alpha` after 4c-2 merge. MODEL_VERSION `2026.02.0` (composite weights + new fundamental signals changed scoring; historical snapshots remain on `2026.01.0` and backtest replay filters by version). Russell scan now uses the 3-stage sieve and scores every ticker at Stage 1 — the pre-4c-2 "scans 50 then quits" issue is fixed. Largecap + all universes still single-pass; they don't need a sieve at their universe sizes.
+- All 7 boards return data. Snapshots written by post-4a-fix-4 scheduled scans; scans pre-narrate qualified picks before snapshot write (4c-1). Live endpoints serve snapshot-first with `fallback-partial` outside cron windows.
 
 ### Open PRs awaiting merge
 None. Hotfix queue cleared.
 
 ### Briefs awaiting agent execution
-- **`briefs/phase-4c-2-brief.md`** — russell sieve architecture (3-stage filter for 2037-name universe). Target `0.16.0-alpha`. Independent of 4c-1; can ship next.
 - **`briefs/phase-5a-brief.md`** — ML training discovery. Polyglot (Python). Output is a report, not a deploy.
 
-Recommended next: 4c-2.
+Recommended next: 5a, or surface new product priorities first.
 
 ### Outstanding remediation (your hands)
 - 🚨 **Rotate the Firebase SA key.** `private_key_id: c52711f114...` on `firebase-adminsdk-fbsvc@tradeiq-alpha.iam.gserviceaccount.com`. Google Cloud Console → IAM → Service accounts → Keys → generate new + delete old → paste new JSON into Netlify env var `FIREBASE_SERVICE_ACCOUNT`. ~5 min from phone. Longest-standing item.
@@ -128,7 +127,7 @@ Recommended next: 4c-2.
 | 4b-2 | Backtest run launcher | done | 0.15.0-alpha | 2026-05-12 | Background-function pattern via `-background.ts` suffix. PRs #17 + #18 (routing hotfix to `/api/backtest-runs/start`). 367 tests. |
 | 4b-3 | Run cancellation + presets + saved templates | pending | — | — | No brief yet. Cancellation token + curated presets + user-saved templates + per-rebalance progress events. |
 | 4c-1 | Prophet detail completeness + EPS bug | done | 0.15.1-alpha | 2026-05-13 | All 5 workstreams shipped: shared `narrative-cache` + `narrative-generator` extracted, on-demand `/api/prophet-narrate` endpoint with per-IP rate limit (30/hr), `useGenerateNarrative` mutation hook that patches every prophet cache entry, three-state AI Thesis UI placeholder, `narrateAll` in all three scheduled scanners with per-universe budget guards, and W5 EPS-beats fix: `earnings-intel.ts` now emits `beatsLast4: null` when Finnhub returns no surprise data (was emitting `0`, rendered as misleading "0/4 beats") plus new `beatsLast4Quarters` honest denominator. 397 tests (367 baseline + 30 new). |
-| 4c-2 | Russell sieve architecture | pending (brief ready) | — | — | `briefs/phase-4c-2-brief.md`. 3-stage filter to score all 2037 Russell names within 15-min cap. Target 0.16.0-alpha. |
+| 4c-2 | Russell sieve architecture + earnings priority | done | 0.16.0-alpha | 2026-05-13 | Re-scoped from coverage-only to coverage+scoring per Chad's 2026-05-13 product direction (earnings-heavy Prophet). 3-stage sieve in `prophet-sieve/`: Stage 1 cheap bars-only filter scores every Russell ticker (~2037 → ~400), Stage 2 adds fundamentals + earnings intel + RS-vs-SPY + earnings-quality gate (~400 → ~80), Stage 3 runs existing 7-layer scan on survivors. New fundamental signals: multiple expansion (P/E vs 1y ago), YoY operating + gross margin trend in pp. `layerFundamental` reworked with new scoring bands + earnings-quality gate. Composite reweighted: fundamental 20→25%, catalyst 26→30% (earnings stack now 55% vs prior 46%). SieveCoverageStrip surfaces the `universe → s1 → s2 → final` ladder on Russell. New chips on the row strip: op margin trend, P/E expansion. MODEL_VERSION bumped to 2026.02.0. Tests 397 → 427 (+30 new). |
 | 5a | ML training pipeline (discovery) | pending (brief ready) | — | — | `briefs/phase-5a-brief.md`. Purged walk-forward CV + embargo; cross-sectional rank-IC vs composite; Bonferroni-corrected Wilcoxon; 5 models + Model 0. No frontend, no version bump. Output: `reports/phase-5a/findings.md`. |
 | 5b | Production rollout of winning model | pending | — | — | Blocked on 5a Path A. Decides Python→TS deployment: TS re-impl, ONNX, or separate Python service. |
 | 5c | Monitoring + retraining cadence | pending | — | — | Blocked on 5b. Weekly retrain; auto-disable if IC < composite; calibration dashboard. |

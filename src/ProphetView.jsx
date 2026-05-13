@@ -10,6 +10,7 @@ import {
 } from 'recharts';
 import { LogButton } from './components/LogButton.jsx';
 import { FreshnessPill } from './components/FreshnessPill.jsx';
+import { SieveCoverageStrip } from './components/SieveCoverageStrip.jsx';
 import { useProphet } from './hooks/useProphet.js';
 import { useGenerateNarrative } from './hooks/useGenerateNarrative.js';
 
@@ -106,6 +107,14 @@ export const ProphetView = () => {
             {loading ? 'scanning…' : 'refresh'}
           </button>
         </div>
+      )}
+
+      {/* 4c-2: Sieve coverage strip — only renders when sieve metadata is present
+          (Russell snapshots produced by the 3-stage sieve). The ladder makes it
+          clear that the system actually scored the full universe, not just the
+          ~600 that the pre-4c-2 single-pass scan reached. */}
+      {data?.sieve && (
+        <SieveCoverageStrip sieve={data.sieve} universeSize={data.universeSize} />
       )}
 
       {/* Warning banner for stale/partial */}
@@ -257,6 +266,18 @@ const ProphetRow = ({ pick, expanded, onToggle }) => {
                 {pick.earnings.epsAcceleration !== undefined && Math.abs(pick.earnings.epsAcceleration) > 0.05 && (
                   <span className={pick.earnings.epsAcceleration > 0 ? 'text-emerald-400' : 'text-amber-400'}>
                     {pick.earnings.epsAcceleration > 0 ? '▲' : '▼'} {Math.abs(pick.earnings.epsAcceleration * 100).toFixed(0)}pp accel
+                  </span>
+                )}
+                {/* 4c-2: operating margin trend (YoY, pp). Chad's "margin improvement" signal. */}
+                {pick.earnings.operatingMarginTrendPp !== undefined && Math.abs(pick.earnings.operatingMarginTrendPp) >= 0.5 && (
+                  <span className={pick.earnings.operatingMarginTrendPp > 0 ? 'text-emerald-400/90' : 'text-rose-400/90'}>
+                    {pick.earnings.operatingMarginTrendPp > 0 ? '▲' : '▼'} {Math.abs(pick.earnings.operatingMarginTrendPp).toFixed(1)}pp op marg
+                  </span>
+                )}
+                {/* 4c-2: multiple expansion. Positive = market paying more per dollar of earnings. */}
+                {pick.earnings.peExpansionPct !== undefined && Math.abs(pick.earnings.peExpansionPct) >= 5 && (
+                  <span className={pick.earnings.peExpansionPct > 0 ? 'text-sky-400/90' : 'text-amber-500/90'}>
+                    {pick.earnings.peExpansionPct > 0 ? '▲' : '▼'} {Math.abs(pick.earnings.peExpansionPct).toFixed(0)}% P/E
                   </span>
                 )}
                 {/* W5: distinguish null (Finnhub returned no surprises — "we don't know")

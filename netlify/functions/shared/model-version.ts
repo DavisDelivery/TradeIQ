@@ -14,4 +14,4 @@
 //   NN    — sequential within that year (01, 02, ...)
 //   minor — patch within that NN, when needed
 
-export const MODEL_VERSION = '2026.01.0';
+export const MODEL_VERSION = '2026.02.0';

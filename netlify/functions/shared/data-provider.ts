@@ -102,8 +102,15 @@ export interface FundamentalsSnapshot {
   epsGrowthYoY?: number;
   ttmEps?: number;
   grossMargin?: number;
+  /** Gross margin from prior quarter (Q/Q baseline). */
+  priorGrossMargin?: number;
+  /** Gross margin from 4 quarters ago (YoY baseline; 4c-2 multiple-expansion + margin-trend). */
+  priorGrossMarginYoY?: number;
   operatingMargin?: number;
+  /** Operating margin from prior quarter (Q/Q baseline). */
   priorOperatingMargin?: number;
+  /** Operating margin from 4 quarters ago (YoY baseline; 4c-2). */
+  priorOperatingMarginYoY?: number;
   debtToEquity?: number;
   asOf?: string;
 }
@@ -197,6 +204,11 @@ export async function getFundamentals(
     const opIncome = num(latest.financials?.income_statement?.operating_income_loss);
     const priorOpIncome = num(prior?.financials?.income_statement?.operating_income_loss);
     const priorRev = num(prior?.financials?.income_statement?.revenues);
+    // 4c-2: YoY margin baselines (4 quarters ago) for margin-trend signal.
+    const yearAgoOpIncome = num(yearAgo?.financials?.income_statement?.operating_income_loss);
+    const yearAgoGrossProfit = num(yearAgo?.financials?.income_statement?.gross_profit);
+    // Q/Q gross margin baseline (prior quarter)
+    const priorGrossProfit = num(prior?.financials?.income_statement?.gross_profit);
     const debt = num(latest.financials?.balance_sheet?.long_term_debt);
     const equity = num(latest.financials?.balance_sheet?.equity);
 
@@ -224,6 +236,14 @@ export async function getFundamentals(
         revenue !== undefined && grossProfit !== undefined && revenue !== 0
           ? grossProfit / revenue
           : undefined,
+      priorGrossMargin:
+        priorRev !== undefined && priorGrossProfit !== undefined && priorRev !== 0
+          ? priorGrossProfit / priorRev
+          : undefined,
+      priorGrossMarginYoY:
+        priorRevenue !== undefined && yearAgoGrossProfit !== undefined && priorRevenue !== 0
+          ? yearAgoGrossProfit / priorRevenue
+          : undefined,
       operatingMargin:
         revenue !== undefined && opIncome !== undefined && revenue !== 0
           ? opIncome / revenue
@@ -231,6 +251,10 @@ export async function getFundamentals(
       priorOperatingMargin:
         priorRev !== undefined && priorOpIncome !== undefined && priorRev !== 0
           ? priorOpIncome / priorRev
+          : undefined,
+      priorOperatingMarginYoY:
+        priorRevenue !== undefined && yearAgoOpIncome !== undefined && priorRevenue !== 0
+          ? yearAgoOpIncome / priorRevenue
           : undefined,
       debtToEquity:
         debt !== undefined && equity !== undefined && equity !== 0
