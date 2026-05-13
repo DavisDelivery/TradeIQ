@@ -51,6 +51,12 @@ export interface BoardSnapshot {
   freshnessBudgetMs: number;
   /** Optional warnings the scan emitted (rate-limit hits, partial failures). */
   warnings?: string[];
+  /** 4c-2: sieve metadata for Russell snapshots produced by the 3-stage sieve. */
+  sieve?: {
+    stage1: { scored: number; survived: number; thresholdScore: number | null; budgetMs: number; partial: boolean };
+    stage2: { scored: number; survived: number; thresholdScore: number | null; budgetMs: number; partial: boolean };
+    stage3: { scored: number; survived: number; budgetMs: number; partial: boolean };
+  };
 }
 
 // Per-board freshness budgets. Intraday signals (price action, breadth) get

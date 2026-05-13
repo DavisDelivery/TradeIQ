@@ -33,6 +33,10 @@ export const SHAPES = {
     stats: {},
     universe: null,
     generatedAt: null,
+    // 4c-2: optional sieve telemetry from russell snapshots. Absent on
+    // largecap/all (no sieve runs there). Set as `null` here so the
+    // validator pipes the field through if present without dropping it.
+    sieve: null,
   },
   catalyst: {
     picks: [],

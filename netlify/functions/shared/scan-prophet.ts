@@ -47,6 +47,9 @@ export interface ProphetPick extends ProphetScore {
   priceChangePct: number;
   /** Set lazily by the live endpoint — never populated by scheduled scan. */
   narrative?: string;
+  /** 4c-2: telemetry — which sieve stage this pick reached. Absent on
+   *  largecap/all (no sieve); set to 3 by the russell sieve orchestrator. */
+  _sieve_stage_max?: 3;
   earnings?: {
     epsGrowthYoY?: number;
     revenueGrowthYoY?: number;
@@ -60,6 +63,11 @@ export interface ProphetPick extends ProphetScore {
     nextEarningsDate?: string;
     daysUntilEarnings?: number;
     postEarningsDrift?: boolean;
+    // 4c-2: Chad's earnings priority signals, surfaced on the row chip strip
+    // and the detail view.
+    operatingMarginTrendPp?: number;  // YoY change in operating margin (pp)
+    grossMarginTrendPp?: number;      // YoY change in gross margin (pp)
+    peExpansionPct?: number;           // (pe - pe1yAgo) / pe1yAgo * 100
   };
 }
 
@@ -72,6 +80,13 @@ export interface RunProphetScanOpts {
   /** Stop scanning once we have this many qualified picks (live mode). Set to Infinity for scheduled. */
   sufficientQualified?: number;
   logger?: Logger;
+  /**
+   * 4c-2: explicit ticker list to score, overriding the universe resolution.
+   * Used by the sieve's Stage 3 to score only Stage 2 survivors instead of
+   * the full universe. Tickers must exist in the static UNIVERSE table so
+   * the name + sector metadata can be resolved.
+   */
+  explicitTickers?: string[];
 }
 
 export interface RunProphetScanResult {
@@ -109,9 +124,18 @@ export async function runProphetScan(
   const warnings: string[] = [];
 
   const all = resolveProphetUniverse(opts.universe);
-  const universeChecked = all.length;
+  // 4c-2: if explicitTickers is provided (sieve Stage 3), filter the
+  // universe down to those tickers — preserves name + sector metadata
+  // without forcing callers to reconstruct UniverseEntries.
+  const filteredAll = opts.explicitTickers
+    ? (() => {
+        const want = new Set(opts.explicitTickers);
+        return all.filter((e) => want.has(e.ticker));
+      })()
+    : all;
+  const universeChecked = filteredAll.length;
   const cap = opts.scanCap ?? Infinity;
-  const scanList = isFinite(cap) ? all.slice(0, cap) : all;
+  const scanList = isFinite(cap) ? filteredAll.slice(0, cap) : filteredAll;
 
   log?.info('prophet_scan_started', {
     universe: opts.universe,
@@ -121,7 +145,10 @@ export async function runProphetScan(
   });
 
   const to = new Date().toISOString().slice(0, 10);
-  const from = new Date(Date.now() - 300 * 86_400_000).toISOString().slice(0, 10);
+  // 4c-2: bumped from 300 → 400 calendar days so the new peExpansion signal
+  // has enough history (needs bars.length >= 252 trading days for the 1y-ago
+  // bar lookup). 400 calendar days ≈ 275 trading days — safe margin.
+  const from = new Date(Date.now() - 400 * 86_400_000).toISOString().slice(0, 10);
 
   // Shared context: SPY bars, sector ETF bars, regime. Fetched once.
   const [spyBars, regime] = await Promise.all([
@@ -267,12 +294,45 @@ async function scoreTicker(
       ? pe / (fund.epsGrowthYoY * 100)
       : undefined;
 
+  // 4c-2: multiple expansion. Compare current TTM P/E to ~1y-ago TTM P/E.
+  // Both numerators use TTM EPS so the comparison is apples-to-apples.
+  // Falls back to undefined when fund.priorTtmEps is missing (newer ticker
+  // with <7 quarters of history) — we'd rather emit no signal than a
+  // distorted one comparing TTM to single-quarter EPS.
+  let pe1yAgo: number | undefined;
+  let peExpansion: number | undefined;
+  if (fund?.priorTtmEps && fund.priorTtmEps > 0 && bars.length >= 252) {
+    const yearAgoBar = bars[bars.length - 252];
+    if (yearAgoBar?.c) {
+      pe1yAgo = yearAgoBar.c / fund.priorTtmEps;
+      if (pe !== undefined && pe1yAgo > 0) {
+        peExpansion = (pe - pe1yAgo) / pe1yAgo;
+      }
+    }
+  }
+
+  // 4c-2: margin trend (YoY, in percentage points). Already have current +
+  // 4q-ago margins on the snapshot.
+  const operatingMarginTrendPp =
+    fund?.operatingMargin !== undefined && fund?.priorOperatingMarginYoY !== undefined
+      ? (fund.operatingMargin - fund.priorOperatingMarginYoY) * 100
+      : undefined;
+  const grossMarginTrendPp =
+    fund?.grossMargin !== undefined && fund?.priorGrossMarginYoY !== undefined
+      ? (fund.grossMargin - fund.priorGrossMarginYoY) * 100
+      : undefined;
+
   const fundInput: FundInput = {
     revenueGrowthYoY: fund?.revenueGrowthYoY,
     epsGrowthYoY: fund?.epsGrowthYoY,
     operatingMargin: fund?.operatingMargin,
     grossMargin: fund?.grossMargin,
+    priorOperatingMargin: fund?.priorOperatingMargin,
     pe,
+    pe1yAgo,
+    peExpansion,
+    operatingMarginTrendPp,
+    grossMarginTrendPp,
     peg,
     epsSurpriseBeats: intel?.beatsLast4 ?? undefined,
     epsAcceleration: intel?.epsAcceleration,
@@ -337,6 +397,10 @@ async function scoreTicker(
           nextEarningsDate: intel.nextEarningsDate,
           daysUntilEarnings: intel.daysUntilEarnings,
           postEarningsDrift: intel.postEarningsDrift,
+          // 4c-2: surfacing the new earnings-priority signals on the pick.
+          operatingMarginTrendPp,
+          grossMarginTrendPp,
+          peExpansionPct: peExpansion != null ? +(peExpansion * 100).toFixed(1) : undefined,
         }
       : undefined,
   };

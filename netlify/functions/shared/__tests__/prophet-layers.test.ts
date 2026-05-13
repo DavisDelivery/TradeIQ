@@ -257,6 +257,84 @@ describe('layerFundamental', () => {
     const r = layerFundamental(fund);
     expect(r.pass).toBe(false);
   });
+
+  // 4c-2: new earnings-priority signals
+  it('expanding op margin (YoY) adds score and flags', () => {
+    const fund: FundInput = {
+      revenueGrowthYoY: 0.10,
+      epsGrowthYoY: 0.10,
+      operatingMargin: 0.20,
+      operatingMarginTrendPp: 4, // strong expansion
+    };
+    const r = layerFundamental(fund);
+    expect(r.flags).toContain('op_margin_expanding_strong');
+  });
+
+  it('compressing op margin (YoY) penalises score', () => {
+    const fundCompress: FundInput = {
+      revenueGrowthYoY: 0.10,
+      epsGrowthYoY: 0.10,
+      operatingMargin: 0.18,
+      operatingMarginTrendPp: -3,
+    };
+    const r1 = layerFundamental(fundCompress);
+    expect(r1.flags).toContain('op_margin_compressing');
+
+    const fundFlat: FundInput = { ...fundCompress, operatingMarginTrendPp: 0 };
+    const r2 = layerFundamental(fundFlat);
+    expect(r1.score).toBeLessThan(r2.score);
+  });
+
+  it('multiple expansion adds score; contraction penalises', () => {
+    const baseFund: FundInput = {
+      revenueGrowthYoY: 0.10,
+      epsGrowthYoY: 0.10,
+    };
+    const expanding = layerFundamental({ ...baseFund, peExpansion: 0.40 });
+    const contracting = layerFundamental({ ...baseFund, peExpansion: -0.25 });
+    expect(expanding.flags).toContain('multiple_expanding_strong');
+    expect(contracting.flags).toContain('multiple_contracting');
+    expect(expanding.score).toBeGreaterThan(contracting.score);
+  });
+
+  // 4c-2: earnings-quality gate
+  it('earnings-quality gate fails on severe EPS contraction even with strong tailwinds', () => {
+    const fund: FundInput = {
+      revenueGrowthYoY: 0.20,
+      epsGrowthYoY: -0.25, // severe
+      operatingMargin: 0.25,
+      operatingMarginTrendPp: 5,
+      peExpansion: 0.30,
+    };
+    const r = layerFundamental(fund);
+    expect(r.pass).toBe(false);
+    expect(r.flags.some((f) => f.startsWith('gate_failed:eps_contraction_severe'))).toBe(true);
+  });
+
+  it('earnings-quality gate fails anemic EPS with no quality offsets', () => {
+    const fund: FundInput = {
+      revenueGrowthYoY: 0.10,
+      epsGrowthYoY: 0.02,
+      operatingMargin: 0.15,
+      operatingMarginTrendPp: 0,
+      peExpansion: 0,
+    };
+    const r = layerFundamental(fund);
+    expect(r.pass).toBe(false);
+    expect(r.flags.some((f) => f.startsWith('gate_failed:eps_weak_no_quality_offsets'))).toBe(true);
+  });
+
+  it('earnings-quality gate passes anemic EPS when margin trend rescues', () => {
+    const fund: FundInput = {
+      revenueGrowthYoY: 0.10,
+      epsGrowthYoY: 0.02,
+      operatingMargin: 0.15,
+      operatingMarginTrendPp: 2, // rescues
+    };
+    const r = layerFundamental(fund);
+    expect(r.pass).toBe(true);
+    expect(r.details.earnings_quality_gate).toBe(true);
+  });
 });
 
 // ───────────────────────────────────────────────────────────────────────────
