@@ -3,8 +3,9 @@
 **Author:** orchestrator
 **Target version:** `0.18.0-alpha` (composite reweights + new analyst inputs constitute a real scoring change)
 **MODEL_VERSION:** bump to `2026.03.0` on merge — historical snapshots remain on `2026.02.0` for honest comparability.
-**Dependencies:** Phase 4c-2 merged (Prophet layers); Phase 4e-1 merged or in flight (its W0 audit produces useful raw data 4f consumes); Quiver + Polygon API keys already provisioned in Netlify env.
-**Parallel-with:** none. Run after 4e-1 + 5a have landed; 4f's repairs may retroactively improve both.
+**Dependencies:** Phase 4c-2 merged (Prophet layers); Quiver + Polygon API keys already provisioned in Netlify env.
+**Relationship to 4e-1:** Phase 4e-1's W0 stub-layer audit covers Prophet-largecap only and produces a useful reference table if it lands first. **4f's W1 is methodologically independent and broader** — Target + Prophet across both largecap and russell2k universes — so 4f is not blocked on 4e-1. If 4e-1's audit table exists when 4f starts, treat it as one input informing the Prophet-largecap rows of your own audit; if not, generate the full data from scratch.
+**Parallel-with:** none recommended. Run serially after 4e-1 + 5a primarily to avoid review-merge collisions on `prophet-layers.ts` (4f rewrites BASE_WEIGHTS; 4e-1 reads from it). Not a hard block.
 
 ---
 
@@ -91,28 +92,13 @@ API key + data feeds) and verifies/repairs the Quiver Form 4 path.
 
 ## W0 — Preconditions
 
-1. `git fetch origin && git log --oneline -5 origin/main` — confirm
-   4e-1 and 5a are both merged (or that Chad has explicitly OK'd
-   starting 4f early). If 4e-1 isn't merged, stop and surface — its
-   W0 audit table is input to 4f's W1.
-2. `npm ci && npm test` — confirm baseline test count is current
-   (≥ 446 + whatever 4e-1 added).
+1. `git fetch origin && git log --oneline -5 origin/main` — confirm you're on a current main. 4e-1 and 5a being merged first is recommended for review-merge deconfliction (4f rewrites `BASE_WEIGHTS` in `prophet-layers.ts`) but neither is a hard methodological block on 4f.
+2. `npm ci && npm test` — confirm baseline test count is current.
 3. `npm run build` — clean.
-4. Read 4e-1's `reports/phase-4e-1/backtest-validation.md` § 0 — the
-   layer activity audit. This is the Prophet-side starting point.
-   If 4e-1 found N stubs, 4f addresses each by name.
-5. Read `netlify/functions/shared/prophet-layers.ts` end-to-end. Every
-   layer's compute function lives here. Locate the default-return paths
-   (`return { score: 50, pass: false, details: {} }` or equivalent) —
-   these are the stub fallbacks the audit will catch.
-6. Read `netlify/functions/scan-target.ts` (or equivalent for Target
-   Board scoring) and the analyst modules under
-   `netlify/functions/shared/target-analysts/` (or wherever Target's
-   10 analysts live — find via `grep -r "Insider\|Political\|Macro\|Patents" netlify/functions/shared/`).
-7. Confirm Polygon dark-pool prints are visible in the equity trade
-   feed: a sample `GET https://api.polygon.io/v3/trades/{ticker}` with
-   recent date should show trades with TRF condition codes (D, U) for
-   off-exchange reporting.
+4. If `reports/phase-4e-1/backtest-validation.md` exists on main, read its § 0 layer activity audit table. It covers Prophet-largecap only and is reference data for that one slice of your W1 audit — not a substitute for it. If the file doesn't exist, no problem; W1 generates the full dataset from scratch.
+5. Read `netlify/functions/shared/prophet-layers.ts` end-to-end. Every Prophet layer's compute function lives here. Locate the default-return paths (`return { score: 50, pass: false, details: {} }` or equivalent) — these are the stub fallbacks the audit will catch.
+6. Read the Target Board analyst modules under `netlify/functions/shared/target-analysts/` (or wherever Target's 10 analysts live — find via `grep -rE "Insider|Political|Macro|Patents" netlify/functions/shared/`).
+7. Confirm Polygon dark-pool prints are visible in the equity trade feed: a sample `GET https://api.polygon.io/v3/trades/{ticker}` with recent date should show trades with TRF reporting venue codes in the `x` (exchange) field. Sanity-check that the TRF reporting venue codes you observe match what `dark-pool.ts` will filter on (W4a).
 
 ---
 
