@@ -46,7 +46,8 @@ export async function runProphetSieve(opts: RunSieveOpts): Promise<SieveResult> 
   const warnings: string[] = [];
 
   const to = new Date().toISOString().slice(0, 10);
-  const from = new Date(Date.now() - 300 * 86_400_000).toISOString().slice(0, 10);
+  // 400-day window so Stage 2 has bars for the 1y-ago P/E lookup (needs >=252 trading days).
+  const from = new Date(Date.now() - 400 * 86_400_000).toISOString().slice(0, 10);
 
   // SPY bars fetched once and reused across stages.
   const spyBars = await getDailyBars(SPY, from, to).catch(() => []);

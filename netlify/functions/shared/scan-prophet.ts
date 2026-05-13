@@ -145,7 +145,10 @@ export async function runProphetScan(
   });
 
   const to = new Date().toISOString().slice(0, 10);
-  const from = new Date(Date.now() - 300 * 86_400_000).toISOString().slice(0, 10);
+  // 4c-2: bumped from 300 → 400 calendar days so the new peExpansion signal
+  // has enough history (needs bars.length >= 252 trading days for the 1y-ago
+  // bar lookup). 400 calendar days ≈ 275 trading days — safe margin.
+  const from = new Date(Date.now() - 400 * 86_400_000).toISOString().slice(0, 10);
 
   // Shared context: SPY bars, sector ETF bars, regime. Fetched once.
   const [spyBars, regime] = await Promise.all([
