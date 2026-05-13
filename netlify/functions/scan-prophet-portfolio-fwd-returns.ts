@@ -1,0 +1,156 @@
+// Phase 4e-1 — Lagged forward-return populator for the decisionLog.
+//
+// Daily scheduled function (21:00 UTC, every day). Scans the
+// prophetPortfolio/{universe}/decisionLog/ collection for rows old
+// enough that one of their forward-return windows has matured, and
+// fills in the corresponding return from Polygon daily bars. Phase 5c
+// consumes these rows to train an alternative ranking signal.
+//
+// Windows: 30d, 60d, 90d. A row is "needs update" if its decisionDate
+// is at least N+5 calendar days in the past AND the corresponding
+// forwardReturnNd field is still missing. (The +5 buffer lets weekends
+// and holidays settle so we don't re-write rows multiple times.)
+//
+// This function lands dormant pre-W5 — decisionLog is empty until the
+// rebalance scheduled function ships and starts writing rows. Until
+// then this scan is a no-op each day.
+
+import { schedule } from '@netlify/functions';
+import { getDailyBars } from './shared/data-provider';
+import { logger } from './shared/logger';
+import {
+  listDecisionLogRowsOlderThan,
+  updateDecisionLogForwardReturns,
+} from './shared/prophet-portfolio/state';
+import {
+  computeForwardReturns,
+  type PriceBar,
+} from './shared/prophet-portfolio/decision-log';
+import type {
+  DecisionLogRow,
+  PortfolioUniverse,
+} from './shared/prophet-portfolio/types';
+
+const UNIVERSES: PortfolioUniverse[] = ['largecap'];
+
+function daysBetweenStrings(a: string, b: string): number {
+  const ams = Date.parse(`${a}T00:00:00Z`);
+  const bms = Date.parse(`${b}T00:00:00Z`);
+  return Math.round((bms - ams) / 86_400_000);
+}
+
+/**
+ * Identify the windows on this row that have matured (decisionDate +
+ * window + 5d buffer ≤ today) AND are still null in the row.
+ */
+export function maturedWindowsFor(
+  row: DecisionLogRow,
+  today: string,
+): number[] {
+  const out: number[] = [];
+  const age = daysBetweenStrings(row.decisionDate, today);
+  for (const w of [30, 60, 90]) {
+    if (age < w + 5) continue;
+    const fieldName = `forwardReturn${w}d` as keyof DecisionLogRow;
+    if (row[fieldName] == null) out.push(w);
+  }
+  return out;
+}
+
+async function fetchBars(
+  ticker: string,
+  fromDate: string,
+  toDate: string,
+): Promise<PriceBar[]> {
+  try {
+    const raw = await getDailyBars(ticker, fromDate, toDate);
+    return raw
+      .filter((b: { t?: number; c?: number }) => typeof b.t === 'number' && typeof b.c === 'number')
+      .map((b: { t?: number; c?: number }) => ({
+        date: new Date(b.t as number).toISOString().slice(0, 10),
+        close: b.c as number,
+      }));
+  } catch {
+    return [];
+  }
+}
+
+export interface PopulateResult {
+  rowsConsidered: number;
+  rowsUpdated: number;
+  warnings: string[];
+}
+
+export async function populateForwardReturns(
+  universe: PortfolioUniverse,
+  today: string,
+  batchLimit: number = 200,
+): Promise<PopulateResult> {
+  const warnings: string[] = [];
+  // Rows older than today-30-5d are the earliest that could have
+  // matured windows. Pull a broad batch and filter row-by-row.
+  const cutoff = new Date(Date.parse(`${today}T00:00:00Z`) - 35 * 86_400_000)
+    .toISOString()
+    .slice(0, 10);
+  const rows = await listDecisionLogRowsOlderThan(universe, cutoff, batchLimit);
+  let updated = 0;
+  for (const row of rows) {
+    const windows = maturedWindowsFor(row, today);
+    if (windows.length === 0) continue;
+    const maxWindow = Math.max(...windows);
+    const fromDate = row.decisionDate;
+    const toDate = new Date(
+      Date.parse(`${row.decisionDate}T00:00:00Z`) +
+        (maxWindow + 5) * 86_400_000,
+    )
+      .toISOString()
+      .slice(0, 10);
+    const bars = await fetchBars(row.ticker, fromDate, toDate);
+    if (bars.length === 0) {
+      warnings.push(`no bars for ${row.ticker} ${row.decisionDate}..${toDate}`);
+      continue;
+    }
+    const ret = computeForwardReturns(row.decisionDate, bars, windows);
+    const patch: Record<string, number | null> = {};
+    for (const w of windows) {
+      const key = `forwardReturn${w}d`;
+      if (ret[key] != null) patch[key] = ret[key];
+    }
+    if (Object.keys(patch).length > 0) {
+      await updateDecisionLogForwardReturns(
+        universe,
+        row.ticker,
+        row.decisionDate,
+        patch as any,
+      );
+      updated++;
+    }
+  }
+  return { rowsConsidered: rows.length, rowsUpdated: updated, warnings };
+}
+
+export const handler = schedule('0 21 * * *', async () => {
+  const log = logger.child({ fn: 'scan-prophet-portfolio-fwd-returns' });
+  const today = new Date().toISOString().slice(0, 10);
+  const summary: Record<string, PopulateResult> = {};
+  try {
+    for (const u of UNIVERSES) {
+      summary[u] = await populateForwardReturns(u, today);
+      log.info('fwd_returns_universe_done', {
+        universe: u,
+        rowsConsidered: summary[u].rowsConsidered,
+        rowsUpdated: summary[u].rowsUpdated,
+      });
+    }
+    return {
+      statusCode: 200,
+      body: JSON.stringify({ ok: true, today, summary }),
+    };
+  } catch (err: any) {
+    log.error('fwd_returns_failed', { err: String(err?.message ?? err) });
+    return {
+      statusCode: 500,
+      body: JSON.stringify({ ok: false, error: String(err?.message ?? err) }),
+    };
+  }
+});

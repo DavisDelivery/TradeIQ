@@ -114,6 +114,13 @@
   to = "/.netlify/functions/prophet-picks"
   status = 200
 
+# Phase 4e-1: Prophet Portfolio read endpoint. Returns persisted state,
+# last 20 swaps, last 252-day equity curve, and on-the-fly window metrics.
+[[redirects]]
+  from = "/api/prophet-portfolio"
+  to = "/.netlify/functions/prophet-portfolio"
+  status = 200
+
 # Phase 4c-1: on-demand narration for a single Prophet pick. POST only.
 # Bounded by per-IP rate limit (30/hour) inside the function; no Netlify-
 # level method gating because that's known broken (see /api/backtest-runs
