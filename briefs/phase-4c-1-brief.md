@@ -131,7 +131,7 @@ Body: {
 Response:
   200 { ok: true, narrative: string, cached: boolean }
   400 { ok: false, error: 'missing fields' }
-  429 { ok: false, error: 'Anthropic budget exceeded' }   ← only if budget cap exists
+  429 { ok: false, error: 'rate limit exceeded' }       ← per-IP rate limit (W2 step 5)
   500 { ok: false, error: <msg> }
 ```
 
@@ -143,7 +143,7 @@ Implementation requirements:
 
 3. **Anthropic call.** Use the same model + parameters as `generateNarrative`. Phase 4a hotfix removed `temperature` from the call signature (Opus 4.7 deprecated it). Verify the new endpoint uses the same Opus 4.7 model string as the existing code. Do NOT add `temperature`.
 
-4. **Budget guard.** If the Anthropic budget cap from Phase 0's leftover list is implemented, this endpoint must respect it (return 429 when exceeded). If the budget cap is still not implemented (likely the case), surface a warning log every time the endpoint fires and document in the PR description that this endpoint can be a runaway cost if used heavily. Chad should know.
+4. **Spend awareness.** Anthropic budget cap was dropped by Chad's decision 2026-05-12. This endpoint must NOT refuse on cost grounds. Instead: surface a warning log every time it fires, and emit a per-request cost estimate. Document in the PR description that this endpoint is bounded by user-click frequency × rate limit (W2 step 5), not by a budget gate. Chad will monitor real spend in the Anthropic dashboard.
 
 5. **Rate limit.** Defense-in-depth: track per-IP request counts in-memory (no Firestore needed) and refuse more than 30 narrations per hour from the same client. The frontend won't hit this normally; this prevents an accidental loop or scripted abuse.
 
@@ -248,7 +248,7 @@ const { snapshotId } = await writeSnapshot('prophet', UNIVERSE, {
 `narrateAll` parameters:
 - Iterates picks in parallel with `Promise.all` and concurrency 4 (Claude API tolerates this).
 - Per-pick try/catch — one failure doesn't kill the batch; failed picks ship without a narrative and the W1+W2 lazy-load handles them.
-- Global budget guard: stops if cumulative Anthropic spend approaches the configured cap (Phase 0 dependency). If no cap is in place, log a warning and proceed.
+- Spend awareness: emit a warning log if cumulative Anthropic spend during this scan exceeds a soft threshold (e.g. $5/scan). Do NOT refuse — the Anthropic budget cap was explicitly dropped by Chad's decision 2026-05-12. Warning logs only; never fail-closed.
 - Returns void; mutates `picks[i].narrative` in place.
 
 **Anthropic spend impact, written down honestly:**
@@ -259,10 +259,7 @@ const { snapshotId } = await writeSnapshot('prophet', UNIVERSE, {
 
 Per-narration cost at current Sonnet pricing is roughly $0.001–0.003. Daily ceiling: ~$15/day during heavy usage. Monthly ceiling: ~$450/month worst case if all three universes run at max qualified-pick counts continuously.
 
-**This brief does NOT ship W4 to production without the budget cap.** If the Phase 0 Anthropic budget cap (in `briefs/phase-0-brief.md` and friends) is still unimplemented, W4 is gated on it. The brief specifies the W4 code but the deploy plan is:
-
-- Day 1: ship W1+W2+W3 (UI placeholder + lazy endpoint). Live narration on detail expand. Spend is bounded by user clicks.
-- Day 2+: ship W4 only after the budget cap is wired and tested. Specify the cap in the PR description ($20/day initially, raise once observed usage stabilizes).
+**W4 ships in this same PR.** The Anthropic budget cap was explicitly dropped by Chad's decision 2026-05-12 — phases that increase API spend ship without a cap. Surface per-scan Anthropic cost in warning logs so anomalies are visible in Sentry / Netlify logs, but do NOT refuse calls. Document the expected ceiling in the PR description so Chad can monitor real spend against expectation.
 
 ## W5 — EPS beats data bug
 
@@ -304,7 +301,6 @@ In `src/ProphetView.jsx`, render `epsBeats === null` as `— / 4 beats` and `eps
 - `APP_VERSION` → `0.15.1-alpha`.
 - `ORCHESTRATOR.md`:
   - Row for `4c-1` (this PR), `done`, summarize W1–W5 outcomes.
-  - Phase 0 leftover row for Anthropic budget cap: bump priority to `urgent` (gates W4 production deploy).
 - PR description in `briefs/phase-4c-1-pr-description.md`.
 
 ## Verification
@@ -323,8 +319,8 @@ In `src/ProphetView.jsx`, render `epsBeats === null` as `— / 4 beats` and `eps
 
 ## Out of scope
 
-- **Narrate-all in scheduled scanner (W4) does not deploy in this PR.** W4 code lands behind the budget cap; deploy in a follow-up after Anthropic budget cap is wired.
-- **Anthropic budget cap implementation** is its own brief. This PR documents the dependency.
+- **Narrate-all in scheduled scanner (W4) ships in this PR.** Previously gated on budget cap; cap was dropped 2026-05-12.
+- **Anthropic budget cap** — explicitly dropped 2026-05-12. Do NOT implement. Spend warning logs only.
 - **The russell sieve architecture** is its own brief (`briefs/phase-4c-2-brief.md`). The two are independent.
 - **Visual redesign of the prophet detail layout** — no.
 - **Adding new analyst layers** — Phase 6+.
@@ -348,7 +344,7 @@ src/hooks/useGenerateNarrative.js                    NEW   ~40 lines
 src/hooks/__tests__/useGenerateNarrative.test.jsx    NEW   ~80 lines
 src/__tests__/ProphetDetail.test.jsx                 NEW   ~80 lines
 src/App.jsx                                           edit  1 line   (APP_VERSION)
-ORCHESTRATOR.md                                       edit  4c-1 row + Phase 0 budget cap bump
+ORCHESTRATOR.md                                       edit  4c-1 row
 briefs/phase-4c-1-pr-description.md                  NEW
 ```
 
@@ -356,7 +352,7 @@ briefs/phase-4c-1-pr-description.md                  NEW
 
 ## Note to the executing agent
 
-The big trap on this brief is shipping W4 (narrate-all in scanner) without the budget cap. Don't. The Anthropic API key has no per-day cap configured in their dashboard by default — a runaway scan loop could rack up real money in hours. W1+W2+W3 ship freely because user clicks bound the spend; W4 is unbounded by default and must wait.
+The biggest trap on this brief is over-engineering spend protection. The Anthropic budget cap was dropped 2026-05-12 — Chad's call. Ship W4 with the warning-log instrumentation specified, no refusal logic. The expected daily spend ceiling is ~$15/day during heavy usage (~$450/month worst case across all three universes); document this in the PR so Chad sees the projection.
 
 On W5 — the EPS bug diagnosis is what's load-bearing. If you fix the comparator without understanding why most tickers fall through to it, the fix may break differently next quarter. Document what you found in the PR description.
 
