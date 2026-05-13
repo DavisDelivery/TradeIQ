@@ -104,19 +104,47 @@ ONLY for:
 Never write the PAT to any file in the repo. Never commit it. Never
 print it to logs.
 
-You will NOT need:
-- Firebase service account JSON for production data (the audit script
-  in W1 uses the same `latestSnapshot` / `snapshotsAtOrBefore` helpers
-  the rest of the codebase uses, which require no special credentials
-  in the test environment because they're mocked).
-- Live Polygon/Quiver keys for tests (mock the API responses per the
-  existing patterns).
+### What you need vs. what Chad runs separately
 
-You WILL need (already in Netlify production env, not locally):
-- `POLYGON_API_KEY` — used by the live scheduled
-  `scan-institutional-flow-largecap.ts` function in production after
-  merge. You don't need it locally because your tests should mock
-  Polygon responses (see PART 4 templates).
+Two distinct concerns, easy to conflate. Read carefully:
+
+**For unit tests (`npm test`) — you do NOT need:**
+- Firebase service account JSON. `npm test` uses mocked Firestore
+  (see PART 4.1's audit-script template + the existing
+  `snapshot-store-pit.test.ts` pattern). Tests pass without any
+  credentials.
+- Live Polygon/Quiver keys. Tests mock API responses per existing
+  patterns.
+
+**For the W1 audit's *real* findings — `FIREBASE_SERVICE_ACCOUNT` IS
+required.** Mocked tests prove the audit script *works*; they don't
+produce real findings. The audit script's actual run against
+production Prophet + Target snapshots is what populates
+`reports/phase-4f/audit.md` with the per-analyst stdev / pct-exactly-50
+classifications that drive W2/W3/W5.
+
+Chad's plan for that live run:
+- If he provides `FIREBASE_SERVICE_ACCOUNT` in his next message
+  (alongside the PAT), you run the audit live as part of W1.
+- If he doesn't, you ship the audit script + tests, write
+  `reports/phase-4f/audit.md` with **VERDICT: PENDING LIVE-DATA RUN**
+  (same posture 4e-1's `backtest-validation.md` used), document
+  precisely how Chad runs it, and STOP. Do NOT proceed to W2/W3/W5
+  against mocked or synthesized classifications — those decisions
+  are binding and must come from real data.
+
+**For W6 (pre/post-4f backtest comparison):** this depends on 4e-1's
+backtest harness. If 4e-1's full-window backtest is itself still
+PENDING when you start W6, run `scripts/run-portfolio-backtest.ts`'s
+`--demo` mode (4e-1 added this for pipeline verification against a
+synthetic dataset) and clearly label W6's output as DEMO. The W6
+report is a sanity check, not a binding gate (the brief says so),
+but it must be honest about whether real-data was used.
+
+**`POLYGON_API_KEY`** — used by the live scheduled
+`scan-institutional-flow-largecap.ts` function in production after
+merge. Already in Netlify env; you don't need it locally because
+your tests mock Polygon responses (see PART 4 templates).
 
 If you find yourself thinking "I need to hit live Polygon to validate
 something the audit script depends on" — stop, write the concrete
@@ -633,6 +661,30 @@ check. If the IC barely moved, we still ship (the original composite
 had dishonest stubs; the new one is honest), but the report notes
 that real-data inputs didn't dramatically improve ranking quality
 yet. That's information for Phase 5a's interpretation of its findings.
+
+### If 4e-1's backtest is still PENDING when you start W6
+
+W6's pre/post comparison depends on 4e-1's harness
+(`scripts/run-portfolio-backtest.ts`) running live against real
+Polygon bars. If 4e-1's full-window backtest hasn't been populated
+yet, you have two honest options:
+
+- **(a) Run `--demo` mode** (4e-1 added this flag for pipeline
+  verification). It runs the harness against a deterministic
+  synthetic dataset. Mark the W6 report as DEMO at the top — the
+  numbers prove the pre/post wiring works end-to-end but say
+  nothing about whether the rule beats SPY in production. This
+  matches the precedent 4e-1 set with its own demo-run.md.
+- **(b) Skip the live run entirely.** Ship W3 + W4 + W5 with W6's
+  report marked PENDING LIVE-DATA RUN, document the runbook (env
+  vars + commands), and surface to Chad. The brief explicitly says
+  W6 is a sanity check, not a gate — shipping without it is
+  acceptable if Chad approves.
+
+Do NOT synthesize IC numbers that look plausible. Either run real
+data (if credentials are available), run `--demo` with the DEMO
+label, or mark PENDING. The brief's intent is that W6 informs Phase
+5a's interpretation; meaningless numbers in W6 actively harm that.
 
 ---
 
@@ -1516,6 +1568,17 @@ don't apologize for any judgment calls. The numbers speak.
   dark-pool data to an analyst that has a null-default bug just means
   the bug returns 50 with dark-pool context attached. Order is W1 →
   W2 → W3 → W4 → W5 → W6.
+- **Producing fake W1 audit findings against mocked data.** Mocked
+  Firestore in `npm test` proves the audit script works; it does NOT
+  produce real classifications. If Chad has not provided
+  `FIREBASE_SERVICE_ACCOUNT` by the time you're ready to run W1
+  live, the audit doc is **PENDING LIVE-DATA RUN** — write the
+  script, write the tests, document the gap, hand off. Synthesizing
+  "8 of 17 analysts are Stub" against fixture data and then doing
+  W3 repairs on those imaginary findings is exactly the dishonesty
+  W3 exists to remove. 4e-1 set this precedent — read its
+  `reports/phase-4e-1/backtest-validation.md` for the PENDING posture
+  if you're unsure how to write it.
 - **Hardcoding specific analyst names into your W3 logic.** W3
   decisions come from the W2 root-cause classifications, not from
   the orchestrator's pre-conceived list. If your W1 audit classifies
