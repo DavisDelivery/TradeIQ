@@ -101,6 +101,11 @@ export interface FundamentalsSnapshot {
   priorEps?: number;
   epsGrowthYoY?: number;
   ttmEps?: number;
+  /** TTM EPS as of ~1 year ago (sum of quarters 3-6). Used by 4c-2 for
+   *  the multiple-expansion signal so current P/E (price/ttmEps) is
+   *  compared to a year-ago P/E on the same TTM basis, not against a
+   *  single quarter's EPS. */
+  priorTtmEps?: number;
   grossMargin?: number;
   /** Gross margin from prior quarter (Q/Q baseline). */
   priorGrossMargin?: number;
@@ -217,6 +222,23 @@ export async function getFundamentals(
       .map((r) => num(r.financials?.income_statement?.basic_earnings_per_share) ?? 0)
       .reduce((a, b) => a + b, 0);
 
+    // 4c-2: TTM EPS as of ~1y ago — quarters 4..7 in the results array
+    // (3 inclusive to 7 exclusive in slice terms). Requires >=7 quarters
+    // of history; falls back to undefined otherwise so callers know we
+    // can't compute the comparable 1y-ago P/E.
+    const priorTtmEps = results.length >= 7
+      ? results
+          .slice(3, 7)
+          .map((r) => num(r.financials?.income_statement?.basic_earnings_per_share))
+          .reduce<{ sum: number; ok: boolean }>(
+            (acc, v) =>
+              v !== undefined && Number.isFinite(v)
+                ? { sum: acc.sum + v, ok: acc.ok }
+                : { sum: acc.sum, ok: false },
+            { sum: 0, ok: true },
+          )
+      : { sum: 0, ok: false };
+
     return {
       ticker,
       revenue,
@@ -232,6 +254,7 @@ export async function getFundamentals(
           ? (eps - priorEpsYoY) / Math.abs(priorEpsYoY)
           : undefined,
       ttmEps,
+      priorTtmEps: priorTtmEps.ok && priorTtmEps.sum !== 0 ? priorTtmEps.sum : undefined,
       grossMargin:
         revenue !== undefined && grossProfit !== undefined && revenue !== 0
           ? grossProfit / revenue

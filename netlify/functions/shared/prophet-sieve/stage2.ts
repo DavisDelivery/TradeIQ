@@ -167,14 +167,15 @@ function computeFundBundle(
   bars: Bar[],
   spyBars: Bar[],
 ): FundBundle {
-  // Multiple expansion
+  // Multiple expansion — uses TTM-to-TTM for apples-to-apples (priorTtmEps,
+  // not the single-quarter priorEps).
   let peExpansion: number | undefined;
-  if (fund?.priorEps && fund.priorEps > 0 && bars.length >= 252 && fund.ttmEps && fund.ttmEps > 0) {
+  if (fund?.priorTtmEps && fund.priorTtmEps > 0 && bars.length >= 252 && fund.ttmEps && fund.ttmEps > 0) {
     const yearAgoBar = bars[bars.length - 252];
     const latestBar = bars[bars.length - 1];
     if (yearAgoBar?.c && latestBar?.c) {
       const pe = latestBar.c / fund.ttmEps;
-      const pe1y = yearAgoBar.c / fund.priorEps;
+      const pe1y = yearAgoBar.c / fund.priorTtmEps;
       if (pe1y > 0) peExpansion = (pe - pe1y) / pe1y;
     }
   }

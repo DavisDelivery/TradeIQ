@@ -294,17 +294,17 @@ async function scoreTicker(
       ? pe / (fund.epsGrowthYoY * 100)
       : undefined;
 
-  // 4c-2: multiple expansion. Compare current P/E to ~1y-ago P/E.
-  // We approximate 1y-ago TTM EPS as priorEps (most recent year-ago annual
-  // EPS). Not perfect — TTM rolls forward differently — but the directional
-  // signal is what matters: is the market paying more or less per dollar of
-  // earnings than it was a year ago?
+  // 4c-2: multiple expansion. Compare current TTM P/E to ~1y-ago TTM P/E.
+  // Both numerators use TTM EPS so the comparison is apples-to-apples.
+  // Falls back to undefined when fund.priorTtmEps is missing (newer ticker
+  // with <7 quarters of history) — we'd rather emit no signal than a
+  // distorted one comparing TTM to single-quarter EPS.
   let pe1yAgo: number | undefined;
   let peExpansion: number | undefined;
-  if (fund?.priorEps && fund.priorEps > 0 && bars.length >= 252) {
+  if (fund?.priorTtmEps && fund.priorTtmEps > 0 && bars.length >= 252) {
     const yearAgoBar = bars[bars.length - 252];
     if (yearAgoBar?.c) {
-      pe1yAgo = yearAgoBar.c / fund.priorEps;
+      pe1yAgo = yearAgoBar.c / fund.priorTtmEps;
       if (pe !== undefined && pe1yAgo > 0) {
         peExpansion = (pe - pe1yAgo) / pe1yAgo;
       }
