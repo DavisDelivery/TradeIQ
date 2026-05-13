@@ -38,6 +38,17 @@ export const SHAPES = {
     // validator pipes the field through if present without dropping it.
     sieve: null,
   },
+  prophetPortfolio: {
+    // 4e-1: paper-portfolio state, swaps, equity curve + window metrics.
+    // Pre-W5 the state field will be null and arrays will be empty; the
+    // UI (4e-2) renders an engine-pending placeholder in that case.
+    state: null,
+    swaps: [],
+    equityCurve: [],
+    metrics: {},
+    universe: null,
+    generatedAt: null,
+  },
   catalyst: {
     picks: [],
     generatedAt: null,
