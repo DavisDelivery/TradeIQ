@@ -11,6 +11,7 @@ import {
 import { LogButton } from './components/LogButton.jsx';
 import { FreshnessPill } from './components/FreshnessPill.jsx';
 import { useProphet } from './hooks/useProphet.js';
+import { useGenerateNarrative } from './hooks/useGenerateNarrative.js';
 
 const UNIVERSE_OPTIONS = [
   { id: 'largecap', label: 'Large Cap', desc: 'S&P 500 + NDX + Dow (~230)' },
@@ -258,9 +259,16 @@ const ProphetRow = ({ pick, expanded, onToggle }) => {
                     {pick.earnings.epsAcceleration > 0 ? '▲' : '▼'} {Math.abs(pick.earnings.epsAcceleration * 100).toFixed(0)}pp accel
                   </span>
                 )}
-                {pick.earnings.beatsLast4 !== undefined && (
+                {/* W5: distinguish null (Finnhub returned no surprises — "we don't know")
+                    from a real 0/N count ("we know they missed"). null renders as a
+                    muted em-dash chip so the user knows the system tried but couldn't
+                    compute. A number renders with the actual quarter denominator. */}
+                {pick.earnings.beatsLast4 === null && (
+                  <span className="text-neutral-600">— / 4 beats</span>
+                )}
+                {typeof pick.earnings.beatsLast4 === 'number' && (
                   <span className={pick.earnings.beatsLast4 >= 3 ? 'text-emerald-400' : pick.earnings.beatsLast4 <= 1 ? 'text-amber-400' : 'text-neutral-400'}>
-                    {pick.earnings.beatsLast4}/4 beats
+                    {pick.earnings.beatsLast4}/{pick.earnings.beatsLast4Quarters ?? 4} beats
                   </span>
                 )}
                 {pick.earnings.postEarningsDrift && (
@@ -299,6 +307,13 @@ const ProphetDetail = ({ pick }) => {
   const [chart, setChart] = useState(null);
   const [chartLoading, setChartLoading] = useState(true);
   const [chartErr, setChartErr] = useState(null);
+
+  // W1+W3: on-demand narration for picks that arrived without a thesis.
+  // The mutation patches the prophet query in TanStack cache on success, so
+  // the next render path naturally picks up `pick.narrative` from the new
+  // cached data. We do NOT track text in local state — single source of truth.
+  const narrate = useGenerateNarrative();
+  const narrativeStatus = narrate.isPending ? 'loading' : narrate.isError ? 'error' : 'idle';
 
   useEffect(() => {
     let cancel = false;
@@ -339,14 +354,41 @@ const ProphetDetail = ({ pick }) => {
       targets={pick.targets}
     />
 
-    {/* AI narrative */}
-    {pick.narrative && (
+    {/* AI narrative — three states (W1):
+        1. pick.narrative present → render the emerald-tinted block.
+        2. pick.narrative missing → render the placeholder with "Generate AI thesis" button.
+        3. mid-flight → spinner replaces button text. */}
+    {pick.narrative ? (
       <div className="border border-emerald-500/20 bg-emerald-500/5 p-3">
         <div className="flex items-center gap-2 mb-1.5">
           <Brain className="h-3 w-3 text-emerald-400" />
-          <span className="text-[9px] font-mono uppercase tracking-widest text-emerald-400">AI Thesis · Claude Sonnet</span>
+          <span className="text-[9px] font-mono uppercase tracking-widest text-emerald-400">AI Thesis · Claude Opus</span>
         </div>
         <p className="text-[12px] text-neutral-200 leading-relaxed whitespace-pre-wrap">{pick.narrative}</p>
+      </div>
+    ) : (
+      <div className="border border-neutral-700/40 bg-neutral-900/30 p-3">
+        <div className="flex items-center gap-2 mb-1.5">
+          <Brain className="h-3 w-3 text-neutral-500" />
+          <span className="text-[9px] font-mono uppercase tracking-widest text-neutral-500">
+            AI Thesis · not cached for this pick
+          </span>
+        </div>
+        <button
+          type="button"
+          onClick={() => narrate.mutate(pick)}
+          disabled={narrativeStatus === 'loading'}
+          className="text-[11px] text-emerald-400 hover:text-emerald-300 disabled:text-neutral-600 font-mono underline underline-offset-2"
+        >
+          {narrativeStatus === 'loading' ? 'Generating…' : '→ Generate AI thesis'}
+        </button>
+        {narrativeStatus === 'error' && (
+          <p className="text-[10px] text-rose-400 font-mono mt-1.5">
+            {narrate.error?.message === 'rate_limit'
+              ? 'Rate limited — try again in a few minutes.'
+              : 'Failed to generate. Try again in a moment.'}
+          </p>
+        )}
       </div>
     )}
 

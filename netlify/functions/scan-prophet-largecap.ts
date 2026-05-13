@@ -7,15 +7,26 @@
 //
 // Split from Phase 1's multi-universe scan-prophet.ts so each universe gets
 // its own 15-min Netlify background container instead of competing for one.
+//
+// Phase 4c-1 (W4): pre-narrate every qualified pick before writing the
+// snapshot, so the served data is complete on first read. Bounded by
+// NARRATE_BUDGET_MS to protect the container timeout. Any picks the budget
+// can't cover ship without a narrative and the prophet-narrate endpoint
+// (W2) regenerates on demand when the user expands them.
 
 import { schedule } from '@netlify/functions';
 import { runProphetScan, type ProphetUniverseKey } from './shared/scan-prophet';
 import { writeSnapshot, FRESHNESS_BUDGETS_MS, type UniverseKey } from './shared/snapshot-store';
 import { MODEL_VERSION } from './shared/model-version';
 import { logger } from './shared/logger';
+import { narrateAll } from './shared/narrative-generator';
 
 // 14 min — leaves 60s margin under the 15-min Netlify background timeout.
 const PER_SCAN_BUDGET_MS = 14 * 60_000;
+// Largecap: ~60 qualified picks × ~2s = ~30s at concurrency 4. 3 min is
+// generous headroom.
+const NARRATE_BUDGET_MS = 3 * 60_000;
+const NARRATE_CONCURRENCY = 4;
 
 const UNIVERSE: ProphetUniverseKey = 'largecap';
 const STORE_KEY: UniverseKey = 'largecap';
@@ -34,6 +45,22 @@ export const handler = schedule('0,30 13-21 * * 1-5', async () => {
       logger: log,
     });
 
+    if (process.env.ANTHROPIC_API_KEY && scan.picks.length > 0) {
+      const narrateResult = await narrateAll(scan.picks, {
+        concurrency: NARRATE_CONCURRENCY,
+        budgetMs: NARRATE_BUDGET_MS,
+        onWarn: (msg, ticker, err) =>
+          log.warn(msg, { ticker, err: String((err as any)?.message ?? err) }),
+      });
+      log.info('narrate_all_complete', {
+        picks: scan.picks.length,
+        narrated: narrateResult.narrated,
+        failed: narrateResult.failed,
+        skipped: narrateResult.skipped,
+        durationMs: narrateResult.durationMs,
+      });
+    }
+
     const { snapshotId } = await writeSnapshot('prophet', STORE_KEY, {
       modelVersion: MODEL_VERSION,
       generatedAt: new Date().toISOString(),
@@ -45,9 +72,11 @@ export const handler = schedule('0,30 13-21 * * 1-5', async () => {
     });
 
     const count = scan.picks.length;
+    const narratedCount = scan.picks.filter((p) => p.narrative).length;
     log.info('snapshot_written', {
       snapshotId,
       picks: count,
+      narrated: narratedCount,
       universeChecked: scan.universeChecked,
       scanDurationMs: scan.scanDurationMs,
       overallDurationMs: Date.now() - overallStart,
@@ -61,6 +90,7 @@ export const handler = schedule('0,30 13-21 * * 1-5', async () => {
         universe: UNIVERSE,
         snapshotId,
         picks: count,
+        narrated: narratedCount,
         universeChecked: scan.universeChecked,
         scanDurationMs: scan.scanDurationMs,
         warnings: scan.warnings,

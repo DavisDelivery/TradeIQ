@@ -114,6 +114,15 @@
   to = "/.netlify/functions/prophet-picks"
   status = 200
 
+# Phase 4c-1: on-demand narration for a single Prophet pick. POST only.
+# Bounded by per-IP rate limit (30/hour) inside the function; no Netlify-
+# level method gating because that's known broken (see /api/backtest-runs
+# comment above and Lessons #7+#8 in ORCHESTRATOR.md).
+[[redirects]]
+  from = "/api/prophet-narrate"
+  to = "/.netlify/functions/prophet-narrate"
+  status = 200
+
 [[redirects]]
   from = "/api/snapshot-history"
   to = "/.netlify/functions/snapshot-history"

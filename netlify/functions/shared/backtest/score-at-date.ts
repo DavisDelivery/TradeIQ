@@ -198,7 +198,7 @@ async function scoreProphetAtDate(
     grossMargin: fund?.grossMargin,
     pe,
     peg,
-    epsSurpriseBeats: intel?.beatsLast4,
+    epsSurpriseBeats: intel?.beatsLast4 ?? undefined,
     epsAcceleration: intel?.epsAcceleration,
     avgSurpriseMagnitude: intel?.avgSurpriseMagnitude,
     postEarningsDrift: intel?.postEarningsDrift,

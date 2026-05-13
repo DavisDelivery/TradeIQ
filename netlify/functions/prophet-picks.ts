@@ -5,10 +5,11 @@
 //   &narrate=1|0 (default 1 — narrate top 5 from snapshot or live result)
 //   [&force=1]
 //
-// Phase 1: snapshot-first. Snapshot stores ALL scored picks WITHOUT narratives
-// (scheduled scan is forbidden from calling Anthropic). When serving from a
-// snapshot, the live endpoint optionally narrates the top 5 picks on the fly,
-// using the existing 6h narrative cache so repeat reads are free.
+// Phase 1: snapshot-first. Snapshot stores ALL scored picks. After Phase 4c-1,
+// scheduled scans pre-narrate the full pick list before snapshot write, so
+// every pick in a fresh snapshot already has a narrative. For older
+// snapshots, or for live partial scans, we narrate the top 5 inline so the
+// most-visible picks always have a thesis.
 
 import type { Handler } from '@netlify/functions';
 import {
@@ -25,9 +26,7 @@ import {
 } from './shared/snapshot-store';
 import { logger } from './shared/logger';
 import { MODEL_VERSION } from './shared/model-version';
-import { callAnthropic, BudgetExhaustedError, CircuitOpenError } from './shared/anthropic-client';
-
-const MODEL = 'claude-opus-4-7';
+import { narrateTopN } from './shared/narrative-generator';
 
 const SCAN_BUDGET_MS = 18_000;
 const NARRATIVE_BUDGET_MS = 3_000;
@@ -35,10 +34,6 @@ const NARRATIVE_BUDGET_MS = 3_000;
 // Live partial-scan fallback (in-memory).
 const fallbackCache = new Map<string, { data: any; at: number }>();
 const FALLBACK_CACHE_TTL_MS = 5 * 60 * 1000;
-
-// Narrative cache, keyed by ticker+composite-band.
-const narrativeCache = new Map<string, { text: string; at: number }>();
-const NARRATIVE_TTL_MS = 6 * 60 * 60 * 1000;
 
 export const handler: Handler = async (event) => {
   const qs = event.queryStringParameters ?? {};
@@ -63,8 +58,14 @@ export const handler: Handler = async (event) => {
         const filtered = filterProphetByConviction(all, minConviction);
         const sliced = filtered.slice(0, limit);
 
-        if (narrate && process.env.ANTHROPIC_API_KEY) {
-          await narrateTopN(sliced, 5, NARRATIVE_BUDGET_MS, log);
+        // Snapshots written post-4c-1 pre-narrate all picks. For older
+        // snapshots written before W4 shipped, we still narrate top-N
+        // inline to maintain the previous UX.
+        const needsNarration = sliced.some((p) => !p.narrative);
+        if (narrate && needsNarration && process.env.ANTHROPIC_API_KEY) {
+          await narrateTopN(sliced, 5, NARRATIVE_BUDGET_MS, (msg, ticker, err) => {
+            log.warn(msg, { ticker, err: String((err as any)?.message ?? err) });
+          });
         }
 
         return json(200, {
@@ -129,7 +130,9 @@ async function runLiveAndRespond(
     const sliced = filtered.slice(0, limit);
 
     if (narrate && process.env.ANTHROPIC_API_KEY) {
-      await narrateTopN(sliced, 5, NARRATIVE_BUDGET_MS, log);
+      await narrateTopN(sliced, 5, NARRATIVE_BUDGET_MS, (msg, ticker, err) => {
+        log.warn(msg, { ticker, err: String((err as any)?.message ?? err) });
+      });
     }
 
     const response = {
@@ -161,87 +164,6 @@ async function runLiveAndRespond(
     log.error('live_scan_failed', { err: String(err?.message ?? err) });
     return json(500, { ok: false, error: String(err?.message ?? err) });
   }
-}
-
-async function narrateTopN(
-  picks: ProphetPick[],
-  n: number,
-  budgetMs: number,
-  log: ReturnType<typeof logger.child>,
-): Promise<void> {
-  const start = Date.now();
-  const max = Math.min(n, picks.length);
-  for (let i = 0; i < max; i++) {
-    if (Date.now() - start > budgetMs) {
-      log.info('narrate_budget_exceeded', { narrated: i });
-      break;
-    }
-    try {
-      const text = await getCachedNarrative(picks[i]);
-      if (text) picks[i].narrative = sanitizeForJson(text);
-    } catch (err: any) {
-      log.warn('narrate_failed', { ticker: picks[i].ticker, err: String(err?.message ?? err) });
-    }
-  }
-}
-
-async function getCachedNarrative(pick: ProphetPick): Promise<string | null> {
-  const band = Math.floor(pick.composite / 5) * 5;
-  const key = `${pick.ticker}:${band}`;
-  const hit = narrativeCache.get(key);
-  if (hit && Date.now() - hit.at < NARRATIVE_TTL_MS) return hit.text;
-
-  const text = await generateNarrative(pick);
-  if (text) narrativeCache.set(key, { text, at: Date.now() });
-  return text;
-}
-
-async function generateNarrative(pick: ProphetPick): Promise<string | null> {
-  try {
-    const layerLines = Object.entries(pick.layers)
-      .map(
-        ([name, r]) =>
-          `${name}: score ${r.score} ${r.pass ? '✓' : '✗'} — ${Object.entries(r.details)
-            .slice(0, 4)
-            .map(([k, v]) => `${k}=${v}`)
-            .join(', ')}`,
-      )
-      .join('\n');
-    const user = `Ticker: ${pick.ticker} (${pick.name}, ${pick.sector})
-Price: $${pick.price.toFixed(2)} (${pick.priceChangePct >= 0 ? '+' : ''}${pick.priceChangePct}%)
-PROPHET composite: ${pick.composite}/100 · conviction ${pick.conviction} · ${pick.layersPassed}/7 layers pass
-Flags: ${pick.flags.join(', ')}
-Entry: $${pick.entry} · Stop: $${pick.stop} · Targets: ${pick.targets.join(', ')} · Invalidation: $${pick.invalidation}
-
-Layer breakdown:
-${layerLines}
-
-Write a 3-4 sentence trader's read: what the chart + catalysts + fundamentals together are saying, and one specific invalidation condition. Reference actual price levels. No disclaimers.`;
-
-    try {
-      const data = await callAnthropic({
-        model: MODEL,
-        max_tokens: 350,
-        // temperature parameter removed: Claude Opus 4.7 deprecated it
-        // (returns 400 invalid_request_error).
-        system:
-          'You are a veteran swing trader writing a concise thesis. Be specific with price levels. No boilerplate, no "DYOR", no disclaimers.',
-        messages: [{ role: 'user', content: user }],
-      });
-      return data.content.find((b) => b.type === 'text')?.text?.trim() ?? null;
-    } catch (err) {
-      // Narratives are best-effort — drop on budget/circuit/upstream
-      // failure rather than failing the whole prophet response.
-      if (err instanceof BudgetExhaustedError || err instanceof CircuitOpenError) return null;
-      return null;
-    }
-  } catch {
-    return null;
-  }
-}
-
-function sanitizeForJson(s: string): string {
-  return s.replace(/[\u0000-\u001f]/g, ' ');
 }
 
 function json(statusCode: number, body: unknown) {

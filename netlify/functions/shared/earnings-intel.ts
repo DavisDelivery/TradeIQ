@@ -23,7 +23,15 @@ export interface EarningsIntel {
   epsAcceleration?: number;  // in percentage-point terms, e.g. 0.05 = growth accelerated by 5pp
 
   // Earnings surprise history (Finnhub)
-  beatsLast4?: number;         // 0-4: count of beats in last 4 quarters
+  // beatsLast4 semantics (4c-1 fix):
+  //   number (0-4) — we have at least 1 quarter and computed the beat count
+  //   null         — we tried but Finnhub returned no usable surprise data
+  //   undefined    — older snapshot written before this distinction existed
+  // beatsLast4Quarters is the actual denominator (0-4); fewer than 4 quarters
+  // is normal for newer tickers. UI renders `{beatsLast4}/{beatsLast4Quarters} beats`
+  // rather than the misleading `0/4 beats` that conflated "no data" with "all misses".
+  beatsLast4?: number | null;
+  beatsLast4Quarters?: number;
   avgSurpriseMagnitude?: number; // average actual-vs-estimate % (positive = beat bias)
   latestSurprisePct?: number;  // most recent quarter's surprise %
   streak?: 'beats' | 'misses' | 'mixed';  // consistency pattern
@@ -71,7 +79,14 @@ export async function getEarningsIntel(
     .map((r) => r.surprisePct ?? safeSurprise(r.epsActual, r.epsEstimate))
     .filter((n): n is number => Number.isFinite(n));
 
-  const beatsLast4 = surprises.filter((s) => s > 0).length;
+  // 4c-1 bug fix: when Finnhub returns no usable surprise data for a ticker
+  // (common for small-caps and IPOs), the previous code emitted
+  // `beatsLast4: 0` which the UI rendered as "0/4 beats" — a misleading
+  // false claim that the company missed all 4 quarters. Emit null instead
+  // so the UI can distinguish "no data" from "real zero beats".
+  const beatsLast4: number | null =
+    surprises.length > 0 ? surprises.filter((s) => s > 0).length : null;
+  const beatsLast4Quarters = surprises.length;
   const avgSurpriseMagnitude = surprises.length
     ? surprises.reduce((a, b) => a + b, 0) / surprises.length
     : undefined;
@@ -82,7 +97,7 @@ export async function getEarningsIntel(
     const allBeats = surprises.slice(0, 4).every((s) => s > 0);
     const allMisses = surprises.slice(0, 4).every((s) => s < 0);
     streak = allBeats ? 'beats' : allMisses ? 'misses' : 'mixed';
-    if (allBeats && beatsLast4 >= 3) flags.push('beats_streak');
+    if (allBeats && beatsLast4 !== null && beatsLast4 >= 3) flags.push('beats_streak');
     if (allMisses) flags.push('misses_streak');
   }
 
@@ -138,6 +153,7 @@ export async function getEarningsIntel(
     grossMargin: fund?.grossMargin,
     epsAcceleration,
     beatsLast4,
+    beatsLast4Quarters,
     avgSurpriseMagnitude,
     latestSurprisePct,
     streak,
@@ -193,7 +209,7 @@ export function scoreEarningsQuality(intel: EarningsIntel): { score: number; fla
     else if (intel.epsAcceleration < -0.15) { score -= 15; flags.push('decelerating'); }
   }
 
-  if (intel.beatsLast4 !== undefined) {
+  if (intel.beatsLast4 != null) {
     if (intel.beatsLast4 === 4 && intel.streak === 'beats') { score += 25; flags.push('4/4_beats'); }
     else if (intel.beatsLast4 >= 3) { score += 15; flags.push('3+of4_beats'); }
     else if (intel.beatsLast4 <= 1) { score -= 10; flags.push('weak_beats'); }

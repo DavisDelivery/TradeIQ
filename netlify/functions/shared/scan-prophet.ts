@@ -51,7 +51,10 @@ export interface ProphetPick extends ProphetScore {
     epsGrowthYoY?: number;
     revenueGrowthYoY?: number;
     epsAcceleration?: number;
-    beatsLast4?: number;
+    // 4c-1: null means "we tried but Finnhub returned no usable surprise data".
+    // beatsLast4Quarters is the actual denominator (0-4).
+    beatsLast4?: number | null;
+    beatsLast4Quarters?: number;
     avgSurpriseMagnitude?: number;
     streak?: 'beats' | 'misses' | 'mixed';
     nextEarningsDate?: string;
@@ -271,7 +274,7 @@ async function scoreTicker(
     grossMargin: fund?.grossMargin,
     pe,
     peg,
-    epsSurpriseBeats: intel?.beatsLast4,
+    epsSurpriseBeats: intel?.beatsLast4 ?? undefined,
     epsAcceleration: intel?.epsAcceleration,
     avgSurpriseMagnitude: intel?.avgSurpriseMagnitude,
     postEarningsDrift: intel?.postEarningsDrift,
@@ -328,6 +331,7 @@ async function scoreTicker(
           revenueGrowthYoY: intel.revenueGrowthYoY,
           epsAcceleration: intel.epsAcceleration,
           beatsLast4: intel.beatsLast4,
+          beatsLast4Quarters: intel.beatsLast4Quarters,
           avgSurpriseMagnitude: intel.avgSurpriseMagnitude,
           streak: intel.streak,
           nextEarningsDate: intel.nextEarningsDate,
