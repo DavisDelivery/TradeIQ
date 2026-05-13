@@ -5,17 +5,26 @@
 // Universe: russell (stored as 'russell2k')
 // Schedule: 0,30 13-21 * * 1-5
 //
-// Split from Phase 1's multi-universe scan-prophet.ts so each universe gets
-// its own 15-min Netlify background container instead of competing for one.
+// Phase 4c-1 (W4): pre-narrate qualified picks before snapshot write.
+// Russell is the universe most pressed against the 15-min container limit
+// (4c-2's sieve architecture exists to address this), so the narration
+// budget here is tighter than largecap. Un-narrated picks ship fine —
+// the prophet-narrate endpoint regenerates on demand.
 
 import { schedule } from '@netlify/functions';
 import { runProphetScan, type ProphetUniverseKey } from './shared/scan-prophet';
 import { writeSnapshot, FRESHNESS_BUDGETS_MS, type UniverseKey } from './shared/snapshot-store';
 import { MODEL_VERSION } from './shared/model-version';
 import { logger } from './shared/logger';
+import { narrateAll } from './shared/narrative-generator';
 
-// 14 min — leaves 60s margin under the 15-min Netlify background timeout.
 const PER_SCAN_BUDGET_MS = 14 * 60_000;
+// Tighter cap on russell — scan itself often takes the full 14 min today.
+// 90s is enough to narrate ~30 picks at concurrency 4 (the top of the
+// list, which is what users look at). 4c-2's sieve will free up time;
+// when it ships, this can be raised.
+const NARRATE_BUDGET_MS = 90_000;
+const NARRATE_CONCURRENCY = 4;
 
 const UNIVERSE: ProphetUniverseKey = 'russell';
 const STORE_KEY: UniverseKey = 'russell2k';
@@ -34,6 +43,22 @@ export const handler = schedule('0,30 13-21 * * 1-5', async () => {
       logger: log,
     });
 
+    if (process.env.ANTHROPIC_API_KEY && scan.picks.length > 0) {
+      const narrateResult = await narrateAll(scan.picks, {
+        concurrency: NARRATE_CONCURRENCY,
+        budgetMs: NARRATE_BUDGET_MS,
+        onWarn: (msg, ticker, err) =>
+          log.warn(msg, { ticker, err: String((err as any)?.message ?? err) }),
+      });
+      log.info('narrate_all_complete', {
+        picks: scan.picks.length,
+        narrated: narrateResult.narrated,
+        failed: narrateResult.failed,
+        skipped: narrateResult.skipped,
+        durationMs: narrateResult.durationMs,
+      });
+    }
+
     const { snapshotId } = await writeSnapshot('prophet', STORE_KEY, {
       modelVersion: MODEL_VERSION,
       generatedAt: new Date().toISOString(),
@@ -45,9 +70,11 @@ export const handler = schedule('0,30 13-21 * * 1-5', async () => {
     });
 
     const count = scan.picks.length;
+    const narratedCount = scan.picks.filter((p) => p.narrative).length;
     log.info('snapshot_written', {
       snapshotId,
       picks: count,
+      narrated: narratedCount,
       universeChecked: scan.universeChecked,
       scanDurationMs: scan.scanDurationMs,
       overallDurationMs: Date.now() - overallStart,
@@ -61,6 +88,7 @@ export const handler = schedule('0,30 13-21 * * 1-5', async () => {
         universe: UNIVERSE,
         snapshotId,
         picks: count,
+        narrated: narratedCount,
         universeChecked: scan.universeChecked,
         scanDurationMs: scan.scanDurationMs,
         warnings: scan.warnings,

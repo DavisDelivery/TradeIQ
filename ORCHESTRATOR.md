@@ -78,18 +78,17 @@ Russell2k is large enough to require sieve architecture for prophet — see 4c-2
 ## Operational state
 
 ### Production
-- Live at `0.15.0-alpha`. All 7 boards return data. Snapshots written by post-4a-fix-4 scheduled scans; live endpoints serve snapshot-first with `fallback-partial` outside cron windows.
+- Live at `0.15.1-alpha` after 4c-1 merge. All 7 boards return data. Snapshots written by post-4a-fix-4 scheduled scans; scans now pre-narrate qualified picks before snapshot write so the Prophet board ships with full AI theses on first read. Live endpoints serve snapshot-first with `fallback-partial` outside cron windows.
 - Backtest runner end-to-end: launcher → trigger → background function → engine → Firestore → viewer. Polls live until completion.
 
 ### Open PRs awaiting merge
 None. Hotfix queue cleared.
 
 ### Briefs awaiting agent execution
-- **`briefs/phase-4c-1-brief.md`** — prophet detail completeness + EPS bug. Smallest scope, highest user-visible impact. Target `0.15.1-alpha`.
-- **`briefs/phase-4c-2-brief.md`** — russell sieve architecture (3-stage filter for 2037-name universe). Target `0.16.0-alpha`.
+- **`briefs/phase-4c-2-brief.md`** — russell sieve architecture (3-stage filter for 2037-name universe). Target `0.16.0-alpha`. Independent of 4c-1; can ship next.
 - **`briefs/phase-5a-brief.md`** — ML training discovery. Polyglot (Python). Output is a report, not a deploy.
 
-Order is independent. Recommended first: 4c-1.
+Recommended next: 4c-2.
 
 ### Outstanding remediation (your hands)
 - 🚨 **Rotate the Firebase SA key.** `private_key_id: c52711f114...` on `firebase-adminsdk-fbsvc@tradeiq-alpha.iam.gserviceaccount.com`. Google Cloud Console → IAM → Service accounts → Keys → generate new + delete old → paste new JSON into Netlify env var `FIREBASE_SERVICE_ACCOUNT`. ~5 min from phone. Longest-standing item.
@@ -128,7 +127,7 @@ Order is independent. Recommended first: 4c-1.
 | 4b-1 | Backtest run viewer UI | done | 0.14.0-alpha | 2026-05-12 | Two endpoints, two hooks, BacktestView rewritten, 7 detail subcomponents, mobile-first 375px. 331 tests. |
 | 4b-2 | Backtest run launcher | done | 0.15.0-alpha | 2026-05-12 | Background-function pattern via `-background.ts` suffix. PRs #17 + #18 (routing hotfix to `/api/backtest-runs/start`). 367 tests. |
 | 4b-3 | Run cancellation + presets + saved templates | pending | — | — | No brief yet. Cancellation token + curated presets + user-saved templates + per-rebalance progress events. |
-| 4c-1 | Prophet detail completeness + EPS bug | pending (brief ready) | — | — | `briefs/phase-4c-1-brief.md`. 5 workstreams: UI placeholder, lazy narrate endpoint, hook, narrate-all in scanner, EPS-beats null vs zero. Target 0.15.1-alpha. |
+| 4c-1 | Prophet detail completeness + EPS bug | done | 0.15.1-alpha | 2026-05-13 | All 5 workstreams shipped: shared `narrative-cache` + `narrative-generator` extracted, on-demand `/api/prophet-narrate` endpoint with per-IP rate limit (30/hr), `useGenerateNarrative` mutation hook that patches every prophet cache entry, three-state AI Thesis UI placeholder, `narrateAll` in all three scheduled scanners with per-universe budget guards, and W5 EPS-beats fix: `earnings-intel.ts` now emits `beatsLast4: null` when Finnhub returns no surprise data (was emitting `0`, rendered as misleading "0/4 beats") plus new `beatsLast4Quarters` honest denominator. 397 tests (367 baseline + 30 new). |
 | 4c-2 | Russell sieve architecture | pending (brief ready) | — | — | `briefs/phase-4c-2-brief.md`. 3-stage filter to score all 2037 Russell names within 15-min cap. Target 0.16.0-alpha. |
 | 5a | ML training pipeline (discovery) | pending (brief ready) | — | — | `briefs/phase-5a-brief.md`. Purged walk-forward CV + embargo; cross-sectional rank-IC vs composite; Bonferroni-corrected Wilcoxon; 5 models + Model 0. No frontend, no version bump. Output: `reports/phase-5a/findings.md`. |
 | 5b | Production rollout of winning model | pending | — | — | Blocked on 5a Path A. Decides Python→TS deployment: TS re-impl, ONNX, or separate Python service. |
