@@ -1,0 +1,48 @@
+[project]
+name = "tradeiq-ml"
+version = "0.1.0"
+description = "Phase 5a — ML discovery pipeline for the TradeIQ Prophet board"
+requires-python = "==3.11.*"
+dependencies = [
+    "firebase-admin>=6.0,<7",
+    "pandas>=2.0,<3",
+    "pyarrow>=14.0,<25",
+    "numpy>=1.26,<3",
+    "scikit-learn>=1.4,<2",
+    "lightgbm>=4.0,<5",
+    "shap>=0.44,<1",
+    "matplotlib>=3.8,<4",
+    "plotly>=5.18,<6",
+    "scipy>=1.11,<2",
+    "statsmodels>=0.14,<1",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0,<9", "ruff>=0.3,<1"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+exclude = [".venv", "__pycache__", ".ruff_cache", "build", "dist"]
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "F",   # pyflakes
+    "I",   # isort
+    "B",   # bugbear
+    "UP",  # pyupgrade
+    "SIM", # flake8-simplify
+]
+# Ignore rules that fight numerical / scientific style:
+#   E741 ambiguous variable names (we use `l` for layer, `x`/`y` for features)
+#   B008 we don't use mutable defaults; this rule has false positives with numpy
+ignore = ["E741"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["E501"]  # long synthetic-data lines in tests
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+addopts = "-ra -q"
