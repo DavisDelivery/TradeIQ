@@ -221,4 +221,45 @@ describe('backtest-runs-trigger', () => {
     // Background dispatch must NOT happen if we never wrote the pending row.
     expect(fetchSpy).not.toHaveBeenCalled();
   });
+
+  // Phase 5a seed-runs depend on launching 5 configs back-to-back inside
+  // one wall-clock window. The default 30-min single-flight blocks runs
+  // 2-5; `allowParallel: true` opts out of that check for the caller who
+  // explicitly wants concurrent runs.
+  it('bypasses single-flight when allowParallel:true is in the body', async () => {
+    inFlightRunId = 'bt_inflight_existing';
+    const res = await invoke(
+      handler,
+      makeEvent({ body: { ...validConfig, allowParallel: true } }),
+    );
+    expect(res.statusCode).toBe(202);
+    const body = JSON.parse(res.body);
+    expect(body.ok).toBe(true);
+    expect(body.runId).toBe('bt_test_001');
+    expect(body.allowParallel).toBe(true);
+    // Pending row was written, and the persisted config does NOT include
+    // the allowParallel sidecar (stripped before persist).
+    expect(mockPending).toHaveBeenCalledTimes(1);
+    expect(mockPending.mock.calls[0][1]).toEqual(validConfig);
+    expect(mockPending.mock.calls[0][1]).not.toHaveProperty('allowParallel');
+  });
+
+  it('bypasses single-flight when ?parallel=1 is in the query string', async () => {
+    inFlightRunId = 'bt_inflight_existing';
+    const event = makeEvent({ body: validConfig });
+    event.queryStringParameters = { parallel: '1' };
+    const res = await invoke(handler, event);
+    expect(res.statusCode).toBe(202);
+    const body = JSON.parse(res.body);
+    expect(body.allowParallel).toBe(true);
+    expect(mockPending).toHaveBeenCalledTimes(1);
+  });
+
+  it('without allowParallel, in-flight error message points at the new opt-in', async () => {
+    inFlightRunId = 'bt_inflight_existing';
+    const res = await invoke(handler, makeEvent({ body: validConfig }));
+    expect(res.statusCode).toBe(409);
+    const body = JSON.parse(res.body);
+    expect(body.error).toMatch(/allowParallel/i);
+  });
 });

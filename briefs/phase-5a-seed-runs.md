@@ -65,6 +65,7 @@ function.
 curl -sS -X POST https://tradeiq-alpha.netlify.app/api/backtest-runs/start \
   -H "Content-Type: application/json" \
   -d '{
+    "allowParallel": true,
     "universe": "sp500",
     "startDate": "2018-01-01",
     "endDate": "2024-12-31",
@@ -94,6 +95,7 @@ Same as #1 except `minComposite: 60`.
 curl -sS -X POST https://tradeiq-alpha.netlify.app/api/backtest-runs/start \
   -H "Content-Type: application/json" \
   -d '{
+    "allowParallel": true,
     "universe": "sp500",
     "startDate": "2018-01-01",
     "endDate": "2024-12-31",
@@ -123,6 +125,7 @@ Same as #1 except `topN: 20`.
 curl -sS -X POST https://tradeiq-alpha.netlify.app/api/backtest-runs/start \
   -H "Content-Type: application/json" \
   -d '{
+    "allowParallel": true,
     "universe": "sp500",
     "startDate": "2018-01-01",
     "endDate": "2024-12-31",
@@ -152,6 +155,7 @@ Same as #1 except `rebalanceFrequency: "quarterly"`.
 curl -sS -X POST https://tradeiq-alpha.netlify.app/api/backtest-runs/start \
   -H "Content-Type: application/json" \
   -d '{
+    "allowParallel": true,
     "universe": "sp500",
     "startDate": "2018-01-01",
     "endDate": "2024-12-31",
@@ -182,6 +186,7 @@ contributor (~11k rows).
 curl -sS -X POST https://tradeiq-alpha.netlify.app/api/backtest-runs/start \
   -H "Content-Type: application/json" \
   -d '{
+    "allowParallel": true,
     "universe": "sp500",
     "startDate": "2018-01-01",
     "endDate": "2024-12-31",
@@ -206,6 +211,15 @@ curl -sS -X POST https://tradeiq-alpha.netlify.app/api/backtest-runs/start \
 ---
 
 ## Operational notes
+
+- **`"allowParallel": true` is on each body above** (or use
+  `?parallel=1` in the URL). The trigger's default 30-minute
+  single-flight guard was added to prevent accidental double-clicks
+  (see Phase 4b-2 W3); it blocks back-to-back launches with HTTP
+  409. The opt-in bypass was added specifically to support this
+  batch — see `netlify/functions/backtest-runs-trigger.ts`. Without
+  the flag, only run #1 starts; runs #2-5 return 409 with run #1's
+  runId and DO NOT enqueue.
 
 - **Run order doesn't matter.** All five are independent; they can
   fire in parallel without contention beyond Polygon's free-tier
