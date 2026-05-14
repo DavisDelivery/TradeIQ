@@ -142,9 +142,7 @@ def _print_summary(df: pd.DataFrame) -> None:
     print(f"Distinct configs: {df['_runConfigHash'].nunique()}")
     print()
     print("Rows per config:")
-    print(
-        df.groupby("_runConfigSummary").size().sort_values(ascending=False).to_string()
-    )
+    print(df.groupby("_runConfigSummary").size().sort_values(ascending=False).to_string())
     print()
     if "regime" in df.columns:
         print(f"Regime counts: {df['regime'].fillna('null').value_counts().to_dict()}")
@@ -283,7 +281,9 @@ def main(argv: list[str] | None = None) -> int:
         help="YYYY-MM-DD; only include rows whose asOfDate >= this date",
     )
     parser.add_argument(
-        "--out", type=str, default="data/ml-training.parquet",
+        "--out",
+        type=str,
+        default="data/ml-training.parquet",
     )
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args(argv)
@@ -291,8 +291,7 @@ def main(argv: list[str] | None = None) -> int:
     cred_path = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
     if not cred_path:
         print(
-            "FATAL: GOOGLE_APPLICATION_CREDENTIALS not set; "
-            "expected path to firebase-sa.json",
+            "FATAL: GOOGLE_APPLICATION_CREDENTIALS not set; expected path to firebase-sa.json",
             file=sys.stderr,
         )
         return 2
