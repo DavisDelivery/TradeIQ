@@ -1,8 +1,15 @@
 # Phase 4e-1 — Backtest Validation Findings
 
-**Verdict:** PENDING LIVE-DATA RUN
+**Verdict:** PENDING LIVE-DATA RUN — but the live verdict is now self-populating.
 
-**Layers active:** unknown (audit pending; see § 0)
+**Live source of truth:** `GET /api/portfolio-verdict` (computed from
+Firestore by the `portfolio-verdict.ts` Netlify function added in PR
+#23). Returns the populated markdown + an auto-derived verdict line
+(SHIP / SHIP WITH CAVEATS / DON'T SHIP / PENDING) per the brief's
+gating rules. As of merge of #23, this static file is a runbook +
+scaffolding; the binding numbers live at the endpoint.
+
+**Layers active:** unknown until first cron-driven audit fires (see § 0)
 
 This PR lands the Prophet Portfolio engine modules, the rebalance rule
 (v1, per `briefs/phase-4e-1-brief.md`), the backtest harness, the daily
@@ -29,7 +36,37 @@ landing without the live manager active.
 
 ---
 
-## How to populate this report (live-data run procedure)
+## Self-populating path (preferred — added in PR #23)
+
+After PR #23 merges, the system populates itself:
+
+- `scan-prophet-audit-cron.ts` fires Sunday 18:00 UTC weekly →
+  audit row written to `prophetPortfolio/audits/runs/{stamp}`
+- `scan-portfolio-backtest-cron.ts` fires weekday 22:00 UTC,
+  cycling through 13 windows in 13 weekdays (covid, rate-hikes,
+  rolling-2018..2025, half-2018, half-2022, full)
+- `GET /api/portfolio-verdict` reads both and returns the populated
+  markdown + auto-derived verdict line
+
+Within ~2 weeks of PR #23 merge, every window has a result and the
+verdict flips automatically. To inspect at any time:
+
+```
+curl https://tradeiq-alpha.netlify.app/api/portfolio-verdict | jq -r .markdown
+```
+
+To freeze the live verdict back into this file:
+
+```
+curl https://tradeiq-alpha.netlify.app/api/portfolio-verdict?fmt=md \
+  > reports/phase-4e-1/backtest-validation.md
+git add reports/phase-4e-1/backtest-validation.md
+git commit -m "phase-4e-1: freeze verdict from /api/portfolio-verdict"
+```
+
+---
+
+## How to populate this report manually (legacy CLI path)
 
 The CLI is `scripts/run-portfolio-backtest.ts`. End-to-end procedure:
 
