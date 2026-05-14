@@ -85,11 +85,13 @@ Russell2k is large enough to require sieve architecture for prophet — see 4c-2
 None. Hotfix queue cleared.
 
 ### Briefs awaiting agent execution
-- **`briefs/phase-4e-1-brief.md`** — Prophet Portfolio engine + backtest validation (4e split). Target `0.17.0-alpha` or `0.16.1-alpha` depending on verdict.
-- **`briefs/phase-5a-brief.md`** — ML training discovery. Polyglot (Python). Output is a report, not a deploy.
-- **`briefs/phase-4f-brief.md`** — Stub-analyst audit + repair + institutional-flow data integration. Target `0.18.0-alpha`, MODEL_VERSION bumps to `2026.03.0`. Runs AFTER 4e-1 + 5a land — 4e-1's W0 audit table is starting input for 4f's W1.
+- **`briefs/phase-4e-1-brief.md`** — Prophet Portfolio engine + backtest validation (4e split). Target `0.17.0-alpha` or `0.16.1-alpha` depending on verdict. **PR #21 merged (engine dormant); 4e-1-finish row tracks pending live-data verdict run.**
+- **`briefs/phase-5a-brief.md`** — ML training discovery. Polyglot (Python). Output is a report, not a deploy. **PR #24 open in draft; data gate blocks final findings — see `briefs/phase-5a-seed-runs.md` for 5 configs to launch via `POST /api/backtest-runs/start` to clear the threshold.**
+- **`briefs/phase-5a-seed-runs.md`** — five concrete backtest configs paste-and-launch to clear Phase 5a's 10k-row / 5-run data gate.
+- **`briefs/phase-4f-brief.md`** — Stub-analyst audit + repair + institutional-flow data integration. Target `0.18.0-alpha`, MODEL_VERSION bumps to `2026.03.0`. Runs AFTER 4e-1 + 5a land.
+- **Phase 4a-2 — Engine write path for full scored universe** (no brief yet, added 2026-05-13). Small engine change that lifts the "every mlTraining row is inPortfolio=True" structural limitation Phase 5a surfaced. Unblocks any future 5a-2 that wants to answer "should composite have picked differently?" rather than just "can a re-ranker beat composite within its picks?".
 
-Recommended order: 4e-1 and 5a in parallel (zero file overlap; kickoffs in `kickoffs/`). 4f after both land — its repairs will likely retroactively improve any subsequent 4e-1 backtest re-run and any subsequent 5a training re-run.
+Recommended order: 4e-1 and 5a in parallel (zero file overlap; kickoffs in `kickoffs/`). 4f after both land. 4a-2 only if 5a's findings recommend going wider — defer the brief until then.
 
 ### Outstanding remediation (your hands)
 - 🚨 **Rotate the Firebase SA key.** `private_key_id: c52711f114...` on `firebase-adminsdk-fbsvc@tradeiq-alpha.iam.gserviceaccount.com`. Google Cloud Console → IAM → Service accounts → Keys → generate new + delete old → paste new JSON into Netlify env var `FIREBASE_SERVICE_ACCOUNT`. ~5 min from phone. Longest-standing item.
@@ -121,6 +123,7 @@ Recommended order: 4e-1 and 5a in parallel (zero file overlap; kickoffs in `kick
 | 2 | Refactor foundation (schemas + monolith split + TanStack Query) | done | 0.11.0-alpha | 2026-05-08 | Zod at 5 provider boundaries; App.jsx 2965→331 lines; 16 hooks; all 13 views wired. |
 | 3 | Point-in-time data layer | done | 0.12.0-alpha | 2026-05-10 | All 5 providers as-of capable; Dow universe history full 2018-2026 monthly; sp500/ndx/russell seed only with runbook. |
 | 4a | Real backtest v2 — engine + correctness | done | 0.13.0-alpha | 2026-05-11 | Walk-forward + PIT cache + portfolio/costs + attribution + ML hook data. 4 hotfixes followed. |
+| 4a-2 | Engine: write `mlTraining` rows for full scored universe | pending (no brief yet) | — | — | Surfaced 2026-05-13 from Phase 5a schema audit. Current engine (`engine.ts:489`) writes `mlTraining` rows only for top-N portfolio picks (post-`buildPortfolio` filtering), not the full scored universe. Consequence: every row is `inPortfolio == True` by construction, so any ML model trained on this data can only re-rank within composite's picks — it cannot answer "should composite have picked differently?". Phase 4a-2 adds a parallel write path that emits one row per scored candidate (not just target), gated by a config flag (`config.mlTraining.includeUnselected: boolean`) so existing runs remain backward-compatible. Out-of-portfolio rows get `inPortfolio: false` stamped and zero/null cost fields. Small engine change; documented thoroughly in `briefs/phase-5a-schema-notes.md` § "Critical limitation". Run after 5a delivers initial findings — if findings recommend a wider question be answered, 4a-2 unblocks 5a-2 with full-universe data. |
 | 4a-fix-1 | Cache undef-rejection + silent catch (PR #8) | done | 0.13.1-alpha | 2026-05-11 | `ignoreUndefinedProperties: true` + structured TickerFailure + happy-path test. Post-fix Sharpe 0.224. |
 | 4a-fix-2 | ML-row bar window (PR #9) | done | 0.13.3-alpha | 2026-05-11 | New `getCachedBars(ticker, from, to)` with explicit window. Post-fix IC=-0.0951 (honest signal). |
 | 4a-fix-3 | ProphetDetail useEffect import (PR #10) | done | 0.13.2-alpha | 2026-05-11 | One-line fix + sibling audit. |
