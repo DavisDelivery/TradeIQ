@@ -144,6 +144,17 @@
   to = "/.netlify/functions/portfolio-backtest-runs"
   status = 200
 
+# Phase 4e-1 follow-up: live verdict endpoint. Reads the latest audit +
+# per-window backtest results from Firestore and returns the populated
+# `backtest-validation.md` content. Auto-derives the SHIP / SHIP WITH
+# CAVEATS / DON'T SHIP / PENDING line from the data.
+#   GET /api/portfolio-verdict          → JSON with markdown + metadata
+#   GET /api/portfolio-verdict?fmt=md   → text/markdown directly
+[[redirects]]
+  from = "/api/portfolio-verdict"
+  to = "/.netlify/functions/portfolio-verdict"
+  status = 200
+
 # Phase 4c-1: on-demand narration for a single Prophet pick. POST only.
 # Bounded by per-IP rate limit (30/hour) inside the function; no Netlify-
 # level method gating because that's known broken (see /api/backtest-runs
