@@ -8,3 +8,14 @@ dist/
 coverage/
 .vitest-cache/
 backups/
+
+# Phase 5a — ML pipeline (Python)
+.secrets/
+.venv/
+__pycache__/
+*.parquet
+*.parquet.meta.json
+data/
+scripts/ml/.ruff_cache/
+.ruff_cache/
+*.egg-info/
