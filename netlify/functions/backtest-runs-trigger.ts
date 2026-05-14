@@ -100,9 +100,12 @@ export const handler: Handler = async (event) => {
   }
 
   // --- Parse body
-  let config: BacktestConfig;
+  // Body accepts the BacktestConfig plus an optional `allowParallel: true`
+  // sidecar that bypasses single-flight. The sidecar is stripped before
+  // validation/persistence so it doesn't leak into Firestore.
+  let rawBody: any;
   try {
-    config = JSON.parse(event.body ?? '{}');
+    rawBody = JSON.parse(event.body ?? '{}');
   } catch (e: any) {
     log.warn('config_parse_failed', { err: String(e?.message ?? e) });
     return {
@@ -111,6 +114,11 @@ export const handler: Handler = async (event) => {
       body: JSON.stringify({ ok: false, error: 'invalid config json' }),
     };
   }
+  const allowParallel =
+    rawBody?.allowParallel === true ||
+    event.queryStringParameters?.parallel === '1';
+  const config: BacktestConfig = { ...rawBody };
+  delete (config as any).allowParallel;
 
   // --- Validate shape (reuse engine's own validator)
   try {
@@ -142,27 +150,37 @@ export const handler: Handler = async (event) => {
     };
   }
 
-  // --- Single-flight
-  try {
-    const inFlight = await findInFlightRun();
-    if (inFlight) {
-      log.info('single_flight_blocked', { existingRunId: inFlight });
-      return {
-        statusCode: 409,
-        headers,
-        body: JSON.stringify({
-          ok: false,
-          error: `A backtest is already running (runId: ${inFlight}). ` +
-            `Wait for it to finish or check Sentry if it appears stuck.`,
-          runId: inFlight,
-        }),
-      };
+  // --- Single-flight (skipped when caller opts into parallel).
+  // The default guards against accidental double-clicks. Phase 5a's
+  // seed-run batch (5 configs, briefs/phase-5a-seed-runs.md) needs
+  // parallel launches to clear its data gate inside one wall-clock
+  // window; that batch passes `allowParallel: true`.
+  if (!allowParallel) {
+    try {
+      const inFlight = await findInFlightRun();
+      if (inFlight) {
+        log.info('single_flight_blocked', { existingRunId: inFlight });
+        return {
+          statusCode: 409,
+          headers,
+          body: JSON.stringify({
+            ok: false,
+            error:
+              `A backtest is already running (runId: ${inFlight}). ` +
+              `Wait for it to finish, OR re-fire with \`allowParallel: true\` ` +
+              `in the body / \`?parallel=1\` in the query if you really want concurrent runs.`,
+            runId: inFlight,
+          }),
+        };
+      }
+    } catch (e: any) {
+      // Don't block on a transient single-flight read failure — log it,
+      // proceed. The 30-min window is a guard rail, not a correctness
+      // invariant; the engine itself doesn't care if two runs overlap.
+      log.warn('single_flight_check_failed', { err: String(e?.message ?? e) });
     }
-  } catch (e: any) {
-    // Don't block on a transient single-flight read failure — log it,
-    // proceed. The 30-min window is a guard rail, not a correctness
-    // invariant; the engine itself doesn't care if two runs overlap.
-    log.warn('single_flight_check_failed', { err: String(e?.message ?? e) });
+  } else {
+    log.info('single_flight_bypassed', { reason: 'allowParallel' });
   }
 
   // --- Allocate runId, write 'pending', fire-and-forget background
@@ -216,6 +234,6 @@ export const handler: Handler = async (event) => {
   return {
     statusCode: 202,
     headers,
-    body: JSON.stringify({ ok: true, runId }),
+    body: JSON.stringify({ ok: true, runId, allowParallel }),
   };
 };
