@@ -85,9 +85,8 @@ Russell2k is large enough to require sieve architecture for prophet — see 4c-2
 None. Hotfix queue cleared.
 
 ### Briefs awaiting agent execution
-- **`briefs/phase-4f-brief.md`** — Stub-analyst audit + repair + institutional-flow data integration. Kickoff at `kickoffs/phase-4f-executor.md` is paste-and-go. Target `0.18.0-alpha`, MODEL_VERSION bumps to `2026.03.0`. **Currently the highest-priority unblocked work.**
-- **`briefs/phase-0a-2-brief.md`** — sp500 PIT universe-history backfill. New 2026-05-15. Days of work for a data-only backfill that unblocks Phase 5a and every future sp500 backtest. Kickoff TBD — ask orchestrator to draft when ready to fire an executor session.
-- **`briefs/phase-4e-1-brief.md`** — Prophet Portfolio engine + backtest validation (4e split). PR #21 merged (engine dormant); 4e-1-finish backtest now in flight server-side (runId `pb-full-202605150933-fqrsid`); follow-up PR after verdict resolves.
+- **`briefs/phase-0a-2-brief.md` + `kickoffs/phase-0a-2-executor.md`** — sp500 PIT universe-history backfill. Kickoff paste-and-go (1128 lines, self-contained, PAT inline). Optional Databento API key in second message; falls back to Polygon. Days of work; unblocks Phase 5a's data gate and every future historical sp500 backtest.
+- **Phase 4f-finish** — no brief yet; scope captured in the 4f-finish row of the phase table. Best executed AFTER first audit cron has fired (Sunday 19:00 UTC) so there's real data to classify. Orchestrator can fire `GET /api/audit-stub-analysts` manually post-merge to seed an immediate first audit and unblock 4f-finish on demand.
 
 ### Briefs blocked / shelved
 - **`briefs/phase-5a-brief.md`** — Phase 5a scaffolding shipped (PR #24 OPEN draft) but data gate cannot be cleared with current PIT coverage. Will unblock once Phase 0a-2 lands (2 sp500 runs would clear it). Recommendation 2026-05-14: ship 4f first; once 0a-2 lands, resume 5a.
