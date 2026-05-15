@@ -31,6 +31,7 @@ import { writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { createRequire } from 'node:module';
+import { parseIsharesHoldingsCsv } from './lib/ishares-holdings-csv';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -52,6 +53,39 @@ interface Snapshot {
 }
 
 // ===========================================================================
+// iShares holdings CSV — shared fetch
+//
+// The CSV layout is identical across iShares ETFs (IWM, IVV, etc.): a
+// fund-metadata preamble followed by a "Ticker,Name,..." header row.
+// The query shape (fileType=csv&dataType=fund&asOfDate=YYYYMMDD) is
+// shared. Both Russell 2000 (IWM) and S&P 500 (IVV) honor asOfDate;
+// pre-archive dates and weekends return a "no-data" preamble, which the
+// parser surfaces as an empty array. See scripts/lib/ishares-holdings-csv.ts.
+// ===========================================================================
+
+async function fetchIsharesHoldingsCsv(
+  baseUrl: string,
+  fileName: string,
+  asOfDate?: string,
+): Promise<string[]> {
+  const params = new URLSearchParams({
+    fileType: 'csv',
+    fileName,
+    dataType: 'fund',
+  });
+  if (asOfDate) {
+    // YYYYMMDD form. iShares silently returns a no-data wrapper for dates
+    // before its earliest archive — we detect that case in the parser.
+    params.set('asOfDate', asOfDate.replace(/-/g, ''));
+  }
+  const res = await fetch(`${baseUrl}?${params}`, {
+    headers: { 'User-Agent': UA, Accept: 'text/csv' },
+  });
+  if (!res.ok) throw new Error(`${fileName} ${res.status}`);
+  return parseIsharesHoldingsCsv(await res.text());
+}
+
+// ===========================================================================
 // Source: iShares IWM — Russell 2000
 //
 // Real CSV with historical asOfDate support. Verified depth: 2022-01-31
@@ -61,51 +95,21 @@ interface Snapshot {
 const IWM_URL = 'https://www.ishares.com/us/products/239710/ishares-russell-2000-etf/1467271812596.ajax';
 
 async function fetchIwmHoldingsCsv(asOfDate?: string): Promise<string[]> {
-  const params = new URLSearchParams({
-    fileType: 'csv',
-    fileName: 'IWM_holdings',
-    dataType: 'fund',
-  });
-  if (asOfDate) {
-    // YYYYMMDD form. iShares silently returns a no-data wrapper for dates
-    // before its earliest archive — we detect that case in the parser.
-    params.set('asOfDate', asOfDate.replace(/-/g, ''));
-  }
-  const url = `${IWM_URL}?${params}`;
-  const res = await fetch(url, { headers: { 'User-Agent': UA, Accept: 'text/csv' } });
-  if (!res.ok) throw new Error(`iShares IWM ${res.status}`);
-  const csv = await res.text();
-  return parseIwmCsv(csv);
+  return fetchIsharesHoldingsCsv(IWM_URL, 'IWM_holdings', asOfDate);
 }
 
-function parseIwmCsv(csv: string): string[] {
-  const lines = csv.split(/\r?\n/);
-  // First ~10 lines are fund metadata; the holdings header line starts
-  // with "Ticker,Name,Sector,...". Find it.
-  let headerIdx = -1;
-  for (let i = 0; i < Math.min(lines.length, 30); i++) {
-    if (lines[i].startsWith('Ticker,Name,')) {
-      headerIdx = i;
-      break;
-    }
-  }
-  if (headerIdx === -1) {
-    // No-data wrapper (returned for pre-archive dates).
-    return [];
-  }
-  const tickers: string[] = [];
-  for (let i = headerIdx + 1; i < lines.length; i++) {
-    const line = lines[i];
-    if (!line || !line.startsWith('"')) break;       // end of holdings block
-    const m = line.match(/^"([^"]*)"/);
-    if (!m) continue;
-    const t = m[1].trim();
-    if (!t || t === '-') continue;
-    if (/[^A-Z0-9.\-]/.test(t)) continue;             // skip cash sleeves etc
-    if (t.length > 6) continue;                        // not a plain US equity ticker
-    tickers.push(t);
-  }
-  return tickers;
+// ===========================================================================
+// Source: iShares IVV — S&P 500 (Phase 0a-2)
+//
+// IVV honors asOfDate back to at least 2017-12-29 (verified probe). The
+// SSGA SPY xlsx is current-only with no historical archive, so IVV is
+// the S&P 500 PIT source of record. Same query shape as IWM.
+// ===========================================================================
+
+const IVV_URL = 'https://www.ishares.com/us/products/239726/ishares-core-sp-500-etf/1467271812596.ajax';
+
+async function fetchIvvHoldingsCsv(asOfDate?: string): Promise<string[]> {
+  return fetchIsharesHoldingsCsv(IVV_URL, 'IVV_holdings', asOfDate);
 }
 
 // ===========================================================================
@@ -325,6 +329,53 @@ async function backfillRussell2kHistory(): Promise<Snapshot[]> {
 }
 
 // ===========================================================================
+// S&P 500 historical via iShares IVV (Phase 0a-2)
+//
+// IVV archive depth probed back to 2017-12-29; we start at 2018-01-31 to
+// match the Dow hand-curated history's window. SSGA SPY has no historical
+// archive, so this is the sp500 PIT source of record.
+// ===========================================================================
+
+async function backfillSp500History(toYearMonth: string): Promise<Snapshot[]> {
+  const dates = monthEnds('2018-01', toYearMonth);
+  const out: Snapshot[] = [];
+  for (const monthEnd of dates) {
+    // iShares archives only on trading days. Roll back day-by-day on
+    // weekends / holidays until a valid snapshot returns.
+    let tickers: string[] = [];
+    let used = monthEnd;
+    for (let rollback = 0; rollback < 5; rollback++) {
+      const probe = new Date(`${monthEnd}T00:00:00Z`);
+      probe.setUTCDate(probe.getUTCDate() - rollback);
+      const probeIso = probe.toISOString().slice(0, 10);
+      try {
+        const result = await fetchIvvHoldingsCsv(probeIso);
+        if (result.length >= 400) {
+          tickers = result;
+          used = probeIso;
+          break;
+        }
+      } catch (err) {
+        console.log(`[ivv ${probeIso}] fetch error: ${(err as Error).message}; continuing`);
+      }
+      await new Promise((r) => setTimeout(r, 150));
+    }
+    if (tickers.length === 0) {
+      console.log(`[ivv ${monthEnd}] no data within 5 trading-day rollback; skipping`);
+      continue;
+    }
+    out.push({ date: monthEnd, index: 'sp500', tickers: tickers.sort() });
+    if (used !== monthEnd) {
+      console.log(`[ivv ${monthEnd}] ${tickers.length} tickers (from ${used} after rollback)`);
+    } else {
+      console.log(`[ivv ${monthEnd}] ${tickers.length} tickers`);
+    }
+    await new Promise((r) => setTimeout(r, 250));
+  }
+  return out;
+}
+
+// ===========================================================================
 // File emission
 // ===========================================================================
 
@@ -332,6 +383,7 @@ function emitStaticFile(snapshots: Snapshot[], meta: {
   generatedAt: string;
   spyAsOfDate?: string;
   diaAsOfDate?: string;
+  sp500Months: number;
   russellMonths: number;
   ndxNote: string;
 }): string {
@@ -349,7 +401,7 @@ function emitStaticFile(snapshots: Snapshot[], meta: {
 // Re-run the generator monthly to extend forward; do not hand-edit.
 //
 // Sources (ETF sponsor vendors of record):
-//   - SP500     (SSGA SPY xlsx)     current only — SSGA does not expose historical archive
+//   - SP500     (iShares IVV csv)   historical via asOfDate (${meta.sp500Months} months from 2018-01-31) + current SSGA SPY snapshot
 //   - Dow       (SSGA DIA xlsx)     current only + hand-curated history from documented index changes
 //   - NDX       (Invesco QQQ)       ${meta.ndxNote}
 //   - Russell2k (iShares IWM csv)   historical via asOfDate (${meta.russellMonths} months)
@@ -492,12 +544,23 @@ async function main(): Promise<void> {
   snapshots.push(...dowHistory);
   console.log(`[dow hand-curated] ${dowHistory.length} monthly snapshots from 2018-01-31`);
 
-  // 4. iShares IWM historical → Russell 2000
+  // 4. iShares IVV historical → S&P 500 (Phase 0a-2)
+  // Bound the backfill window at the prior month-end of `today` so we
+  // don't double-emit the current month alongside the SSGA SPY snapshot
+  // (which is bucketed at its own as-of date).
+  const todayDate = new Date(`${today}T00:00:00Z`);
+  const priorMonthEnd = new Date(Date.UTC(todayDate.getUTCFullYear(), todayDate.getUTCMonth(), 0));
+  const sp500EndYM = priorMonthEnd.toISOString().slice(0, 7); // YYYY-MM
+  console.log(`[ivv] backfilling S&P 500 historical 2018-01 → ${sp500EndYM}…`);
+  const sp500History = await backfillSp500History(sp500EndYM);
+  snapshots.push(...sp500History);
+
+  // 5. iShares IWM historical → Russell 2000
   console.log('[iwm] backfilling Russell 2000 historical…');
   const russell = await backfillRussell2kHistory();
   snapshots.push(...russell);
 
-  // 5. NDX — Invesco QQQ blocked from this env; fall back to universe.ts seed
+  // 6. NDX — Invesco QQQ blocked from this env; fall back to universe.ts seed
   ndxNote = 'BLOCKED — Invesco SPA-only at last run; falls back to universe.ts seed (curated subset, not authoritative)';
   console.log(`[ndx] ${ndxNote}`);
 
@@ -506,6 +569,7 @@ async function main(): Promise<void> {
     generatedAt: today,
     spyAsOfDate,
     diaAsOfDate,
+    sp500Months: sp500History.length,
     russellMonths: russell.length,
     ndxNote,
   });

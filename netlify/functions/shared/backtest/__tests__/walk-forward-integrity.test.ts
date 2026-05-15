@@ -372,7 +372,7 @@ describe('walk-forward integrity (P0)', () => {
     expect(out.corrected).toBe(true);
   });
 
-  it('test 6b: SP500 (current-seed only) → corrected=false', () => {
+  it('test 6b: SP500 window inside IVV coverage → corrected=true (Phase 0a-2)', () => {
     const dates = walkForwardArray({
       universe: 'sp500',
       startDate: '2023-01-31',
@@ -391,7 +391,7 @@ describe('walk-forward integrity (P0)', () => {
       initialCapital: 100_000,
     });
     const out = windowSurvivorshipCorrected('sp500', dates);
-    expect(out.corrected).toBe(false);
+    expect(out.corrected).toBe(true);
   });
 
   // -----------------------------------------------------------------

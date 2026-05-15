@@ -8,3 +8,6 @@ dist/
 coverage/
 .vitest-cache/
 backups/
+.secrets/
+data/backfill-log.jsonl
+data/cache/
