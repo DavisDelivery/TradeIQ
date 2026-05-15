@@ -108,6 +108,24 @@ describe('upstream failure', () => {
     const r = await (handler as any)(makeEvent(validPick), {} as any, () => {});
     expect(r.statusCode).toBe(500);
     expect(JSON.parse(r.body).error).toBe('narration_unavailable');
+    expect(JSON.parse(r.body).diagnostic).toBe('unknown');
+  });
+
+  it('surfaces the generator errorCode as diagnostic in the response body', async () => {
+    (generateNarrative as any).mockResolvedValue({
+      text: null,
+      cached: false,
+      errorCode: 'anthropic_http_401',
+      errorDetail: 'invalid x-api-key',
+    });
+
+    const r = await (handler as any)(makeEvent(validPick), {} as any, () => {});
+    expect(r.statusCode).toBe(500);
+    const body = JSON.parse(r.body);
+    expect(body.error).toBe('narration_unavailable');
+    expect(body.diagnostic).toBe('anthropic_http_401');
+    // errorDetail must NOT be echoed to the wire (may contain upstream body)
+    expect(body.errorDetail).toBeUndefined();
   });
 
   it('returns 500 when ANTHROPIC_API_KEY is missing', async () => {

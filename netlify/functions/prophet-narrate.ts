@@ -99,17 +99,28 @@ export const handler: Handler = async (event) => {
   }
 
   const t0 = Date.now();
-  const { text, cached } = await generateNarrative(body);
+  const result = await generateNarrative(body);
   const ms = Date.now() - t0;
 
-  if (!text) {
-    log.warn('narrate_returned_null', { ticker: body.ticker, ms });
-    return json(500, { ok: false, error: 'narration_unavailable' });
+  if (!result.text) {
+    // errorDetail goes to logs (may contain account-scoped upstream body);
+    // errorCode is safe to echo back to the UI as a diagnostic hint.
+    log.warn('narrate_returned_null', {
+      ticker: body.ticker,
+      ms,
+      errorCode: result.errorCode,
+      errorDetail: result.errorDetail,
+    });
+    return json(500, {
+      ok: false,
+      error: 'narration_unavailable',
+      diagnostic: result.errorCode ?? 'unknown',
+    });
   }
 
-  log.info('narrate_ok', { ticker: body.ticker, cached, ms, len: text.length });
+  log.info('narrate_ok', { ticker: body.ticker, cached: result.cached, ms, len: result.text.length });
 
-  return json(200, { ok: true, ticker: body.ticker, narrative: text, cached });
+  return json(200, { ok: true, ticker: body.ticker, narrative: result.text, cached: result.cached });
 };
 
 function json(statusCode: number, body: unknown) {
