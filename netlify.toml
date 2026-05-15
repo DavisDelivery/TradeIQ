@@ -128,6 +128,14 @@
   to = "/.netlify/functions/audit-prophet-layers"
   status = 200
 
+# Phase 4f W1: broader two-board audit. Covers Target + Prophet across
+# largecap + russell2k (4 quadrants). Defaults to ?board=both&universe=both
+# &days=30. Append ?fmt=md for ready-to-paste Markdown.
+[[redirects]]
+  from = "/api/audit-stub-analysts"
+  to = "/.netlify/functions/audit-stub-analysts"
+  status = 200
+
 # Phase 4e-1 follow-up: portfolio backtest runner.
 #   POST /api/portfolio-backtest/start  → trigger (fires background)
 #   GET  /api/portfolio-backtest-runs    → list runs
