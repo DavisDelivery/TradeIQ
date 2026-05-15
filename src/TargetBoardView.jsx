@@ -10,6 +10,7 @@ import { ConvictionBadge, DirectionPill } from './components/Badges.jsx';
 import { ResearchPanel } from './components/ResearchPanel.jsx';
 import { FreshnessPill } from './components/FreshnessPill.jsx';
 import { LogButton } from './components/LogButton.jsx';
+import { AnalystContributions } from './components/AnalystContributions.jsx';
 import { useTargetBoard } from './hooks/useTargetBoard.js';
 
 // ---------------------------------------------------------------------------
@@ -388,31 +389,7 @@ export const TargetDetail = ({ target, onClose }) => {
               </div>
             </div>
 
-            <div className="border border-neutral-800 p-4">
-              <div className="text-[10px] uppercase tracking-[0.2em] text-neutral-500 font-mono mb-3">Contributions</div>
-              <div className="space-y-2">
-                {target.analystContributions?.map(c => {
-                  const Icon = analystIcon[c.analyst] || Circle;
-                  const color = c.direction === 'long' ? 'text-emerald-400' : c.direction === 'short' ? 'text-rose-400' : 'text-neutral-400';
-                  return (
-                    <div key={c.analyst} className="flex items-center gap-3">
-                      <Icon className={`h-3.5 w-3.5 ${color}`} />
-                      <div className="flex-1 text-[12px] font-mono text-neutral-300">{analystLabel[c.analyst]}</div>
-                      <div className="flex items-center gap-2 flex-1">
-                        <div className="flex-1 h-1 bg-neutral-800">
-                          <div
-                            className="h-full"
-                            style={{ width: `${c.score}%`, background: c.direction === 'long' ? '#14e89a' : c.direction === 'short' ? '#ff5577' : '#9ca3af' }}
-                          />
-                        </div>
-                        <span className={`font-mono text-[12px] w-8 text-right ${color}`}>{c.score}</span>
-                      </div>
-                      <span className="font-mono text-[10px] text-neutral-500 w-10 text-right uppercase">{Number.isFinite(c.weight) ? `${(c.weight * 100).toFixed(0)}%` : '—'}</span>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
+            <AnalystContributions target={target} />
           </div>
 
           <div>
