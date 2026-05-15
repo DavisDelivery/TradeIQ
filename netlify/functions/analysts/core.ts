@@ -5,7 +5,13 @@ import type { AnalystOutput, Direction } from '../shared/types';
 // Fundamental
 // ---------------------------------------------------------------------------
 export function runFundamental(f: FundamentalsSnapshot | null): AnalystOutput {
-  if (!f) return { score: 50, direction: 'neutral', confidence: 0, rationale: 'no fundamentals', signals: {} };
+  if (!f) return {
+    score: 50,
+    direction: 'neutral',
+    confidence: 0,
+    rationale: 'no fundamentals',
+    signals: { _noData: true, _reason: 'no_data' },
+  };
   let raw = 0;
   const s: Record<string, any> = {};
   const parts: string[] = [];
@@ -55,7 +61,13 @@ export function runFundamental(f: FundamentalsSnapshot | null): AnalystOutput {
 // Flow (volume/price proxy for institutional flow)
 // ---------------------------------------------------------------------------
 export function runFlow(bars: Bar[]): AnalystOutput {
-  if (bars.length < 30) return { score: 50, direction: 'neutral', confidence: 0, rationale: 'insufficient history', signals: {} };
+  if (bars.length < 30) return {
+    score: 50,
+    direction: 'neutral',
+    confidence: 0,
+    rationale: 'insufficient history',
+    signals: { _noData: true, _reason: 'insufficient_bars' },
+  };
 
   const recent = bars.slice(-20);
   const adv30 = avg(bars.slice(-30).map((b) => b.v));
@@ -113,19 +125,39 @@ export function runEarnings(upcoming: UpcomingEarning | null, history: EarningsS
   const s: Record<string, any> = {};
   const parts: string[] = [];
 
+  // Track which branches actually contributed signal so we can distinguish
+  // "no data" (no upcoming AND no usable history) from "real neutral
+  // signal" (data flowed through but the value was midpoint).
+  let upcomingContributed = false;
+  let historyContributed = false;
+
   if (upcoming?.date) {
     const days = Math.round((new Date(upcoming.date).getTime() - Date.now()) / 86400000);
     s.daysUntilEarnings = days;
     s.earningsDate = upcoming.date;
-    if (days >= 0 && days <= 5) { raw -= 30; parts.push(`earnings in ${days}d, de-rated`); }
-    else if (days >= 0 && days <= 10) raw -= 10;
-    else if (days >= 0 && days <= 21) parts.push(`earnings in ${days}d`);
+    if (days >= 0 && days <= 5) { raw -= 30; parts.push(`earnings in ${days}d, de-rated`); upcomingContributed = true; }
+    else if (days >= 0 && days <= 10) { raw -= 10; upcomingContributed = true; }
+    else if (days >= 0 && days <= 21) { parts.push(`earnings in ${days}d`); upcomingContributed = true; }
   }
   if (history.length >= 2) {
     const beats = history.slice(0, 4).filter((q) => q.epsActual > q.epsEstimate).length;
     s.beats4q = beats;
-    if (beats >= 3) { raw += 20; parts.push(`${beats}/4 beats`); }
-    else if (beats <= 1 && history.length >= 4) { raw -= 15; parts.push(`only ${beats}/4 beats`); }
+    if (beats >= 3) { raw += 20; parts.push(`${beats}/4 beats`); historyContributed = true; }
+    else if (beats <= 1 && history.length >= 4) { raw -= 15; parts.push(`only ${beats}/4 beats`); historyContributed = true; }
+  }
+
+  // Phase 4f-finish W3 — when neither branch had actionable data, this
+  // analyst has no real signal to contribute. Surface as _noData so the
+  // composite skips it and rescales weights to the analysts that DO have
+  // signal, rather than dragging the composite toward the midpoint 50.
+  if (!upcomingContributed && !historyContributed) {
+    return {
+      score: 50,
+      direction: 'neutral',
+      confidence: 0,
+      rationale: 'no earnings catalyst',
+      signals: { ...s, _noData: true, _reason: 'no_actionable_data' },
+    };
   }
 
   raw = clamp(raw, -100, 100);
@@ -147,7 +179,13 @@ const BULLISH_KEYWORDS = ['upgrade', 'beat', 'raises', 'record', 'approval', 'la
 
 export function runNewsSentiment(news: NewsItem[]): AnalystOutput {
   if (news.length === 0) {
-    return { score: 50, direction: 'neutral', confidence: 0, rationale: 'no recent news', signals: { newsCount: 0 } };
+    return {
+      score: 50,
+      direction: 'neutral',
+      confidence: 0,
+      rationale: 'no recent news',
+      signals: { newsCount: 0, _noData: true, _reason: 'no_data' },
+    };
   }
   const now = Date.now();
   let raw = 0;

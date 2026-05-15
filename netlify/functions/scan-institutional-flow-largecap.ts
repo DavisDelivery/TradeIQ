@@ -8,10 +8,17 @@
 //
 // Schedule: 0 22 * * 1-5 (weekday 22:00 UTC, after US market close).
 //
-// Scope: dark-pool + block-trades only. Options-unusual computation
-// is shipped + tested in `institutional-flow/options-unusual.ts` but
-// not wired into this scan yet — the Polygon options-ticks fetcher is
-// a follow-up because it requires per-ticker strike enumeration.
+// Scope: dark-pool + block-trades + options-unusual (Phase 4f-finish).
+// The options channel uses `/v3/snapshot/options/{ticker}` which
+// returns per-strike open interest + last-print quote — enough for
+// OI-spike detection (the largest of the three sub-scores) but NOT
+// enough for sweep/block tick detection. Per-contract tick fetching
+// is a follow-up; sweep/block counts in the cached signal stay 0
+// until that lands.
+//
+// Previous-day OI for the spike comparison is read from the prior
+// day's signal in the same Firestore subcollection; first-day-after-
+// deploy snapshots have no prior so oiSpikeStrikes = 0 by design.
 //
 // Tick volume can be very large (millions of trades per day for the
 // most active large-caps). We sample up to 5 pages × 50K trades per
@@ -26,10 +33,13 @@ import { getAdminDb } from './shared/firebase-admin';
 import { logger } from './shared/logger';
 import { computeBlockTradeSignal } from './shared/institutional-flow/block-trades';
 import { computeDarkPoolSignal } from './shared/institutional-flow/dark-pool';
+import { computeOptionsFlowSignal } from './shared/institutional-flow/options-unusual';
+import { getOptionsSnapshot } from './shared/institutional-flow/polygon-options-snapshot';
 import { getTradesForDay } from './shared/institutional-flow/polygon-trades';
 import type {
   BlockTradeSignal,
   DarkPoolSignal,
+  OptionsFlowSignal,
   PolygonTrade,
   PolygonTradesByDay,
 } from './shared/institutional-flow/types';
@@ -80,6 +90,32 @@ async function buildTradesWindow(
   return { window: { byDate }, todayTrades: today.trades, warnings };
 }
 
+async function readPrevDayOiByKey(
+  ticker: string,
+  asOfDate: string,
+): Promise<Record<string, number>> {
+  // Walk back up to 5 calendar days looking for the most recent
+  // institutionalFlow document — weekends/holidays produce no scan,
+  // so we don't always have yesterday's record. The cached field is
+  // `_oiToday` map written by this same scan one day prior.
+  for (let i = 1; i <= 5; i++) {
+    const prev = new Date(`${asOfDate}T00:00:00Z`);
+    prev.setUTCDate(prev.getUTCDate() - i);
+    const prevDate = prev.toISOString().slice(0, 10);
+    const snap = await getAdminDb()
+      .collection('institutionalFlow')
+      .doc('largecap')
+      .collection(ticker)
+      .doc(prevDate)
+      .get();
+    if (!snap.exists) continue;
+    const data = snap.data();
+    const oiMap = data?.optionsFlow?._oiToday;
+    if (oiMap && typeof oiMap === 'object') return oiMap as Record<string, number>;
+  }
+  return {};
+}
+
 async function scanOneTicker(
   ticker: string,
   asOfDate: string,
@@ -87,6 +123,8 @@ async function scanOneTicker(
   ticker: string;
   darkPool: DarkPoolSignal | null;
   blockTrades: BlockTradeSignal;
+  optionsFlow: OptionsFlowSignal | null;
+  oiToday: Record<string, number>;
   warnings: string[];
 }> {
   const { window, todayTrades, warnings } = await buildTradesWindow(ticker, asOfDate);
@@ -96,7 +134,28 @@ async function scanOneTicker(
     asOfDate,
     trades: todayTrades,
   });
-  return { ticker, darkPool, blockTrades, warnings };
+
+  // Options snapshot — independent of trades window. Read prior-day
+  // OI from cache so the day-over-day spike comparison is meaningful.
+  let optionsFlow: OptionsFlowSignal | null = null;
+  let oiToday: Record<string, number> = {};
+  try {
+    const prevOi = await readPrevDayOiByKey(ticker, asOfDate);
+    const snap = await getOptionsSnapshot(ticker, prevOi);
+    warnings.push(...snap.warnings);
+    if (snap.window.openInterest.length > 0 || snap.window.trades.length > 0) {
+      optionsFlow = computeOptionsFlowSignal({
+        ticker,
+        asOfDate,
+        window: snap.window,
+      });
+      oiToday = snap.oiToday;
+    }
+  } catch (err: any) {
+    warnings.push(`options snapshot ${ticker}: ${String(err?.message ?? err)}`);
+  }
+
+  return { ticker, darkPool, blockTrades, optionsFlow, oiToday, warnings };
 }
 
 async function writeSignal(
@@ -104,6 +163,8 @@ async function writeSignal(
   asOfDate: string,
   darkPool: DarkPoolSignal | null,
   blockTrades: BlockTradeSignal,
+  optionsFlow: OptionsFlowSignal | null,
+  oiToday: Record<string, number>,
   warnings: string[],
 ): Promise<void> {
   await getAdminDb()
@@ -116,6 +177,11 @@ async function writeSignal(
       asOfDate,
       darkPool,
       blockTrades,
+      // optionsFlow is the signal consumers read; _oiToday is the
+      // private map the next day's scan reads back as previous-day OI
+      // for the spike comparison. Underscored to flag as
+      // implementation-detail.
+      optionsFlow: optionsFlow ? { ...optionsFlow, _oiToday: oiToday } : null,
       warnings,
       writtenAt: Timestamp.now(),
     });
@@ -169,6 +235,8 @@ export const handler = schedule('0 22 * * 1-5', async () => {
           asOfDate,
           sig.darkPool,
           sig.blockTrades,
+          sig.optionsFlow,
+          sig.oiToday,
           sig.warnings,
         );
         written++;

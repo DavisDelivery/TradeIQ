@@ -1,8 +1,9 @@
 // Phase 4f W7 — scheduled flow scanner integration tests.
 //
 // The handler itself wraps schedule(). We exercise the extracted
-// scanOneTicker helper against a stubbed Polygon fetcher and verify
-// it produces sane signals end-to-end (dark-pool + block-trades).
+// scanOneTicker helper against stubbed Polygon + firebase-admin
+// fetchers and verify it produces sane signals end-to-end (dark-pool
+// + block-trades + options-flow [4f-finish]).
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -15,6 +16,32 @@ vi.mock('../shared/institutional-flow/polygon-trades', () => ({
     pagesFetched: 1,
     truncated: false,
     warnings: [],
+  })),
+}));
+
+// Phase 4f-finish — options snapshot fetcher + firebase-admin read for
+// prior-day OI. Both default to "nothing", matching first-day-after-
+// deploy behavior (no spikes, no prior OI cache).
+vi.mock('../shared/institutional-flow/polygon-options-snapshot', () => ({
+  getOptionsSnapshot: vi.fn(async () => ({
+    window: { trades: [], openInterest: [] },
+    oiToday: {},
+    pagesFetched: 1,
+    warnings: [],
+  })),
+}));
+
+vi.mock('../shared/firebase-admin', () => ({
+  getAdminDb: vi.fn(() => ({
+    collection: () => ({
+      doc: () => ({
+        collection: () => ({
+          doc: () => ({
+            get: async () => ({ exists: false }),
+          }),
+        }),
+      }),
+    }),
   })),
 }));
 
@@ -61,6 +88,10 @@ describe('_internals.scanOneTicker', () => {
     expect(out.darkPool!.zScore).toBeGreaterThan(0);
     expect(out.blockTrades.blockCount).toBe(2);
     expect(out.blockTrades.blockNotional).toBe(100_000 * 150 + 50_000 * 150);
+    // 4f-finish: options snapshot returned empty in this mock; signal
+    // is null, oiToday is empty.
+    expect(out.optionsFlow).toBeNull();
+    expect(out.oiToday).toEqual({});
   });
 
   it('returns dark-pool null when today has no trades', async () => {
