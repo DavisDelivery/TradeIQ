@@ -155,6 +155,56 @@ export async function persistMLTrainingRows(
   await persistSubcollection(runId, 'mlTraining', rows);
 }
 
+/**
+ * Phase 4e-1-infra — append a per-batch slice of mlTraining rows to the
+ * subcollection. Used by the checkpoint-and-resume bg-function so each
+ * batch's rows land immediately (avoids accumulating them in the cursor
+ * doc, which would push past Firestore's 1 MiB limit for full sp500
+ * runs).
+ *
+ * `startIdx` is the cumulative count of rows already persisted across
+ * previous batches. New rows are assigned ids startIdx..startIdx+N-1,
+ * padded to 8 digits to match the single-pass writer.
+ */
+export async function appendMLTrainingRows(
+  runId: string,
+  rows: MLTrainingRow[],
+  startIdx: number,
+): Promise<void> {
+  if (rows.length === 0) return;
+  const colRef = db().collection(COLLECTION).doc(runId).collection('mlTraining');
+  const CHUNK = 500;
+  for (let i = 0; i < rows.length; i += CHUNK) {
+    const slice = rows.slice(i, i + CHUNK);
+    const batch = db().batch();
+    slice.forEach((row, j) => {
+      const id = String(startIdx + i + j).padStart(8, '0');
+      batch.set(colRef.doc(id), row as unknown as Record<string, unknown>);
+    });
+    await batch.commit();
+  }
+}
+
+/**
+ * Phase 4e-1-infra — read back every mlTraining row for a run. Called
+ * by the bg-function's terminal batch so `computeMetrics` can compute
+ * the information coefficient over the full history (each batch only
+ * sees its own rebalances during processing).
+ *
+ * Returns an empty array if the subcollection is missing.
+ */
+export async function readAllMLTrainingRows(
+  runId: string,
+): Promise<MLTrainingRow[]> {
+  const colRef = db().collection(COLLECTION).doc(runId).collection('mlTraining');
+  const snap = await colRef.get();
+  const rows: MLTrainingRow[] = [];
+  snap.forEach((doc) => {
+    rows.push(doc.data() as MLTrainingRow);
+  });
+  return rows;
+}
+
 async function persistSubcollection<T>(
   runId: string,
   name: string,
