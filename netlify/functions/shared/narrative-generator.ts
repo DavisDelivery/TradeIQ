@@ -14,7 +14,7 @@
 // callers degrade to the W1 UI placeholder when the existing infra-level
 // guard trips. We do not add new refusal logic.
 
-import { callAnthropic, BudgetExhaustedError, CircuitOpenError } from './anthropic-client';
+import { callAnthropic, BudgetExhaustedError, CircuitOpenError, AnthropicHttpError } from './anthropic-client';
 import { getCachedNarrative, setCachedNarrative } from './narrative-cache';
 
 const MODEL = 'claude-opus-4-7';
@@ -77,14 +77,21 @@ export function sanitizeNarrative(s: string): string {
 }
 
 /**
- * Generate a single narrative. Returns null on budget exhaustion, circuit
- * open, or any upstream failure — callers should treat null as "no narrative
- * available right now" and surface the W1 UI placeholder.
+ * Generate a single narrative. Returns null `text` on budget exhaustion,
+ * circuit open, or any upstream failure — callers should treat null as
+ * "no narrative available right now" and surface the W1 UI placeholder.
+ *
+ * On failure, `errorCode` carries a short token identifying the failure
+ * class (for surfacing to UI/curl as a diagnostic hint); `errorDetail`
+ * carries the upstream body for logging (callers MUST log this and MUST
+ * NOT echo it back over the wire — it may contain account-scoped info).
  *
  * Cache-aware: checks `narrative-cache` first by `{ticker}:{compositeBand}`.
  * On a cache hit, returns the cached text without calling Anthropic.
  */
-export async function generateNarrative(pick: NarrativeInput): Promise<{ text: string | null; cached: boolean }> {
+export async function generateNarrative(
+  pick: NarrativeInput,
+): Promise<{ text: string | null; cached: boolean; errorCode?: string; errorDetail?: string }> {
   // Cache hit short-circuit — no API call, no spend.
   const hit = getCachedNarrative(pick.ticker, pick.composite);
   if (hit) return { text: hit, cached: true };
@@ -99,16 +106,32 @@ export async function generateNarrative(pick: NarrativeInput): Promise<{ text: s
       messages: [{ role: 'user', content: user }],
     });
     const raw = data.content.find((b) => b.type === 'text')?.text?.trim();
-    if (!raw) return { text: null, cached: false };
+    if (!raw) return { text: null, cached: false, errorCode: 'empty_response' };
     const text = sanitizeNarrative(raw);
     setCachedNarrative(pick.ticker, pick.composite, text);
     return { text, cached: false };
   } catch (err) {
-    if (err instanceof BudgetExhaustedError || err instanceof CircuitOpenError) {
-      return { text: null, cached: false };
+    if (err instanceof BudgetExhaustedError) {
+      return { text: null, cached: false, errorCode: 'budget_exhausted' };
     }
-    // Any other failure — log via caller; we just degrade to no narrative.
-    return { text: null, cached: false };
+    if (err instanceof CircuitOpenError) {
+      return { text: null, cached: false, errorCode: 'circuit_open' };
+    }
+    if (err instanceof AnthropicHttpError) {
+      return {
+        text: null,
+        cached: false,
+        errorCode: `anthropic_http_${err.status}`,
+        errorDetail: err.bodyText.slice(0, 200),
+      };
+    }
+    // Any other failure (network, parse, etc.).
+    return {
+      text: null,
+      cached: false,
+      errorCode: 'unknown',
+      errorDetail: err instanceof Error ? err.message.slice(0, 200) : String(err).slice(0, 200),
+    };
   }
 }
 
