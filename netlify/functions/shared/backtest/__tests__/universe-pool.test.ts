@@ -3,6 +3,7 @@ import {
   universePoolForDate,
   windowSurvivorshipCorrected,
 } from '../universe-pool';
+import { universeHistoryCoverage } from '../../universe-history';
 
 describe('universe-pool', () => {
   describe('universePoolForDate (Dow — corrected)', () => {
@@ -33,28 +34,43 @@ describe('universe-pool', () => {
     });
   });
 
-  describe('universePoolForDate (current-seed-only universes)', () => {
-    it('sp500 returns empty + uncorrected for dates BEFORE the seed snapshot', () => {
-      // sp500 seed is dated 2026-05-07; before that we have no snapshot,
-      // so the engine must NOT silently fall back to current — it returns
-      // empty and the caller surfaces the gap.
-      const r = universePoolForDate('sp500', '2024-06-01');
+  describe('universePoolForDate (sp500 — corrected via Phase 0a-2 IVV backfill)', () => {
+    it('sp500 returns empty + uncorrected for dates BEFORE the earliest IVV snapshot', () => {
+      // sp500 IVV backfill starts 2018-01-31; before that we have no
+      // snapshot, so the engine must NOT silently fall back to current —
+      // it returns empty and the caller surfaces the gap.
+      const r = universePoolForDate('sp500', '2017-06-30');
       expect(r.tickers).toEqual([]);
       expect(r.survivorshipCorrected).toBe(false);
       expect(r.snapshotDate).toBeNull();
     });
 
-    it('sp500 AT or AFTER seed date returns tickers but still flags uncorrected', () => {
-      const r = universePoolForDate('sp500', '2026-05-08');
-      expect(r.tickers.length).toBeGreaterThan(100);
-      // Single-seed universe — uncorrected by construction
-      expect(r.survivorshipCorrected).toBe(false);
-      expect(r.snapshotDate).toBe('2026-05-07');
+    it('sp500 inside coverage returns tickers and flags corrected=true', () => {
+      const r = universePoolForDate('sp500', '2020-06-30');
+      expect(r.tickers.length).toBeGreaterThan(400);
+      expect(r.survivorshipCorrected).toBe(true);
+      expect(r.snapshotDate).not.toBeNull();
+      expect(r.snapshotDate! <= '2020-06-30').toBe(true);
     });
 
-    it('ndx at seed date returns tickers but flags uncorrected', () => {
-      // NDX seed is dated 2026-05-11
-      const r = universePoolForDate('ndx', '2026-05-12');
+    it('sp500 walks back to the most-recent snapshot ≤ asOfDate (PIT semantics)', () => {
+      const earlier = universePoolForDate('sp500', '2018-06-15');
+      const later = universePoolForDate('sp500', '2018-08-15');
+      expect(earlier.snapshotDate! <= '2018-06-15').toBe(true);
+      expect(later.snapshotDate! <= '2018-08-15').toBe(true);
+      expect(earlier.snapshotDate).not.toBe(later.snapshotDate);
+    });
+  });
+
+  describe('universePoolForDate (ndx — still current-seed-only)', () => {
+    it('ndx at the seed date returns tickers but flags uncorrected', () => {
+      // The NDX seed is auto-dated to "today" by the generator (Invesco
+      // QQQ feed remains blocked); pin to the actual seed date to keep
+      // this assertion robust across regenerations.
+      const coverage = universeHistoryCoverage();
+      const seedDate = coverage.ndx.firstDate!;
+      expect(seedDate).not.toBeNull();
+      const r = universePoolForDate('ndx', seedDate);
       expect(r.tickers.length).toBeGreaterThan(50);
       expect(r.survivorshipCorrected).toBe(false);
     });
@@ -78,9 +94,17 @@ describe('universe-pool', () => {
       expect(result.corrected).toBe(false);
     });
 
-    it('sp500 always uncorrected (current-seed only)', () => {
+    it('sp500 window entirely inside IVV coverage → corrected (Phase 0a-2)', () => {
       const result = windowSurvivorshipCorrected('sp500', [
         '2024-01-31',
+        '2024-06-30',
+      ]);
+      expect(result.corrected).toBe(true);
+    });
+
+    it('sp500 window with a pre-IVV-coverage date → not corrected', () => {
+      const result = windowSurvivorshipCorrected('sp500', [
+        '2010-01-01', // before earliest IVV snapshot
         '2024-06-30',
       ]);
       expect(result.corrected).toBe(false);
