@@ -119,24 +119,58 @@ export const handler: Handler = async (event) => {
   const origin = inferOrigin(event as any);
   const backgroundUrl = `${origin}/.netlify/functions/run-portfolio-backtest-background`;
 
-  fetch(backgroundUrl, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ runId, window }),
-  })
-    .then(() => log.info('background_dispatched', { runId, window, backgroundUrl }))
-    .catch((e) =>
-      log.error('background_dispatch_failed', {
-        runId,
-        backgroundUrl,
-        err: String(e?.message ?? e),
-      }),
-    );
+  // Phase 4e-1-finish — bg-dispatch fix. Two pre-existing runs sat
+  // stuck at 'pending' forever (pb-full-202605150933-fqrsid and
+  // pb-rolling-2022-202605142200-008f3z) because the trigger fired
+  // an UNAWAITED fetch and returned immediately. AWS Lambda can
+  // freeze the container the moment the handler's Promise resolves,
+  // and any dangling Promises (the .then/.catch chain on the fetch)
+  // never run — the dispatch POST never leaves.
+  //
+  // Netlify Background Functions return 202 from the gateway as soon
+  // as the function is queued, typically in <1s. Awaiting the fetch
+  // therefore blocks the trigger only until the dispatch is in flight,
+  // not until the 15-min background work completes. We additionally
+  // race against a 3s timeout so a slow gateway can't tie up the
+  // trigger's 26s budget.
+  const DISPATCH_TIMEOUT_MS = 3000;
+  let dispatchOk = false;
+  let dispatchStatus: number | undefined;
+  try {
+    const dispatch = fetch(backgroundUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ runId, window }),
+    });
+    const raced = await Promise.race([
+      dispatch.then((r) => ({ r })),
+      new Promise<{ timeout: true }>((resolve) =>
+        setTimeout(() => resolve({ timeout: true }), DISPATCH_TIMEOUT_MS),
+      ),
+    ]);
+    if ('r' in raced) {
+      dispatchOk = true;
+      dispatchStatus = raced.r.status;
+      log.info('background_dispatched', { runId, window, backgroundUrl, status: raced.r.status });
+    } else {
+      // Timeout — the fetch is still in-flight; we can't await further
+      // without risking the trigger timeout. Most likely Netlify has
+      // already accepted the request and the timeout is just slow
+      // logging. The doc will advance if the background function ran.
+      log.warn('background_dispatch_timeout', { runId, window, backgroundUrl, timeoutMs: DISPATCH_TIMEOUT_MS });
+    }
+  } catch (e: any) {
+    log.error('background_dispatch_failed', {
+      runId,
+      backgroundUrl,
+      err: String(e?.message ?? e),
+    });
+  }
 
-  log.info('trigger_response', { runId, window });
+  log.info('trigger_response', { runId, window, dispatchOk, dispatchStatus });
   return {
     statusCode: 202,
     headers,
-    body: JSON.stringify({ ok: true, runId, window, status: 'pending' }),
+    body: JSON.stringify({ ok: true, runId, window, status: 'pending', dispatchOk }),
   };
 };
