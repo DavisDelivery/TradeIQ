@@ -183,15 +183,17 @@ describe('backtest-runs-trigger', () => {
     const body = JSON.parse(res.body);
     expect(body.ok).toBe(true);
     expect(body.runId).toBe('bt_test_001');
+    // Post-fix: trigger awaits the dispatch, so dispatchOk lands true
+    // in the response body when the fetch resolves successfully.
+    expect(body.dispatchOk).toBe(true);
 
     // Pending row was written with the same runId.
     expect(mockPending).toHaveBeenCalledTimes(1);
     expect(mockPending.mock.calls[0][0]).toBe('bt_test_001');
     expect(mockPending.mock.calls[0][1]).toEqual(validConfig);
 
-    // Background was dispatched. Because the call is fire-and-forget,
-    // we wait a microtask for the dispatch to register.
-    await new Promise((r) => setTimeout(r, 5));
+    // Background was dispatched. Post-fix the dispatch is awaited, so
+    // no microtask wait is required to observe the call.
     expect(fetchSpy).toHaveBeenCalledTimes(1);
     const [url, init] = fetchSpy.mock.calls[0];
     expect(url).toBe('https://tradeiq-alpha.netlify.app/.netlify/functions/run-backtest-background');
@@ -205,7 +207,6 @@ describe('backtest-runs-trigger', () => {
       makeEvent({ body: validConfig, host: 'deploy-preview-99--tradeiq-alpha.netlify.app' }),
     );
     expect(res.statusCode).toBe(202);
-    await new Promise((r) => setTimeout(r, 5));
     expect(fetchSpy.mock.calls[0][0]).toBe(
       'https://deploy-preview-99--tradeiq-alpha.netlify.app/.netlify/functions/run-backtest-background',
     );
@@ -261,5 +262,76 @@ describe('backtest-runs-trigger', () => {
     expect(res.statusCode).toBe(409);
     const body = JSON.parse(res.body);
     expect(body.error).toMatch(/allowParallel/i);
+  });
+
+  // ---- bg-dispatch regression tests (mirrors PR #30) ----
+  //
+  // Bug context: bt_20260515115436_ixxt1o sat at 'pending' for hours
+  // because the trigger fired an UNAWAITED fetch and AWS Lambda froze
+  // the container before the POST left. The fix awaits the dispatch
+  // (with a 3s timeout race so the trigger stays within its 26s
+  // budget even on a slow gateway). Same fix as PR #30 applied to
+  // the portfolio path.
+
+  it('AWAITS the dispatch fetch before returning (regression test for the stuck-pending bug)', async () => {
+    // The bug: the original implementation did `fetch(...).then(...)` without
+    // awaiting, so the trigger could return before Lambda actually sent the
+    // POST. The fix awaits the fetch. We verify by making fetch resolve
+    // asynchronously and asserting the trigger only returns after it does.
+    let dispatchResolved = false;
+    fetchSpy.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          setTimeout(() => {
+            dispatchResolved = true;
+            resolve({
+              ok: true,
+              status: 202,
+              text: async () => '',
+              json: async () => ({ ok: true }),
+              headers: { get: () => null },
+            } as any);
+          }, 30);
+        }),
+    );
+    const res = await invoke(handler, makeEvent({ body: validConfig }));
+    // If the trigger had returned before awaiting fetch, this would be false.
+    expect(dispatchResolved).toBe(true);
+    expect(res.statusCode).toBe(202);
+    const body = JSON.parse(res.body);
+    expect(body.dispatchOk).toBe(true);
+  });
+
+  it('returns 202 with dispatchOk:false when the dispatch times out', async () => {
+    // Simulate a hung gateway — fetch never resolves. The trigger should
+    // race against its 3s internal timeout and return cleanly so the
+    // 26s trigger budget isn't blown.
+    fetchSpy.mockImplementation(() => new Promise(() => {})); // never resolves
+    const start = Date.now();
+    const res = await invoke(handler, makeEvent({ body: validConfig }));
+    const elapsed = Date.now() - start;
+    expect(res.statusCode).toBe(202);
+    const body = JSON.parse(res.body);
+    expect(body.dispatchOk).toBe(false);
+    expect(body.runId).toBe('bt_test_001');
+    // 3s race timeout + small slack — must NOT be the 26s trigger timeout.
+    expect(elapsed).toBeLessThan(5000);
+  }, 10_000);
+
+  it('returns 202 with dispatchOk:false when the dispatch fetch throws', async () => {
+    // A network error on the dispatch (DNS failure, connection reset, etc.)
+    // should be logged and swallowed — the pending row is already in
+    // Firestore, the user has the runId, and the trigger still returns 202.
+    // The response surfaces dispatchOk:false so the orchestrator/UI can
+    // detect the degraded state.
+    fetchSpy.mockImplementation(async () => {
+      throw new Error('ECONNRESET');
+    });
+    const res = await invoke(handler, makeEvent({ body: validConfig }));
+    expect(res.statusCode).toBe(202);
+    const body = JSON.parse(res.body);
+    expect(body.ok).toBe(true);
+    expect(body.dispatchOk).toBe(false);
+    expect(body.runId).toBe('bt_test_001');
   });
 });

@@ -12,13 +12,19 @@
 //      accidental double-click, not real concurrency.)
 //   4. Path-A runId allocation: trigger generates the runId, writes
 //      backtestRuns/{runId} with status: 'pending' via persistRunPending,
-//      then fires-and-forgets a POST to /.netlify/functions/run-backtest-background
-//      with { runId, config }. Returns 202 with the runId in <1s.
+//      then POSTs to /.netlify/functions/run-backtest-background with
+//      { runId, config }, awaiting the dispatch (with a 3s timeout race)
+//      so the container can't freeze before the POST leaves. Returns
+//      202 with the runId in <1s on the happy path, <3s in degraded.
 //
-// Why fire-and-forget instead of awaiting: Netlify functions can invoke
-// other functions over HTTP; the gateway returns 202 to a `-background.ts`
-// function immediately. The trigger doesn't need the result — the engine
-// writes everything to Firestore.
+// Why we await the dispatch instead of fire-and-forget: AWS Lambda can
+// freeze the container the moment the handler's Promise resolves; any
+// dangling Promises (a `fetch(...).then(...)` chain with no await)
+// never run, and the POST never leaves. This was the bug behind
+// bt_20260515115436_ixxt1o sitting at 'pending' for hours. The 3s
+// timeout race caps tail latency so a slow gateway can't blow the
+// trigger's 26s budget. Mirror of the PR #30 fix on the portfolio
+// trigger.
 //
 // Trigger lives at a DISTINCT path (/api/backtest-runs/start) from the
 // list (/api/backtest-runs). Method-conditioned Netlify redirects are
@@ -183,7 +189,7 @@ export const handler: Handler = async (event) => {
     log.info('single_flight_bypassed', { reason: 'allowParallel' });
   }
 
-  // --- Allocate runId, write 'pending', fire-and-forget background
+  // --- Allocate runId, write 'pending', dispatch background (awaited)
   const runId = generateRunId();
   try {
     await persistRunPending(runId, config);
@@ -199,41 +205,70 @@ export const handler: Handler = async (event) => {
   const origin = inferOrigin(event as any);
   const backgroundUrl = `${origin}/.netlify/functions/run-backtest-background`;
 
-  // Fire-and-forget. We deliberately do NOT await this. Netlify's
-  // gateway returns 202 to the background function immediately, and
-  // the function keeps running for up to 15 minutes; awaiting would
-  // tie up this trigger function while the engine works.
+  // bg-dispatch fix — mirror of PR #30 (portfolio-backtest-trigger).
+  // Live-confirmed stuck run: bt_20260515115436_ixxt1o sat at
+  // 'pending' for ~3h with runningAt never set. The previous comment
+  // here claimed fire-and-forget was safe because Netlify's gateway
+  // returns 202 immediately — but that's only true if the POST
+  // actually leaves the trigger container, and AWS Lambda can freeze
+  // the container the moment the handler's Promise resolves. Any
+  // dangling Promises (the .then/.catch chain on the unawaited fetch)
+  // never run, and the dispatch POST never leaves. Same root cause as
+  // the portfolio-trigger bug; the orchestrator's earlier assumption
+  // that this path was the "known-working comparator" was wrong.
   //
-  // We log the fact that the dispatch happened, but errors here are
-  // swallowed — the user already has the runId; a transient dispatch
-  // failure means the row will sit in 'pending' until the next launcher
-  // call times it out via single-flight or the user manually checks.
-  fetch(backgroundUrl, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ runId, config }),
-  })
-    .then(() => {
-      log.info('background_dispatched', { runId, backgroundUrl });
-    })
-    .catch((e) => {
-      log.error('background_dispatch_failed', {
-        runId,
-        backgroundUrl,
-        err: String(e?.message ?? e),
-      });
+  // Fix: await the dispatch fetch with a 3-second timeout race.
+  // Netlify Background Functions return 202 from the gateway as soon
+  // as the function is queued, typically in <1s. Awaiting blocks the
+  // trigger only until the dispatch is in flight, not until the 15-min
+  // background work completes. The 3s race caps tail latency so a
+  // slow gateway can't tie up the trigger's 26s budget.
+  const DISPATCH_TIMEOUT_MS = 3000;
+  let dispatchOk = false;
+  let dispatchStatus: number | undefined;
+  try {
+    const dispatch = fetch(backgroundUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ runId, config }),
     });
+    const raced = await Promise.race([
+      dispatch.then((r) => ({ r })),
+      new Promise<{ timeout: true }>((resolve) =>
+        setTimeout(() => resolve({ timeout: true }), DISPATCH_TIMEOUT_MS),
+      ),
+    ]);
+    if ('r' in raced) {
+      dispatchOk = true;
+      dispatchStatus = raced.r.status;
+      log.info('background_dispatched', { runId, backgroundUrl, status: raced.r.status });
+    } else {
+      // Timeout — the fetch is still in-flight; we can't await further
+      // without risking the trigger timeout. Most likely Netlify has
+      // already accepted the request and the timeout is just slow
+      // logging. The doc will advance if the background function ran.
+      log.warn('background_dispatch_timeout', { runId, backgroundUrl, timeoutMs: DISPATCH_TIMEOUT_MS });
+    }
+  } catch (e: any) {
+    log.error('background_dispatch_failed', {
+      runId,
+      backgroundUrl,
+      err: String(e?.message ?? e),
+    });
+  }
 
   log.info('trigger_response', {
     runId,
     durationMs: Date.now() - start,
     universe: config.universe,
     board: config.board,
+    dispatchOk,
+    dispatchStatus,
   });
 
   return {
     statusCode: 202,
     headers,
-    body: JSON.stringify({ ok: true, runId, allowParallel }),
+    body: JSON.stringify({ ok: true, runId, allowParallel, dispatchOk }),
   };
 };
