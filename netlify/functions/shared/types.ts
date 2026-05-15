@@ -28,6 +28,11 @@ export interface Target {
   topSignals: TopSignal[];
   conflictLevel: ConflictLevel;
   scoredAt: string;
+  /** Phase 4f W5 — provenance fields. Analysts whose scores
+   *  contributed to the composite; analysts excluded as no-data this
+   *  scoring call. UI renders LIVE / NO_DATA badges off these. */
+  scoredAnalysts?: string[];
+  noDataAnalysts?: string[];
 }
 
 export interface TargetBoardResponse {

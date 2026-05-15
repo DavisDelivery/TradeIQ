@@ -13,6 +13,7 @@ import { getPoliticalActivity } from './political-provider';
 import { getGovContractActivity } from './govcontracts-provider';
 import { SECTOR_ETFS, SPY, findEntry } from './universe';
 import type { AnalystOutput, Direction, Target, Tier, ConflictLevel, AnalystContribution, TopSignal } from './types';
+import { composeWeights } from './compose-weights';
 import type { Bar } from './data-provider';
 
 interface BarCache {
@@ -103,15 +104,43 @@ export async function runAnalystsForTicker(opts: TargetForOneOpts): Promise<{
   const flow = runFlow(bars);
   const earn = runEarnings(upcoming, history);
   const news_ = runNewsSentiment(news);
-  const ins = insiderActivity ? runInsider(insiderActivity) : {
-    score: 50, direction: 'neutral' as Direction, confidence: 0,
-    rationale: 'insider data unavailable', signals: {},
-  };
-  const pat = patentActivity ? runPatents(patentActivity) : {
-    score: 50, direction: 'neutral' as Direction, confidence: 0,
-    rationale: 'patent data unavailable', signals: {},
-  };
-  const pol = runPolitical(politicalActivity, contractActivity);
+  // Phase 4f W3 — null-default repair. When upstream activity is
+  // missing, mark the analyst as no-data via `signals._noData` rather
+  // than emitting score:50 (the historical stub the screenshot
+  // surfaced). The composite math + UI both consume the flag below.
+  const ins: AnalystOutput = insiderActivity
+    ? runInsider(insiderActivity)
+    : {
+        score: 50,
+        direction: 'neutral' as Direction,
+        confidence: 0,
+        rationale: 'insider data unavailable',
+        signals: { _noData: true, _reason: 'no_data' },
+      };
+  const pat: AnalystOutput = patentActivity
+    ? runPatents(patentActivity)
+    : {
+        score: 50,
+        direction: 'neutral' as Direction,
+        confidence: 0,
+        rationale: 'patent data unavailable',
+        signals: { _noData: true, _reason: 'no_data' },
+      };
+  // Political analyst — if BOTH political and contract activity are
+  // null, mark as no-data; otherwise let `runPolitical` produce its
+  // real signal (it handles partial nulls internally).
+  let pol: AnalystOutput;
+  if (politicalActivity == null && contractActivity == null) {
+    pol = {
+      score: 50,
+      direction: 'neutral' as Direction,
+      confidence: 0,
+      rationale: 'political + contract data unavailable',
+      signals: { _noData: true, _reason: 'no_data' },
+    };
+  } else {
+    pol = runPolitical(politicalActivity, contractActivity);
+  }
 
   // Macro-regime analyst: just a constant biased nudge from the regime layer
   const macroScore = Math.round(50 + macroBias * 20);
@@ -137,19 +166,40 @@ export async function runAnalystsForTicker(opts: TargetForOneOpts): Promise<{
     'political-analyst': pol,
   };
 
-  // Build contributions (weighted score vector)
+  // Phase 4f W5 — Rescale weights to exclude no-data analysts so the
+  // displayed contributions reflect the actual composite math. Without
+  // this rescale the UI shows e.g. "Insider 50 (14% weight)" for an
+  // analyst that contributed nothing (the screenshot bug).
+  const noDataByAnalyst: Record<string, boolean> = {};
+  for (const [name, a] of Object.entries(allAnalysts)) {
+    if (a?.signals && (a.signals as { _noData?: boolean })._noData === true) {
+      noDataByAnalyst[name] = true;
+    }
+  }
+  const rescale = composeWeights({
+    noDataByAnalyst,
+    baseWeights: ANALYST_WEIGHTS,
+  });
+
+  // Build contributions (weighted score vector). No-data analysts get
+  // an effective weight of 0 so the contribution row is honest about
+  // not contributing; the UI badge layer can additionally render a
+  // NO_DATA badge based on `_noData` in `signals`.
   const contributions: AnalystContribution[] = Object.entries(allAnalysts).map(([name, a]) => ({
     analyst: name,
     score: a.score,
     direction: a.direction,
-    weight: ANALYST_WEIGHTS[name] ?? 0.1,
+    weight: +rescale.effectiveWeights[name].toFixed(6),
   }));
 
-  // Net direction: weighted signed score
+  // Net direction: weighted signed score. Use the rescaled effective
+  // weights so removing a no-data analyst correctly redistributes its
+  // share to peers rather than dragging the composite toward 50.
   let netRaw = 0;
   let confTotal = 0;
   for (const [name, a] of Object.entries(allAnalysts)) {
-    const w = ANALYST_WEIGHTS[name] ?? 0.1;
+    const w = rescale.effectiveWeights[name] ?? 0;
+    if (w === 0) continue; // skip no-data
     const signed = a.direction === 'long' ? a.score - 50 : a.direction === 'short' ? -(a.score - 50) : 0;
     netRaw += signed * w * a.confidence;
     confTotal += w * a.confidence;
@@ -194,6 +244,8 @@ export async function runAnalystsForTicker(opts: TargetForOneOpts): Promise<{
     topSignals,
     conflictLevel,
     scoredAt: new Date().toISOString(),
+    scoredAnalysts: rescale.scoredAnalysts,
+    noDataAnalysts: rescale.noDataAnalysts,
   };
 
   return { target, analysts: allAnalysts };
