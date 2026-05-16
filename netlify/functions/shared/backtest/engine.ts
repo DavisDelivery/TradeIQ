@@ -486,7 +486,9 @@ export async function runBacktest(
         dailyEquity.push({ date, value: nav });
       }
 
-      // 7. Per-position attribution + ML training rows
+      // 7a. Per-position attribution — stays portfolio-level. One record
+      //     per HELD position; this is intentionally NOT per-candidate
+      //     (attribution explains the portfolio's realized return).
       for (const p of target) {
         const rets = positionReturns.get(p.ticker) ?? [];
         const segmentReturn = rets.reduce((acc, r) => (1 + acc) * (1 + r.ret) - 1, 0);
@@ -500,39 +502,74 @@ export async function runBacktest(
           composite: p.composite,
           regime: (ctx.regime?.regime as string | undefined) ?? null,
         });
+      }
 
-        // ML row — capture forward returns for the meta-ranker (Phase 5).
-        // The window must span BOTH backward (so lastCloseAtOrBefore can
-        // resolve the entry close on asOfDate) AND ~400 calendar days
-        // forward (covering the 252-trading-day max forward horizon).
-        // Phase 4a hotfix-2 fix: previously called getCachedBarsThrough
-        // with asOfDate + 400d which yielded a window of (+100d, +400d),
-        // missing the rebalance date entirely → entryPrice null and all
-        // forward returns null → IC = 0.
-        const longBars = await getCachedBars(
-          p.ticker,
-          addDays(asOfDate, -30), // small backward buffer so the entry bar is present
-          addDays(asOfDate, 400),
-        ).catch(() => []);
-        const entryClose = lastCloseAtOrBefore(longBars, asOfDate);
-        mlRows.push({
-          runId,
-          ticker: p.ticker,
-          asOfDate,
-          composite: p.composite,
-          layers: p.layers,
-          regime: (ctx.regime?.regime as string | undefined) ?? null,
-          sector: p.sector,
-          marketCapBucket: null,
-          entryPrice: entryClose,
-          exitPrice: null,
-          holdDays: null,
-          forward5dReturn: forwardReturn(longBars, asOfDate, 5),
-          forward20dReturn: forwardReturn(longBars, asOfDate, 20),
-          forward60dReturn: forwardReturn(longBars, asOfDate, 60),
-          forward252dReturn: forwardReturn(longBars, asOfDate, 252),
-          realizedPnl: null,
-        });
+      // 7b. ML training rows — Phase 5a-prep: one row per SCORED
+      //     CANDIDATE (the full ~500-name set for sp500), not per held
+      //     position. This makes the 5a training data cross-sectional —
+      //     the model learns what features predict forward return across
+      //     the whole universe, not just across the selection-confirmed
+      //     held subset (which is a biased ~2-name sample at sp500 scale).
+      //     `inPortfolio` marks which candidates were actually held.
+      //
+      //     Each candidate needs its own getCachedBars fetch (~500/rebalance
+      //     vs ~2 before). Bars are PIT-cached so re-runs are cheap, but
+      //     the first run is slower; the bar fetches run through
+      //     mapWithConcurrency at a modest concurrency so a rebalance does
+      //     not fan out 500 simultaneous provider calls. mapWithConcurrency
+      //     keys on ticker strings and preserves input order in its result
+      //     array, so ml-row ordering — and therefore the batched-engine
+      //     cursor's doc-id assignment — stays deterministic (`scored`
+      //     order). A ticker can appear in `scored` at most once per
+      //     rebalance, so the candidate lookup is unambiguous.
+      const heldTickers = new Set(target.map((p) => p.ticker));
+      const scoredByTicker = new Map(scored.map((c) => [c.ticker, c]));
+      const ML_ROW_BAR_CONCURRENCY = 6;
+      const candidateRows = await mapWithConcurrency(
+        scored.map((c) => c.ticker),
+        async (ticker): Promise<MLTrainingRow> => {
+          const c = scoredByTicker.get(ticker)!;
+          // The window must span BOTH backward (so lastCloseAtOrBefore can
+          // resolve the entry close on asOfDate) AND ~400 calendar days
+          // forward (covering the 252-trading-day max forward horizon).
+          // Phase 4a hotfix-2 fix: previously called getCachedBarsThrough
+          // with asOfDate + 400d which yielded a window of (+100d, +400d),
+          // missing the rebalance date entirely → entryPrice null and all
+          // forward returns null → IC = 0.
+          const longBars = await getCachedBars(
+            c.ticker,
+            addDays(asOfDate, -30), // small backward buffer so the entry bar is present
+            addDays(asOfDate, 400),
+          ).catch(() => []);
+          const entryClose = lastCloseAtOrBefore(longBars, asOfDate);
+          return {
+            runId,
+            ticker: c.ticker,
+            asOfDate,
+            composite: c.composite,
+            layers: c.layers,
+            regime: (ctx.regime?.regime as string | undefined) ?? null,
+            sector: c.sector,
+            marketCapBucket: null,
+            inPortfolio: heldTickers.has(c.ticker),
+            entryPrice: entryClose,
+            exitPrice: null,
+            holdDays: null,
+            forward5dReturn: forwardReturn(longBars, asOfDate, 5),
+            forward20dReturn: forwardReturn(longBars, asOfDate, 20),
+            forward60dReturn: forwardReturn(longBars, asOfDate, 60),
+            forward252dReturn: forwardReturn(longBars, asOfDate, 252),
+            realizedPnl: null,
+          };
+        },
+        { batchSize: ML_ROW_BAR_CONCURRENCY },
+      );
+      // The mapper never throws (the sole async op is .catch-wrapped), so
+      // mapWithConcurrency yields no undefined slots in practice; the
+      // filter is a type-narrowing guard for its Array<T | undefined>
+      // return type.
+      for (const row of candidateRows) {
+        if (row !== undefined) mlRows.push(row);
       }
 
       portfolio = target;
