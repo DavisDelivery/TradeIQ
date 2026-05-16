@@ -614,3 +614,17 @@ export async function runBacktest(
     throw err;
   }
 }
+
+// Phase 4e-1-infra — re-export the engine's internal helpers so the
+// batched/resumable companion module (`engine-batched.ts`) can drive a
+// per-rebalance loop without duplicating the bar-window math. Keeps a
+// single source of truth for cache keys, forward-return horizons, and
+// the date-window edge cases (Phase 4a hotfix-2 lessons).
+export const _engineInternals = {
+  getCachedBars,
+  getCachedBarsThrough,
+  dailyReturnsBetween,
+  forwardReturn,
+  marketCapBucket,
+  BENCHMARK_BY_UNIVERSE,
+};
