@@ -359,7 +359,9 @@ export async function processRegularBatch(
       state.dailyEquity.push({ date, value: state.nav });
     }
 
-    // 7. Per-position attribution + ML training rows
+    // 7a. Per-position attribution — stays portfolio-level. One record
+    //     per HELD position; intentionally NOT per-candidate (attribution
+    //     explains the portfolio's realized return). Must mirror engine.ts.
     for (const p of target) {
       const rets = positionReturns.get(p.ticker) ?? [];
       const segmentReturn = rets.reduce((acc, r) => (1 + acc) * (1 + r.ret) - 1, 0);
@@ -373,33 +375,61 @@ export async function processRegularBatch(
         composite: p.composite,
         regime: (ctx.regime?.regime as string | undefined) ?? null,
       });
+    }
 
-      const longBars = await _engineInternals
-        .getCachedBars(
-          p.ticker,
-          addDays(asOfDate, -30),
-          addDays(asOfDate, 400),
-        )
-        .catch(() => [] as Bar[]);
-      const entryClose = lastCloseAtOrBefore(longBars, asOfDate);
-      batchMlRows.push({
-        runId,
-        ticker: p.ticker,
-        asOfDate,
-        composite: p.composite,
-        layers: p.layers,
-        regime: (ctx.regime?.regime as string | undefined) ?? null,
-        sector: p.sector,
-        marketCapBucket: null,
-        entryPrice: entryClose,
-        exitPrice: null,
-        holdDays: null,
-        forward5dReturn: _engineInternals.forwardReturn(longBars, asOfDate, 5),
-        forward20dReturn: _engineInternals.forwardReturn(longBars, asOfDate, 20),
-        forward60dReturn: _engineInternals.forwardReturn(longBars, asOfDate, 60),
-        forward252dReturn: _engineInternals.forwardReturn(longBars, asOfDate, 252),
-        realizedPnl: null,
-      });
+    // 7b. ML training rows — Phase 5a-prep: one row per SCORED CANDIDATE
+    //     (full ~500-name set for sp500), not per held position. Must
+    //     mirror engine.ts §7b exactly — the equivalence tests assert the
+    //     batched engine produces identical per-candidate rows. See the
+    //     engine.ts comment for the cross-sectional-training rationale.
+    //
+    //     mapWithConcurrency keys on ticker strings and preserves input
+    //     order, so batchMlRows lands in `scored` order. Determinism here
+    //     is load-bearing for the cursor: appendMLTrainingRows assigns doc
+    //     ids startIdx..startIdx+N-1 in array order, and a resumed run
+    //     must reproduce the same ids — see processRegularBatch's
+    //     mlTrainingRowCount accounting below.
+    const heldTickers = new Set(target.map((p) => p.ticker));
+    const scoredByTicker = new Map(scored.map((c) => [c.ticker, c]));
+    const ML_ROW_BAR_CONCURRENCY = 6;
+    const candidateRows = await mapWithConcurrency(
+      scored.map((c) => c.ticker),
+      async (ticker): Promise<MLTrainingRow> => {
+        const c = scoredByTicker.get(ticker)!;
+        const longBars = await _engineInternals
+          .getCachedBars(
+            c.ticker,
+            addDays(asOfDate, -30),
+            addDays(asOfDate, 400),
+          )
+          .catch(() => [] as Bar[]);
+        const entryClose = lastCloseAtOrBefore(longBars, asOfDate);
+        return {
+          runId,
+          ticker: c.ticker,
+          asOfDate,
+          composite: c.composite,
+          layers: c.layers,
+          regime: (ctx.regime?.regime as string | undefined) ?? null,
+          sector: c.sector,
+          marketCapBucket: null,
+          inPortfolio: heldTickers.has(c.ticker),
+          entryPrice: entryClose,
+          exitPrice: null,
+          holdDays: null,
+          forward5dReturn: _engineInternals.forwardReturn(longBars, asOfDate, 5),
+          forward20dReturn: _engineInternals.forwardReturn(longBars, asOfDate, 20),
+          forward60dReturn: _engineInternals.forwardReturn(longBars, asOfDate, 60),
+          forward252dReturn: _engineInternals.forwardReturn(longBars, asOfDate, 252),
+          realizedPnl: null,
+        };
+      },
+      { batchSize: ML_ROW_BAR_CONCURRENCY },
+    );
+    // The mapper never throws (sole async op is .catch-wrapped); the
+    // filter narrows mapWithConcurrency's Array<T | undefined> return.
+    for (const row of candidateRows) {
+      if (row !== undefined) batchMlRows.push(row);
     }
 
     state.portfolio = target;

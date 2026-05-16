@@ -124,6 +124,14 @@ export interface MLTrainingRow {
   regime: string | null;
   sector: string | null;
   marketCapBucket: 'small' | 'mid' | 'large' | null;
+  // Phase 5a-prep: a row is now emitted for EVERY scored candidate at a
+  // rebalance, not just the held positions. `inPortfolio` marks whether
+  // this candidate actually made it into the target portfolio. The 5a ML
+  // pipeline trains cross-sectionally over all scored candidates; this
+  // flag lets it filter to held-only when needed without losing the
+  // unbiased full-universe sample. Required (not optional) — every row
+  // genuinely knows whether it was held.
+  inPortfolio: boolean;
   entryPrice: number | null;
   exitPrice: number | null;
   holdDays: number | null;
