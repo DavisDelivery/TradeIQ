@@ -31,14 +31,14 @@ export interface PortfolioConfig {
   universe: PortfolioUniverse;
   startDate: string;
   startCapital: number;
-  positionCount: number; // 10
-  minHoldDays: number; // 30
-  maxSwapsPerRebalance: number; // 3
+  positionCount: number; // 20 (v2; was 10 in v1)
+  minHoldDays: number; // 7 (v2; was 30 in v1)
+  maxSwapsPerRebalance: number; // 8 (v2; was 3 in v1)
   sectorCap: number; // 4
   slippageBps: number; // 10
   minComposite: number; // 50
-  candidatePool: number; // 15
-  version: string; // 'v1'
+  candidatePool: number; // 50 (v2; was 15 in v1)
+  version: string; // 'v2'
 }
 
 export type ExitReason =
