@@ -59,17 +59,28 @@ const BUDGET_MS = Number(process.env.BACKTEST_BUDGET_MS ?? 13 * 60_000);
 // sp500/monthly. Override via BACKTEST_BATCH_SIZE for tuning.
 const BATCH_SIZE = Number(process.env.BACKTEST_BATCH_SIZE ?? 8);
 
+// Phase 4i — strategy reframed to "Active Weekly Rebalance" (v2).
+// v1 was effectively buy-and-hold (positionCount 10 / minHoldDays 30 /
+// maxSwaps 3 / candidatePool 15 → 1 swap observed across 418 weekly
+// rebalances). v2 widens every turnover lever so the portfolio actually
+// rotates to follow Prophet's weekly ranking:
+//   - positionCount 20:        more diversification
+//   - minHoldDays 7:           a position is swap-eligible at the next weekly rebalance
+//   - maxSwapsPerRebalance 8:  up to 40% of the book can turn over per week
+//   - candidatePool 50:        wide enough that holdings genuinely fall out of it
+// Cost reality: this implies very high annualized turnover; the verdict
+// must weigh Prophet's ranking persistence against slippage drag.
 const RULE_CONFIG_BASE: Omit<PortfolioConfig, 'startDate'> = {
   universe: 'largecap',
   startCapital: 100_000,
-  positionCount: 10,
-  minHoldDays: 30,
-  maxSwapsPerRebalance: 3,
+  positionCount: 20,
+  minHoldDays: 7,
+  maxSwapsPerRebalance: 8,
   sectorCap: 4,
   slippageBps: 10,
   minComposite: 50,
-  candidatePool: 15,
-  version: 'v1',
+  candidatePool: 50,
+  version: 'v2',
 };
 
 function makeWindow(label: string, start: string, end: string): BacktestWindow {
