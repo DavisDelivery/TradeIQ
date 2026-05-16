@@ -131,10 +131,10 @@ describe('computeMetrics — synthetic equity curves', () => {
 
   it('IC: composite ranks perfectly predict forward returns → IC=1', () => {
     const ml: MLTrainingRow[] = [
-      { runId: 'x', ticker: 'A', asOfDate: '2024-01-01', composite: 90, layers: {}, regime: null, sector: null, marketCapBucket: null, entryPrice: null, exitPrice: null, holdDays: null, forward5dReturn: null, forward20dReturn: 0.10, forward60dReturn: null, forward252dReturn: null, realizedPnl: null },
-      { runId: 'x', ticker: 'B', asOfDate: '2024-01-01', composite: 70, layers: {}, regime: null, sector: null, marketCapBucket: null, entryPrice: null, exitPrice: null, holdDays: null, forward5dReturn: null, forward20dReturn: 0.05, forward60dReturn: null, forward252dReturn: null, realizedPnl: null },
-      { runId: 'x', ticker: 'C', asOfDate: '2024-01-01', composite: 50, layers: {}, regime: null, sector: null, marketCapBucket: null, entryPrice: null, exitPrice: null, holdDays: null, forward5dReturn: null, forward20dReturn: 0.01, forward60dReturn: null, forward252dReturn: null, realizedPnl: null },
-      { runId: 'x', ticker: 'D', asOfDate: '2024-01-01', composite: 30, layers: {}, regime: null, sector: null, marketCapBucket: null, entryPrice: null, exitPrice: null, holdDays: null, forward5dReturn: null, forward20dReturn: -0.03, forward60dReturn: null, forward252dReturn: null, realizedPnl: null },
+      { runId: 'x', ticker: 'A', asOfDate: '2024-01-01', composite: 90, layers: {}, regime: null, sector: null, marketCapBucket: null, inPortfolio: true, entryPrice: null, exitPrice: null, holdDays: null, forward5dReturn: null, forward20dReturn: 0.10, forward60dReturn: null, forward252dReturn: null, realizedPnl: null },
+      { runId: 'x', ticker: 'B', asOfDate: '2024-01-01', composite: 70, layers: {}, regime: null, sector: null, marketCapBucket: null, inPortfolio: true, entryPrice: null, exitPrice: null, holdDays: null, forward5dReturn: null, forward20dReturn: 0.05, forward60dReturn: null, forward252dReturn: null, realizedPnl: null },
+      { runId: 'x', ticker: 'C', asOfDate: '2024-01-01', composite: 50, layers: {}, regime: null, sector: null, marketCapBucket: null, inPortfolio: false, entryPrice: null, exitPrice: null, holdDays: null, forward5dReturn: null, forward20dReturn: 0.01, forward60dReturn: null, forward252dReturn: null, realizedPnl: null },
+      { runId: 'x', ticker: 'D', asOfDate: '2024-01-01', composite: 30, layers: {}, regime: null, sector: null, marketCapBucket: null, inPortfolio: false, entryPrice: null, exitPrice: null, holdDays: null, forward5dReturn: null, forward20dReturn: -0.03, forward60dReturn: null, forward252dReturn: null, realizedPnl: null },
     ];
     const m = computeMetrics({
       ...emptyInputs,
