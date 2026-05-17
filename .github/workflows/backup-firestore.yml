@@ -56,7 +56,9 @@ jobs:
         working-directory: backup-repo
         run: |
           git config user.name "tradeiq-backup-bot"
-          git config user.email "chad@davisdelivery.com"
+          # Must be a noreply address — pushing as a private account email
+          # is rejected by GitHub push privacy protection (GH007).
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add firestore/
           if git diff --cached --quiet; then
             echo "No changes to commit (data unchanged since last run)."
