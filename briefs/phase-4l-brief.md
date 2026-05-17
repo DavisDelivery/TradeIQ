@@ -236,6 +236,27 @@ ceiling — verify its runtime first):
 - Keep the daily cadence (`30 21 * * 1-5`); the checkpoint-resume just
   lets that one daily run finish.
 
+### W3 — Insider board UI: default to buyers, fully sortable
+
+`InsiderBoardView.jsx` must present the now-complete data legibly:
+
+- **Default view: net buyers.** The tab is "insiders purchasing," so it
+  opens showing genuine open-market buyers (net buy dollars positive),
+  sorted by net buy dollars descending.
+- **Buyers / Sellers / All toggle.** The user can flip the view to
+  sellers (net sellers, by sell dollars) or all activity.
+- **Every column sortable** via the project-standard `useSortable` hook
+  + `SortableTh` component pattern (the same pattern every other
+  TradeIQ data table uses — column-header click to sort, click again
+  to reverse). Sortable columns at minimum: ticker, **amount bought
+  ($)**, **amount sold ($)**, net ($), buyer count, and **price**. If
+  the aggregated `InsiderBoardRow` does not already carry the stock's
+  current price, add it (cheap — one field; sourced from the same
+  place the other boards get `price`).
+- Verify against the standing coding rule: every data-table column is
+  sortable via `useSortable` + `SortableTh`. If the insider table is
+  not already on that pattern, move it onto it as part of W3.
+
 ---
 
 # PART V — ARCHITECTURE DETAIL (CTO)
@@ -309,10 +330,15 @@ A build passes when **all** hold:
 5. `index=all` degrades gracefully when one universe snapshot is
    missing/stale (returns the rest, flagged) — never empty, never the
    80-cap live scan.
-6. `tsc --noEmit` clean, full test suite green, `npm run build` clean.
-7. New tests cover: the `all` aggregation + dedup, graceful partial
+6. The insiders tab opens defaulted to **net buyers**, sorted by net
+   buy dollars descending, with a working Buyers / Sellers / All
+   toggle.
+7. Every insider-table column sorts via `useSortable` + `SortableTh`
+   (ticker, amount bought, amount sold, net, buyer count, price).
+8. `tsc --noEmit` clean, full test suite green, `npm run build` clean.
+9. New tests cover: the `all` aggregation + dedup, graceful partial
    when a snapshot is absent, the Russell scan cursor advance/resume,
-   and terminal-only snapshot publish.
+   terminal-only snapshot publish, and the table sort behavior.
 
 Live verification is deferred to post-merge — the orchestrator fires
 the Russell scan and probes `/api/insider-board?index=all`, confirming
@@ -338,29 +364,22 @@ behavior; no data migration is involved.
 
 ---
 
-# PART IX — OPEN DECISIONS FOR CHAD
+# PART IX — DECISIONS (resolved by Chad 2026-05-17)
 
-Two small choices; each has a recommended default. Answer (or say
-"defaults") and the executor kickoff goes out.
+1. **Default view filter — DECIDED: default to net buyers**, with the
+   table fully sortable and a Buyers / Sellers / All toggle. The user
+   can sort by amount bought, amount sold, net, buyer count, and price,
+   and flip the view to sellers. Implemented as W3 (added above) — the
+   insider board table uses the standard `useSortable` + `SortableTh`
+   pattern; default sort is net buy dollars descending.
 
-1. **Default view filter.** Should the insiders tab default to showing
-   *net buyers only* (genuine open-market purchases), or all insider
-   activity (buys, sells, awards) with buys highlighted? *Recommendation:
-   default to net buyers — the tab is "insiders purchasing," and a
-   buyers-first default matches the intent. All-activity stays
-   available as a toggle. This is a small UI tweak that can ride along
-   in W1; say the word and it's included.*
-
-2. **sp500 insider scan.** Apply checkpoint-resume to the sp500 insider
-   scan prophylactically in this phase, or only if it's measured to be
-   near the ceiling? *Recommendation: have the agent measure the sp500
-   scan's runtime first; apply checkpoint-resume only if it's within
-   ~3 minutes of the 15-minute limit. The Russell scan is the certain
-   problem; sp500 is a maybe.*
+2. **sp500 insider scan — DECIDED: agent measures first.** The executor
+   measures the sp500 insider scan's actual runtime; it applies the
+   checkpoint-resume treatment to sp500 only if that scan is within
+   ~3 minutes of the 15-minute ceiling. The Russell scan gets
+   checkpoint-resume unconditionally (it is the certain problem).
 
 ---
 
-*End of brief. Phase 4l is unblocked (4h's scan-resume modules exist).
-It is a short, cheap, high-certainty fix that makes the insiders board
-reflect the universe it claims to cover. Recommendation: approve and
-proceed.*
+*End of brief. Phase 4l is unblocked and fully specified. Executor
+kickoff: `kickoffs/phase-4l-executor.md`.*
