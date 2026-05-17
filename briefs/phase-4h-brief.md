@@ -450,41 +450,29 @@ checkpoint-resume scan misbehaves, reverting the PR restores the prior
 
 ---
 
-# PART IX — OPEN DECISIONS FOR CHAD
+# PART IX — DECISIONS (resolved by Chad 2026-05-17)
 
-These are genuine product/cost choices, not technical unknowns. The
-agent kickoff will be written once these are settled.
+The four open questions are settled. The executor kickoff is written
+against these answers.
 
-1. **Scan cadence.** Nightly only (cadence A, ~250 credits/month) or
-   nightly + one midday refresh (cadence B, ~500 credits/month)? A is
-   cheaper and sufficient if you mostly check the board in the morning;
-   B keeps the board current if you check it during market hours.
-   *Recommendation: A to start — it's the bigger cost win and you can
-   add the midday cron later in one line if you find you want it.*
+1. **Scan cadence — DECIDED: nightly only (cadence A).** ~25
+   function-hours/month, ~250 credits/month. A midday cron can be added
+   later in one line if Chad finds he wants intraday freshness.
 
-2. **Russell scan time.** The stopgap nightly currently fires 01:00 UTC
-   (≈ 9pm EDT). Keep that, or move it (e.g. after the US close so the
-   data reflects the full trading day)?
-   *Recommendation: keep ~9pm ET — it's after the close and before you'd
-   typically look in the morning.*
+2. **Scan time — DECIDED: 7pm ET.** Cron `0 23 * * *` (23:00 UTC =
+   7:00pm EDT; 6:00pm EST in winter — GitHub/Netlify crons are
+   UTC-fixed and do not follow DST, both of which are comfortably after
+   the 4pm ET market close). This supersedes the stopgap's 01:00 UTC
+   schedule; the stopgap file is removed.
 
-3. **Sector taxonomy.** Use the `sector-rotation` analyst's existing
-   sector labels as-is, or normalize everything to the standard GICS
-   11-sector set for consistency across boards?
-   *Recommendation: ship with the existing labels (zero added work,
-   already correct); normalize later only if cross-board inconsistency
-   actually bothers you.*
+3. **Sector taxonomy — DECIDED: existing labels.** Use the
+   `sector-rotation` analyst's sector values as-is. Zero added work;
+   no GICS normalization.
 
-4. **Snapshot history retention.** Keep the last N snapshots per
-   universe (N = 30 ≈ a month of nightly history) or only the latest?
-   *Recommendation: keep 30 — negligible storage cost, and it gives any
-   future "board history" or drift-analysis feature something to read.*
-
-Answer those four and the executor kickoff goes out same session.
+4. **Snapshot retention — DECIDED: keep last 30 per universe.** Bounded
+   history for any future drift/history feature; negligible storage.
 
 ---
 
-*End of brief. Phase 4h is unblocked (4e-1-infra has landed). It is a
-one-session build that reduces run cost and unlocks the largest universe
-in the product. The recommendation is to approve all four defaults above
-and proceed.*
+*End of brief. Phase 4h is unblocked and fully specified. Executor
+kickoff: `kickoffs/phase-4h-executor.md`.*
