@@ -28,13 +28,29 @@ const TargetCard = ({ target, onOpen }) => {
 
       <div className="p-4 pl-5">
         <div className="flex items-start justify-between mb-3">
-          <div>
+          <div className="min-w-0 flex-1 pr-3">
             <div className="flex items-baseline gap-2">
               <div className="font-serif font-bold text-xl tracking-tight text-neutral-100">
                 {target.ticker}
               </div>
               <DirectionPill direction={target.direction} />
             </div>
+            {/* Phase 4h W4 — company name + sector under the ticker so a
+                Russell small-cap like SMTC reads as Semtech / Semiconductors
+                at a glance instead of an opaque four-letter symbol. */}
+            {target.companyName && target.companyName !== target.ticker && (
+              <div
+                className="text-[11px] text-neutral-300 mt-0.5 truncate"
+                title={target.companyName}
+              >
+                {target.companyName}
+              </div>
+            )}
+            {target.sector && (
+              <div className="text-[10px] uppercase tracking-widest font-mono text-neutral-500 mt-0.5">
+                {target.sector}
+              </div>
+            )}
             <div className="text-[11px] text-neutral-500 font-mono mt-1">
               <span className="text-neutral-300">{fmt.moneyDec(target.price)}</span>
               <span className={`ml-2 ${target.priceChangePct >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
@@ -319,6 +335,19 @@ export const TargetDetail = ({ target, onClose }) => {
               <ConvictionBadge tier={target.tier} />
               <DirectionPill direction={target.direction} />
             </div>
+            {/* Phase 4h W4 — company name + sector. Same source as the card. */}
+            {(target.companyName || target.sector) && (
+              <div className="mt-1 flex items-baseline gap-3 flex-wrap">
+                {target.companyName && target.companyName !== target.ticker && (
+                  <span className="text-[13px] text-neutral-200">{target.companyName}</span>
+                )}
+                {target.sector && (
+                  <span className="text-[10px] uppercase tracking-widest font-mono text-neutral-500">
+                    {target.sector}
+                  </span>
+                )}
+              </div>
+            )}
             <div className="mt-1 font-mono text-[12px] text-neutral-400">
               <span className="text-neutral-200">{fmt.moneyDec(target.price)}</span>
               <span className={`ml-2 ${target.priceChangePct >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
