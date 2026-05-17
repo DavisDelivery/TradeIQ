@@ -11,6 +11,8 @@ import { ResearchPanel } from './components/ResearchPanel.jsx';
 import { FreshnessPill } from './components/FreshnessPill.jsx';
 import { LogButton } from './components/LogButton.jsx';
 import { AnalystContributions } from './components/AnalystContributions.jsx';
+import { CompanyInfo } from './components/CompanyInfo.jsx';
+import { PriceChart } from './components/PriceChart.jsx';
 import { useTargetBoard } from './hooks/useTargetBoard.js';
 
 // ---------------------------------------------------------------------------
@@ -382,7 +384,18 @@ export const TargetDetail = ({ target, onClose }) => {
           </div>
         </div>
 
-        <div className="p-6 space-y-6">
+        <div className="p-4 sm:p-6 space-y-5 sm:space-y-6">
+          {/* Phase 4j W4 — CompanyInfo (what is this company) sits at the
+              top of the panel so a user reads context before analyst detail.
+              Backed by /api/ticker-info, served on-demand from the
+              extended ticker-reference cache (never on the snapshot pick). */}
+          <CompanyInfo ticker={target.ticker} />
+
+          {/* Phase 4j W4 — PriceChart (what has the stock done). 6M default,
+              area chart with a candlestick toggle. Backed by
+              /api/price-history (per-day Firestore cache). */}
+          <PriceChart ticker={target.ticker} />
+
           <div className="border-l-2 border-emerald-500/40 pl-4 py-2">
             <div className="text-[10px] uppercase tracking-[0.2em] text-neutral-500 font-mono mb-2">Thesis</div>
             <p className="text-neutral-200 leading-relaxed">{target.rationale}</p>
