@@ -33,6 +33,13 @@ export interface Target {
    *  scoring call. UI renders LIVE / NO_DATA badges off these. */
   scoredAnalysts?: string[];
   noDataAnalysts?: string[];
+  /** Phase 4h W3 — pick display enrichment. companyName comes from
+   *  the Polygon ticker-reference cache (falling back to the in-repo
+   *  universe table); sector is the value the sector-rotation analyst
+   *  already uses for its sector-ETF lookup. Persisted onto every
+   *  snapshot pick at scan time so reads serve them for free. */
+  companyName?: string;
+  sector?: string | null;
 }
 
 export interface TargetBoardResponse {
@@ -40,6 +47,10 @@ export interface TargetBoardResponse {
   generatedAt: string;
   source: string;
   error?: string;
+  /** Phase 4h W2 — true when the served snapshot is older than its
+   *  freshness budget. Russell2k / sp500 may go stale between nightly
+   *  scans; UI surfaces "as of {generatedAt}" when this is set. */
+  stale?: boolean;
 }
 
 // Macro regime (v1 MOCK_REGIME shape)

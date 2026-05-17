@@ -87,6 +87,11 @@ export interface TargetForOneOpts {
   ticker: string;
   barCache: BarCache;
   macroBias?: number; // -1 to 1, fed in from regime
+  /** Phase 4h W3 — caller-supplied company name (Polygon ticker-reference
+   *  cache). When omitted, the per-ticker scorer falls back to the in-repo
+   *  universe table. Bulk scans pre-fetch a name map to avoid 2k Polygon
+   *  round trips at scoring time. */
+  companyName?: string;
 }
 
 export async function runAnalystsForTicker(opts: TargetForOneOpts): Promise<{
@@ -96,6 +101,9 @@ export async function runAnalystsForTicker(opts: TargetForOneOpts): Promise<{
   const { ticker, barCache, macroBias = 0 } = opts;
   const entry = findEntry(ticker);
   const sector = entry?.sector ?? 'Unknown';
+  // Phase 4h W3 — persisted sector mirrors the value sector-rotation
+  // already uses for its sector-ETF lookup, so taxonomy stays in lock-step.
+  const persistedSector: string | null = entry?.sector ?? null;
   const bars = barCache[ticker] ?? [];
   const sectorEtf = SECTOR_ETFS[sector];
   const sectorBars = sectorEtf ? barCache[sectorEtf] ?? [] : [];
@@ -105,7 +113,10 @@ export async function runAnalystsForTicker(opts: TargetForOneOpts): Promise<{
     return { target: null, analysts: {} };
   }
 
-  const companyName = entry?.name ?? ticker;
+  // Phase 4h W3 — prefer caller-supplied (Polygon-cached) name; fall
+  // back to the in-repo universe table. Used for patent fuzzy match
+  // AND persisted onto the Target for UI display.
+  const companyName = opts.companyName ?? entry?.name ?? ticker;
   const [fundamentals, news, upcoming, history, insiderActivity, patentActivity, politicalActivity, contractActivity] = await Promise.all([
     getFundamentals(ticker).catch(() => null),
     getNews(ticker, 15).catch(() => []),
@@ -265,6 +276,8 @@ export async function runAnalystsForTicker(opts: TargetForOneOpts): Promise<{
     scoredAt: new Date().toISOString(),
     scoredAnalysts: rescale.scoredAnalysts,
     noDataAnalysts: rescale.noDataAnalysts,
+    companyName,
+    sector: persistedSector,
   };
 
   return { target, analysts: allAnalysts };

@@ -16,6 +16,7 @@ import type { Target } from './types';
 import type { Bar } from './data-provider';
 import { mapWithConcurrency } from './full-scan-iterator';
 import type { Logger } from './logger';
+import { enrichTickerNames } from './ticker-reference';
 
 export type TargetUniverseKey =
   | 'all'
@@ -57,6 +58,83 @@ export interface RunTargetScanResult {
   warnings: string[];
   /** True if the scan returned early due to scanBudgetMs. */
   budgetExceeded: boolean;
+}
+
+/**
+ * Phase 4h W1 — single-batch helper for the checkpoint-resume scan
+ * worker. Walks the ticker slice `[startIdx, startIdx + batchSize)`,
+ * fetches bars for those names + the SPY benchmark + the sectors they
+ * cover, runs the full analyst battery on each, returns the scored
+ * Target rows + how many tickers it actually consumed. Stateless;
+ * callers persist the cursor + accumulate rows themselves.
+ */
+export interface RunTargetBatchOpts {
+  universe: TargetUniverseKey;
+  startIdx: number;
+  batchSize: number;
+  /** Pre-fetched company-name map (Polygon ticker-reference cache). */
+  nameMap?: Record<string, string>;
+  macroBias?: number;
+  analystConcurrency?: number;
+  logger?: Logger;
+}
+
+export interface RunTargetBatchResult {
+  results: Target[];
+  tickersConsumed: number;
+  warnings: string[];
+}
+
+export async function runTargetScanBatch(
+  opts: RunTargetBatchOpts,
+): Promise<RunTargetBatchResult> {
+  const log = opts.logger;
+  const allTickers = resolveTargetUniverse(opts.universe);
+  const slice = allTickers.slice(opts.startIdx, opts.startIdx + opts.batchSize);
+  const warnings: string[] = [];
+
+  if (slice.length === 0) {
+    return { results: [], tickersConsumed: 0, warnings };
+  }
+
+  const barCache = await fetchBarCache(slice).catch((err) => {
+    warnings.push(`bar-fetch failed for batch ${opts.startIdx}: ${String(err?.message ?? err)}`);
+    return {} as Awaited<ReturnType<typeof fetchBarCache>>;
+  });
+
+  const analystConcurrency = opts.analystConcurrency ?? 6;
+  const macroBias = opts.macroBias ?? 0;
+  const nameMap = opts.nameMap ?? {};
+  const results: Target[] = [];
+
+  await mapWithConcurrency(
+    slice,
+    async (t) => {
+      const r = await runAnalystsForTicker({
+        ticker: t,
+        barCache,
+        macroBias,
+        companyName: nameMap[t],
+      });
+      if (r.target) results.push(r.target);
+      return r;
+    },
+    {
+      batchSize: analystConcurrency,
+      onError: (err, ticker) => {
+        log?.warn('scan_batch_ticker_error', { ticker, err: String(err) });
+      },
+    },
+  );
+
+  log?.debug('scan_batch_complete', {
+    universe: opts.universe,
+    startIdx: opts.startIdx,
+    consumed: slice.length,
+    scored: results.length,
+  });
+
+  return { results, tickersConsumed: slice.length, warnings };
 }
 
 export function resolveTargetUniverse(universe: TargetUniverseKey): string[] {
@@ -141,6 +219,16 @@ export async function runTargetScan(opts: RunTargetScanOpts): Promise<RunTargetS
     elapsedMs: Date.now() - start,
   });
 
+  // Phase 4h W3 — pre-fetch Polygon-canonical company names for survivors.
+  // Cache-first via Firestore; first call cold-warms the cache, all later
+  // scans are ~0 Polygon calls. Skip on the live-fallback path (smallish
+  // survivor sets where the in-repo name table is already complete) by
+  // letting enrichTickerNames degrade gracefully when Firestore is absent.
+  const nameMap = await enrichTickerNames(survivors).catch((err) => {
+    log?.warn('ticker_name_enrich_failed', { err: String(err?.message ?? err) });
+    return {} as Record<string, string>;
+  });
+
   // Pass 2: full analyst battery on survivors only.
   const analystConcurrency = opts.analystConcurrency ?? 5;
   let budgetExceeded = false;
@@ -149,7 +237,12 @@ export async function runTargetScan(opts: RunTargetScanOpts): Promise<RunTargetS
   await mapWithConcurrency(
     survivors,
     async (t) => {
-      const r = await runAnalystsForTicker({ ticker: t, barCache, macroBias });
+      const r = await runAnalystsForTicker({
+        ticker: t,
+        barCache,
+        macroBias,
+        companyName: nameMap[t],
+      });
       if (r.target) results.push(r.target);
       return r;
     },
