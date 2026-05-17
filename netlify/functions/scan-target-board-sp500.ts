@@ -1,78 +1,57 @@
-// Per-universe scheduled scan: target board.
-// Splits Phase 1's 4-universe-in-loop pattern into one function per
-// universe so each gets its own 15-min Netlify background container.
+// Phase 4h W1 — scheduled trigger for the sp500 target-board scan.
 //
-// Board:    target-board
-// Universe: sp500 (stored as 'sp500')
-// Schedule: 0,30 13-21 * * 1-5
+// Cron: `0 23 * * *` (23:00 UTC = 7:00pm EDT / 6:00pm EST). Same
+// nightly cadence as the russell2k trigger; the two functions run in
+// independent containers so they don't compete for one budget.
 //
-// Split from Phase 1's multi-universe scan-target-board.ts so each universe gets
-// its own 15-min Netlify background container instead of competing for one.
+// Replaces the every-30-minute weekday cron. Sp500 (~500 names) was
+// borderline under the old single-pass single-invocation design; the
+// background worker's checkpoint-resume makes completion deterministic.
+//
+// This file is intentionally thin. See
+// `scan-target-board-sp500-background.ts` for the actual scan logic.
 
 import { schedule } from '@netlify/functions';
-import { runTargetScan, type TargetUniverseKey } from './shared/scan-target';
-import { writeSnapshot, FRESHNESS_BUDGETS_MS, type UniverseKey } from './shared/snapshot-store';
-import { MODEL_VERSION } from './shared/model-version';
 import { logger } from './shared/logger';
 
-// 14 min — leaves 60s margin under the 15-min Netlify background timeout.
-const PER_SCAN_BUDGET_MS = 14 * 60_000;
+const WORKER_PATH = '/.netlify/functions/scan-target-board-sp500-background';
 
-const UNIVERSE: TargetUniverseKey = 'sp500';
-const STORE_KEY: UniverseKey = 'sp500';
-
-export const handler = schedule('0,30 13-21 * * 1-5', async () => {
-  const log = logger.child({ fn: 'scan-target-board-sp500', universe: UNIVERSE });
-  const overallStart = Date.now();
-  log.info('scheduled_scan_started', { board: 'target-board', universe: UNIVERSE });
+export const handler = schedule('0 23 * * *', async () => {
+  const log = logger.child({
+    fn: 'scan-target-board-sp500',
+    universe: 'sp500',
+    schedule: '0 23 * * *',
+  });
+  const origin = process.env.URL ?? 'https://tradeiq-alpha.netlify.app';
+  const url = `${origin}${WORKER_PATH}`;
 
   try {
-    const scan = await runTargetScan({
-      universe: UNIVERSE,
-      pass2Max: 100,
-      scanBudgetMs: PER_SCAN_BUDGET_MS,
-      analystConcurrency: 6,
-      logger: log,
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
     });
-
-    const { snapshotId } = await writeSnapshot('target-board', STORE_KEY, {
-      modelVersion: MODEL_VERSION,
-      generatedAt: new Date().toISOString(),
-      scanDurationMs: scan.scanDurationMs,
-      universeChecked: scan.universeChecked,
-      results: scan.results,
-      freshnessBudgetMs: FRESHNESS_BUDGETS_MS['target-board'],
-      warnings: scan.warnings,
-    });
-
-    const count = scan.results.length;
-    log.info('snapshot_written', {
-      snapshotId,
-      resultsCount: count,
-      universeChecked: scan.universeChecked,
-      scanDurationMs: scan.scanDurationMs,
-      overallDurationMs: Date.now() - overallStart,
-    });
-
+    const body = await res.text();
+    log.info('worker_dispatched', { status: res.status, body: body.slice(0, 200) });
     return {
       statusCode: 200,
       body: JSON.stringify({
         ok: true,
         board: 'target-board',
-        universe: UNIVERSE,
-        snapshotId,
-        resultsCount: count,
-        universeChecked: scan.universeChecked,
-        scanDurationMs: scan.scanDurationMs,
-        warnings: scan.warnings,
+        universe: 'sp500',
+        workerStatus: res.status,
       }),
     };
   } catch (err: any) {
-    const msg = String(err?.message ?? err);
-    log.error('scheduled_scan_failed', { err: msg, universe: UNIVERSE });
+    log.error('worker_dispatch_failed', { err: String(err?.message ?? err) });
     return {
       statusCode: 500,
-      body: JSON.stringify({ ok: false, board: 'target-board', universe: UNIVERSE, error: msg }),
+      body: JSON.stringify({
+        ok: false,
+        board: 'target-board',
+        universe: 'sp500',
+        error: String(err?.message ?? err),
+      }),
     };
   }
 });

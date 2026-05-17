@@ -61,8 +61,15 @@ export interface BoardSnapshot {
 
 // Per-board freshness budgets. Intraday signals (price action, breadth) get
 // a tight 30-min budget; daily fundamentals/insider get 24h.
+//
+// Phase 4h: target-board widened from 30 min → 26 hours. Russell2k +
+// sp500 now scan nightly only (7pm ET = 23:00 UTC). A 30-min budget
+// would mark the snapshot stale by ~7:30pm ET — every read for the
+// next 23.5 hours would fall into the inline-live-scan path and
+// produce the 25-second hang. 26h gives a safe margin past 7pm next
+// day and keeps the snapshot "fresh" for the entire inter-scan gap.
 export const FRESHNESS_BUDGETS_MS: Record<BoardName, number> = {
-  'target-board': 30 * 60_000,
+  'target-board': 26 * 60 * 60_000,
   prophet: 30 * 60_000,
   catalyst: 30 * 60_000,
   williams: 30 * 60_000,
@@ -155,6 +162,46 @@ export function snapshotAgeMs(snapshot: BoardSnapshot, now: number = Date.now())
 
 export function isSnapshotFresh(snapshot: BoardSnapshot, now: number = Date.now()): boolean {
   return snapshotAgeMs(snapshot, now) < snapshot.freshnessBudgetMs;
+}
+
+/**
+ * Phase 4h W1 — retention. After a successful scan publishes a fresh
+ * snapshot, prune the universe's `runs/` history to the most recent
+ * `keep` docs (default 30) so the collection doesn't grow without
+ * limit. The `_latest` pointer is untouched — it's a per-universe doc
+ * in `_latest/`, not in `runs/`.
+ *
+ * Deletes are batched in chunks of 100 (well under Firestore's 500-op
+ * batch ceiling) so a one-time backlog of hundreds of stale docs is
+ * tractable. Best-effort: if a batch fails the next scan will retry.
+ */
+export async function pruneOldSnapshots(
+  board: BoardName,
+  universe: UniverseKey,
+  keep: number = 30,
+): Promise<{ deleted: number; kept: number }> {
+  const db = getAdminDb();
+  const all = await db
+    .collection('boardSnapshots')
+    .doc(board)
+    .collection('runs')
+    .where('universe', '==', universe)
+    .orderBy('generatedAt', 'desc')
+    .get();
+
+  if (all.size <= keep) return { deleted: 0, kept: all.size };
+
+  const toDelete = all.docs.slice(keep);
+  let deleted = 0;
+  const CHUNK = 100;
+  for (let i = 0; i < toDelete.length; i += CHUNK) {
+    const slice = toDelete.slice(i, i + CHUNK);
+    const batch = db.batch();
+    for (const d of slice) batch.delete(d.ref);
+    await batch.commit();
+    deleted += slice.length;
+  }
+  return { deleted, kept: keep };
 }
 
 /**

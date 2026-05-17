@@ -38,6 +38,23 @@ export function FreshnessPill({ meta, isRescanning = false, onForceRescan }) {
     title = `Served from snapshot${meta?.modelVersion ? ' · model ' + meta.modelVersion : ''}${
       meta?.generatedAt ? ' · ' + meta.generatedAt : ''
     }`;
+  } else if (source === 'snapshot-stale') {
+    // Phase 4h W2 — large universes never inline-scan; if the snapshot is
+    // past its freshness budget we serve it stale-flagged so the user
+    // knows the data is from the last scheduled scan, not "now."
+    color = 'text-amber-400 border-amber-500/40 bg-amber-500/5';
+    label = ageLabel ? `As of · ${ageLabel}` : 'Stale snapshot';
+    title =
+      meta?.warning ||
+      `Snapshot older than freshness budget${
+        meta?.generatedAt ? ' · generated ' + meta.generatedAt : ''
+      } · next scheduled scan will refresh`;
+  } else if (source === 'snapshot-missing') {
+    color = 'text-neutral-400 border-neutral-700 bg-neutral-900/40';
+    label = 'No scan yet';
+    title =
+      meta?.warning ||
+      'No snapshot has completed for this universe yet; the next scheduled scan will populate it.';
   } else if (source === 'forced-partial') {
     color = 'text-amber-400 border-amber-500/40 bg-amber-500/5';
     label = 'Forced · partial';
