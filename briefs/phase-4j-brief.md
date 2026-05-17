@@ -188,7 +188,7 @@ UI last (W4 depends on both endpoints).
 
 ### W3 — `/api/price-history` read endpoint
 
-- New endpoint `GET /api/price-history?ticker=X&range=1M|6M|1Y` →
+- New endpoint `GET /api/price-history?ticker=X&range=1M|6M|1Y|All` →
   returns daily bars `[{ date, close, ... }]` for the range.
 - Wraps the existing `getDailyBars(ticker, from, to)` from
   `data-provider.ts` — compute `from`/`to` from the `range` param.
@@ -200,23 +200,29 @@ UI last (W4 depends on both endpoints).
 
 ### W4 — Detail panel UI
 
-- **`CompanyInfo` block** — renders the W2 fields: company name,
-  industry, a short description paragraph, key facts (employees, market
-  cap, IPO/list date) and a homepage link. Place it near the top of the
-  panel (around the existing Thesis block) so it reads as context
-  before the analyst detail. Graceful "description unavailable" state
-  for tickers Polygon doesn't cover.
-- **`PriceChart` component** — a new `src/components/PriceChart.jsx`
-  using `recharts` (already a dependency). An **area/line chart of
-  closing price** with a range toggle (1M / 6M / 1Y). Recharts has no
-  good native candlestick — do not fight the library; a clean closing-
-  price area chart reads better on a phone anyway. Optional: a thin
-  volume strip beneath. Loading + empty states required.
+- **`CompanyInfo` block** — renders the W2 fields: company **logo**
+  (Polygon `branding.logo_url`, API key appended; ticker-monogram
+  fallback when absent), company name, industry, a short description
+  paragraph, key facts (employees, market cap, IPO/list date) and a
+  homepage link. Place it near the top of the panel (around the
+  existing Thesis block) so it reads as context before the analyst
+  detail. Graceful "description unavailable" state for tickers Polygon
+  doesn't cover.
+- **`PriceChart` component** — a new `src/components/PriceChart.jsx`.
+  Default view is an **area/line chart of closing price** with a range
+  toggle: **1M / 6M / 1Y / All** (default 6M). Plus a **chart-type
+  toggle button** to switch to **candlestick** — implemented via a
+  recharts custom shape or `lightweight-charts` (agent's call; the
+  area chart is the baseline must-have, candlestick is the toggle-on
+  view). Optional thin volume strip beneath. Loading + empty states
+  required.
 - Wire both into the detail panel in `TargetBoardView.jsx`. Respect the
-  existing visual system (the dark theme, emerald `#14e89a` accent,
-  IBM Plex Mono labels visible in the current panel). **Mobile-first**
-  — Chad works from a phone; the chart must render cleanly on a narrow
-  screen.
+  existing visual system (dark theme, emerald `#14e89a` accent, IBM
+  Plex Mono labels). **Responsive — must render well on BOTH phone and
+  desktop.** Chad uses TradeIQ on a phone today and increasingly on
+  desktop; the chart should use the wider viewport when present rather
+  than being capped at phone width. (A full desktop-optimized layout is
+  Phase 4k; 4j just ensures these new components are not mobile-locked.)
 
 ---
 
@@ -315,33 +321,38 @@ on them and no data migration is involved.
 
 ---
 
-# PART IX — OPEN DECISIONS FOR CHAD
+# PART IX — DECISIONS (resolved by Chad 2026-05-17)
 
-Genuine choices, each with a recommended default. Answer these (or say
-"defaults") and the executor kickoff goes out.
+1. **Chart ranges — DECIDED: default 6M; toggle 1M / 6M / 1Y / All.**
+   "All" fetches max available daily history (since IPO for newer
+   names) — the `/api/price-history` endpoint takes a far-back `from`
+   date for that range and returns whatever Polygon has.
 
-1. **Default price-chart range.** 1M, 3M, 6M, or 1Y as the view that
-   loads first? *Recommendation: 6M — enough to see a trend without
-   overwhelming a phone screen; the toggle covers the rest.*
+2. **Chart type — DECIDED: area/line chart default, with a toggle
+   button to switch to candlestick.** The area chart is the must-have
+   baseline. Candlestick is a real deliverable, not optional —
+   implemented via a recharts custom shape OR a lightweight charting
+   library (`lightweight-charts`), agent's call. If candlestick proves
+   a large lift, the agent ships the area chart solid and flags
+   candlestick in the hand-off rather than letting the phase balloon —
+   but the intent is both.
 
-2. **Chart type.** Area chart of closing price, plain line, or
-   candlestick? *Recommendation: area chart of closing price — clean on
-   mobile, and recharts has no solid native candlestick. A thin volume
-   strip underneath is a cheap optional add.*
+3. **Company logos — DECIDED: include them.** Polygon's
+   `branding.logo_url` / `icon_url` require the API key appended to the
+   URL. Render the logo in the `CompanyInfo` block; graceful fallback
+   (ticker monogram) when absent.
 
-3. **Company logo.** Polygon returns `branding.logo_url` /
-   `icon_url`, but those URLs need the API key appended and are served
-   from Polygon. *Recommendation: skip the logo for v1 — minor auth
-   fiddliness for a cosmetic touch; revisit later if you want it.*
+4. **Key facts — DECIDED: show all of them** — description, industry,
+   employees, market cap, IPO/list date, homepage link. Every field is
+   in the one Polygon call already being made.
 
-4. **Key facts shown.** Description only, or description + industry +
-   employees + market cap + homepage + IPO date? *Recommendation: show
-   them all — every field comes from the one Polygon call already
-   being made, so there is no extra cost to a fuller panel.*
+**Additional direction (2026-05-17):** Chad will be using TradeIQ on
+desktop, and wants a dedicated desktop layout designed next (captured
+as Phase 4k — separate brief). 4j's W4 is therefore built **responsive
+— working well on both phone and desktop**, not mobile-only. The price
+chart in particular should use the wider desktop viewport when present.
 
 ---
 
-*End of brief. Phase 4j is unblocked (4h has landed). It is a short,
-cheap, high-leverage build that makes the detail panel a place to
-actually evaluate a pick. Recommendation: approve the four defaults
-above and proceed.*
+*End of brief. Phase 4j is unblocked and fully specified. Executor
+kickoff: `kickoffs/phase-4j-executor.md`.*
