@@ -196,58 +196,16 @@ export async function runAnalystsForTicker(opts: TargetForOneOpts): Promise<{
     'political-analyst': pol,
   };
 
-  // Phase 4f W5 — Rescale weights to exclude no-data analysts so the
-  // displayed contributions reflect the actual composite math. Without
-  // this rescale the UI shows e.g. "Insider 50 (14% weight)" for an
-  // analyst that contributed nothing (the screenshot bug).
-  const noDataByAnalyst: Record<string, boolean> = {};
-  for (const [name, a] of Object.entries(allAnalysts)) {
-    if (a?.signals && (a.signals as { _noData?: boolean })._noData === true) {
-      noDataByAnalyst[name] = true;
-    }
-  }
-  const rescale = composeWeights({
-    noDataByAnalyst,
-    baseWeights: ANALYST_WEIGHTS,
-  });
-
-  // Build contributions (weighted score vector). No-data analysts get
-  // an effective weight of 0 so the contribution row is honest about
-  // not contributing; the UI badge layer can additionally render a
-  // NO_DATA badge based on `_noData` in `signals`.
-  const contributions: AnalystContribution[] = Object.entries(allAnalysts).map(([name, a]) => ({
-    analyst: name,
-    score: a.score,
-    direction: a.direction,
-    weight: +rescale.effectiveWeights[name].toFixed(6),
-  }));
-
-  // Net direction: weighted signed score. Use the rescaled effective
-  // weights so removing a no-data analyst correctly redistributes its
-  // share to peers rather than dragging the composite toward 50.
-  let netRaw = 0;
-  let confTotal = 0;
-  for (const [name, a] of Object.entries(allAnalysts)) {
-    const w = rescale.effectiveWeights[name] ?? 0;
-    if (w === 0) continue; // skip no-data
-    const signed = a.direction === 'long' ? a.score - 50 : a.direction === 'short' ? -(a.score - 50) : 0;
-    netRaw += signed * w * a.confidence;
-    confTotal += w * a.confidence;
-  }
-  const signedNet = confTotal > 0 ? netRaw / confTotal : 0; // -50 to +50
-
-  const composite = Math.round(Math.min(100, Math.max(0, 50 + Math.abs(signedNet) * 1.5)));
-  const direction: Direction = signedNet > 4 ? 'long' : signedNet < -4 ? 'short' : 'neutral';
-  const tier: Tier = composite >= 85 ? 'A' : composite >= 70 ? 'B' : 'C';
-
-  // Conflict detection: how many analysts disagree with net direction?
-  let disagree = 0;
-  for (const a of Object.values(allAnalysts)) {
-    if (a.confidence < 0.2) continue;
-    if (direction === 'long' && a.direction === 'short') disagree++;
-    if (direction === 'short' && a.direction === 'long') disagree++;
-  }
-  const conflictLevel: ConflictLevel = disagree >= 3 ? 'severe' : disagree === 2 ? 'moderate' : disagree === 1 ? 'mild' : 'none';
+  const composed = composeTarget(allAnalysts, ANALYST_WEIGHTS);
+  const {
+    composite,
+    tier,
+    direction,
+    conflictLevel,
+    contributions,
+    scoredAnalysts,
+    noDataAnalysts,
+  } = composed;
 
   // Top signals: highest-contributing analysts
   const topSignals: TopSignal[] = contributions
@@ -274,13 +232,131 @@ export async function runAnalystsForTicker(opts: TargetForOneOpts): Promise<{
     topSignals,
     conflictLevel,
     scoredAt: new Date().toISOString(),
-    scoredAnalysts: rescale.scoredAnalysts,
-    noDataAnalysts: rescale.noDataAnalysts,
+    scoredAnalysts,
+    noDataAnalysts,
     companyName,
     sector: persistedSector,
   };
 
   return { target, analysts: allAnalysts };
+}
+
+// ---------------------------------------------------------------------------
+// composeTarget — pure composite-scoring math
+// ---------------------------------------------------------------------------
+//
+// Phase 4s — extracted from runAnalystsForTicker so the composite/tier/
+// direction/conflict math is unit-testable without spinning up the data
+// providers. Inputs are the per-analyst outputs already produced by the
+// runner; outputs are the fields the Target object needs.
+//
+// The math, in order of operations:
+//
+//   1. Identify no-data analysts (signals._noData === true) and rescale
+//      the base weights via composeWeights so the survivors sum to 1.
+//   2. Compute signedNet — the confidence-weighted bullishness deviation
+//      from neutral, in [-50, +50]. Every analyst contributes
+//      `signed = score - 50`; per `reports/phase-4s/contract.md` (W1)
+//      `score` is a 0-100 bullishness scale (50 neutral), so bearish
+//      analysts contribute negative and bullish analysts contribute
+//      positive, regardless of the `direction` label. The previous
+//      sign-from-direction formula flipped bearish analysts positive
+//      (the O-I Glass bug).
+//   3. Derive `direction` from signedNet — long > +4, short < -4, else
+//      neutral.
+//   4. Compute conflictLevel — count analysts whose direction
+//      contradicts the net direction (confidence ≥ 0.2). ≥3 → severe,
+//      2 → moderate, 1 → mild, 0 → none.
+//   5. Compute the directional composite (NO Math.abs): `50 + signedNet
+//      × 1.5`, dampened toward 50 by a conflict-scaled factor (severe
+//      ×0.5, moderate ×0.75, else ×1.0). Clamped to [0, 100].
+//   6. Compute the tier from composite (A ≥ 85, B ≥ 70, else C), capped
+//      by conflictLevel — severe → max C, moderate → max B. Chad's
+//      decision in Phase 4s: dampen the composite AND cap the tier on
+//      severe/moderate conflict. A stock with five analysts fighting
+//      each other gets an honest number AND an honest grade.
+export interface ComposeTargetResult {
+  composite: number;
+  tier: Tier;
+  direction: Direction;
+  conflictLevel: ConflictLevel;
+  signedNet: number;
+  contributions: AnalystContribution[];
+  scoredAnalysts: string[];
+  noDataAnalysts: string[];
+}
+
+export function composeTarget(
+  allAnalysts: Record<string, AnalystOutput>,
+  baseWeights: Record<string, number>,
+): ComposeTargetResult {
+  const noDataByAnalyst: Record<string, boolean> = {};
+  for (const [name, a] of Object.entries(allAnalysts)) {
+    if (a?.signals && (a.signals as { _noData?: boolean })._noData === true) {
+      noDataByAnalyst[name] = true;
+    }
+  }
+  const rescale = composeWeights({ noDataByAnalyst, baseWeights });
+
+  const contributions: AnalystContribution[] = Object.entries(allAnalysts).map(([name, a]) => ({
+    analyst: name,
+    score: a.score,
+    direction: a.direction,
+    weight: +(rescale.effectiveWeights[name] ?? 0).toFixed(6),
+  }));
+
+  let netRaw = 0;
+  let confTotal = 0;
+  for (const [name, a] of Object.entries(allAnalysts)) {
+    const w = rescale.effectiveWeights[name] ?? 0;
+    if (w === 0) continue; // skip no-data / zero-weighted
+    const signed = a.score - 50; // -50..+50 bullishness deviation
+    netRaw += signed * w * a.confidence;
+    confTotal += w * a.confidence;
+  }
+  const signedNet = confTotal > 0 ? netRaw / confTotal : 0;
+
+  const direction: Direction = signedNet > 4 ? 'long' : signedNet < -4 ? 'short' : 'neutral';
+
+  let disagree = 0;
+  for (const a of Object.values(allAnalysts)) {
+    if (a.confidence < 0.2) continue;
+    if (direction === 'long' && a.direction === 'short') disagree++;
+    if (direction === 'short' && a.direction === 'long') disagree++;
+  }
+  const conflictLevel: ConflictLevel =
+    disagree >= 3 ? 'severe' :
+    disagree === 2 ? 'moderate' :
+    disagree === 1 ? 'mild' : 'none';
+
+  const dampenFactor: number =
+    conflictLevel === 'severe' ? 0.5 :
+    conflictLevel === 'moderate' ? 0.75 :
+    1.0;
+  const rawComposite = 50 + signedNet * 1.5;
+  const composite = Math.round(Math.min(100, Math.max(0, 50 + (rawComposite - 50) * dampenFactor)));
+
+  const baseTier: Tier = composite >= 85 ? 'A' : composite >= 70 ? 'B' : 'C';
+  const tierRank: Record<Tier, number> = { A: 3, B: 2, C: 1 };
+  const tierCapByConflict: Record<ConflictLevel, Tier> = {
+    severe: 'C',
+    moderate: 'B',
+    mild: 'A',
+    none: 'A',
+  };
+  const cap = tierCapByConflict[conflictLevel];
+  const tier: Tier = tierRank[baseTier] <= tierRank[cap] ? baseTier : cap;
+
+  return {
+    composite,
+    tier,
+    direction,
+    conflictLevel,
+    signedNet,
+    contributions,
+    scoredAnalysts: rescale.scoredAnalysts,
+    noDataAnalysts: rescale.noDataAnalysts,
+  };
 }
 
 function signalTypeFor(analyst: string, direction: Direction): string {
