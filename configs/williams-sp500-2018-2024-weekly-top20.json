@@ -1,0 +1,23 @@
+{
+  "_comment_": "Phase 4n Williams backtest config. Weekly rebalance matches the short-horizon (3-10 day) trade signal Williams emits. S&P 500 universe (cleanest PIT bars). discreteSignalOnly: true so the engine only buys BUY-verdict candidates.",
+  "universe": "sp500",
+  "startDate": "2018-01-31",
+  "endDate": "2024-12-31",
+  "rebalanceFrequency": "weekly",
+  "board": "williams",
+  "portfolio": {
+    "topN": 20,
+    "weighting": "equal",
+    "maxPositionPct": 0.08,
+    "maxSectorPct": 0.40,
+    "cashSleeve": 0.05,
+    "minComposite": 20
+  },
+  "costs": {
+    "slippageBps": { "sp500": 5 },
+    "commission": 0
+  },
+  "initialCapital": 100000,
+  "scoringConcurrency": 5,
+  "discreteSignalOnly": true
+}

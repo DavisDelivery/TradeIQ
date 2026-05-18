@@ -6,6 +6,7 @@
 
 import { UNIVERSE, inIndex, type IndexTag } from './universe';
 import { runWilliams } from '../styles/williams';
+import { deriveWilliamsSignal, type WilliamsSignal } from '../styles/williams-signal';
 import { getDailyBars } from './data-provider';
 import { mapWithConcurrency } from './full-scan-iterator';
 import type { Logger } from './logger';
@@ -21,6 +22,10 @@ export interface WilliamsCandidate {
   rationale: string;
   signals: Record<string, any>;
   side: 'long' | 'short';
+  /** Discrete trade signal (Phase 4m): BUY/SELL/HOLD + ATR-based levels. */
+  signal: WilliamsSignal;
+  /** Latest close at scan time, for reference. */
+  price: number | null;
 }
 
 export interface RunWilliamsScanOpts {
@@ -81,6 +86,7 @@ export async function runWilliamsScan(
       const bars = await getDailyBars(ticker, from, to);
       if (!bars || bars.length < 30) return null;
       const s = runWilliams({ ticker, bars });
+      const signal = deriveWilliamsSignal({ score: s.score, signals: s.signals }, bars);
       const cand: WilliamsCandidate = {
         ticker,
         name: t.name,
@@ -90,6 +96,8 @@ export async function runWilliamsScan(
         rationale: s.rationale,
         signals: s.signals,
         side: s.score >= 0 ? 'long' : 'short',
+        signal,
+        price: bars.length > 0 ? bars[bars.length - 1].c : null,
       };
       candidates.push(cand);
       return cand;

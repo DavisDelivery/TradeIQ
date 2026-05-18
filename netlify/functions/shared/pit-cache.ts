@@ -30,7 +30,8 @@ export type PitDataClass =
   | 'contracts'
   | 'macro'
   | 'bars'
-  | 'earnings_intel';
+  | 'earnings_intel'
+  | 'earnings_history';
 
 export type PitProvider = 'polygon' | 'finnhub' | 'quiver' | 'fred' | 'derived';
 

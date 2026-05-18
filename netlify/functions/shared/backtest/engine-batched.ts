@@ -260,12 +260,19 @@ export async function processRegularBatch(
             asOfDate,
             config.board,
             ctx,
+            { discreteSignalOnly: config.discreteSignalOnly },
           );
-          if (result === null && config.board !== 'prophet' && !nonProphetBoardWarned) {
+          if (
+            result === null &&
+            config.board !== 'prophet' &&
+            config.board !== 'williams' &&
+            config.board !== 'lynch' &&
+            !nonProphetBoardWarned
+          ) {
             nonProphetBoardWarned = true;
             state.warnings.push(
-              `Board "${config.board}" has no PIT scoring path in Phase 4a; ` +
-                `prophet is the only supported board. All candidates null.`,
+              `Board "${config.board}" has no PIT scoring path; ` +
+                `prophet/williams/lynch are the supported boards. All candidates null.`,
             );
           }
           if (result) scored.push(result);
