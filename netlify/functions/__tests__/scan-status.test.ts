@@ -145,6 +145,54 @@ describe('/api/scan-status', () => {
     expect(body.latest).toBeNull();
   });
 
+  // Phase 4p W3 — `scan` shorthand param.
+  it("honors scan=insider-russell2k and routes to the insider scan (W3)", async () => {
+    store['scanRuns/target-board-russell2k-20260518-230000'] = {
+      status: 'running',
+      cursor: { nextTickerIndex: 50, totalTickers: 2037 },
+    };
+    store['scanRuns/insider-russell2k-20260518-213000'] = {
+      status: 'done',
+      cursor: null,
+    };
+
+    const res = (await handler(get({ scan: 'insider-russell2k' }), {} as any)) as any;
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.body);
+    expect(body.board).toBe('insider');
+    expect(body.universe).toBe('russell2k');
+    expect(body.runs).toHaveLength(1);
+    expect(body.runs[0].runId).toMatch(/^insider-russell2k-/);
+  });
+
+  it("honors scan=target-board-sp500 (a multi-hyphen board name) (W3)", async () => {
+    store['scanRuns/target-board-sp500-20260518-230000'] = {
+      status: 'done',
+      cursor: null,
+    };
+    const res = (await handler(get({ scan: 'target-board-sp500' }), {} as any)) as any;
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.body);
+    expect(body.board).toBe('target-board');
+    expect(body.universe).toBe('sp500');
+  });
+
+  it('rejects a malformed scan value', async () => {
+    const res = (await handler(get({ scan: 'totally-bogus' }), {} as any)) as any;
+    expect(res.statusCode).toBe(400);
+  });
+
+  it('falls back to board+universe when scan is empty', async () => {
+    store['scanRuns/insider-russell2k-20260518-213000'] = {
+      status: 'done',
+      cursor: null,
+    };
+    const res = (await handler(get({ scan: '', board: 'insider', universe: 'russell2k' }), {} as any)) as any;
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.body);
+    expect(body.board).toBe('insider');
+  });
+
   it('passes through cursor null (terminal write cleared it)', async () => {
     store['scanRuns/target-board-russell2k-completed'] = {
       status: 'done',

@@ -11,6 +11,7 @@ import {
   appendPartialBatch,
   readAllPartialBatches,
   deletePartialBatches,
+  getCursorPhase,
   type ScanCursor,
 } from '../cursor';
 
@@ -190,6 +191,31 @@ describe('appendPartialBatch + readAllPartialBatches', () => {
     await appendPartialBatch(db, 'run-x', 1, [{ ticker: 'B' }]);
     const all = await readAllPartialBatches<{ ticker: string }>(db, 'run-x');
     expect(all.map((r) => r.ticker)).toEqual(['A', 'B', 'C']);
+  });
+});
+
+describe('getCursorPhase (Phase 4p W1)', () => {
+  it("returns 'scanning' when phase is undefined (back-compat with pre-4p cursors in flight)", () => {
+    const c = { ...baseCursor };
+    delete (c as any).phase;
+    expect(getCursorPhase(c)).toBe('scanning');
+  });
+
+  it("returns 'scanning' when phase is explicitly set", () => {
+    expect(getCursorPhase({ ...baseCursor, phase: 'scanning' })).toBe('scanning');
+  });
+
+  it("returns 'finalizing' when phase is set after the walk completes", () => {
+    expect(getCursorPhase({ ...baseCursor, phase: 'finalizing' })).toBe('finalizing');
+  });
+
+  it('round-trips through write+read so the worker sees the same phase next invocation', async () => {
+    const { db } = makeMockDb();
+    const c: ScanCursor = { ...baseCursor, phase: 'finalizing' };
+    await writeScanCursor(db, 'run-x', c);
+    const readBack = await readScanCursor(db, 'run-x');
+    expect(readBack).not.toBeNull();
+    expect(getCursorPhase(readBack!)).toBe('finalizing');
   });
 });
 

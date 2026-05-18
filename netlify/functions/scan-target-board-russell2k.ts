@@ -16,8 +16,11 @@
 
 import { schedule } from '@netlify/functions';
 import { logger } from './shared/logger';
+import { getAdminDb } from './shared/firebase-admin';
+import { recoverStuckRuns } from './shared/scan-resume/finalize';
 
 const WORKER_PATH = '/.netlify/functions/scan-target-board-russell2k-background';
+const RUN_ID_PREFIX = 'target-board-russell2k-';
 
 export const handler = schedule('0 23 * * *', async () => {
   const log = logger.child({
@@ -27,6 +30,27 @@ export const handler = schedule('0 23 * * *', async () => {
   });
   const origin = process.env.URL ?? 'https://tradeiq-alpha.netlify.app';
   const url = `${origin}${WORKER_PATH}`;
+
+  // Phase 4p W3 — recover stuck runs before dispatching a fresh scan.
+  // Two russell2k target-board runs have been frozen `status: running`
+  // since 2026-05-17 / 2026-05-18 — the pre-W1 terminal-step starvation.
+  // Best-effort: a Firestore hiccup here must not block the new scan.
+  try {
+    const report = await recoverStuckRuns({
+      db: getAdminDb(),
+      runIdPrefix: RUN_ID_PREFIX,
+    });
+    if (report.recovered.length > 0) {
+      log.warn('stuck_runs_recovered', {
+        inspected: report.inspected,
+        recovered: report.recovered,
+      });
+    } else {
+      log.info('stuck_run_sweep_clean', { inspected: report.inspected });
+    }
+  } catch (err: any) {
+    log.error('stuck_run_recovery_failed', { err: String(err?.message ?? err) });
+  }
 
   try {
     const res = await fetch(url, {
