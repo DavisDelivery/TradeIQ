@@ -13,6 +13,7 @@ import {
   parseOrFallback,
 } from './schemas';
 import { snapshotBeforeDate } from './snapshot-store';
+import { fetchWithRateLimit, getFinnhubBucket } from './rate-limiter';
 
 const POLYGON = 'https://api.polygon.io';
 const FINNHUB = 'https://finnhub.io/api/v1';
@@ -527,6 +528,24 @@ export interface FinnhubInsiderTx {
 }
 
 /**
+ * Phase 4o W1 — status envelope returned by
+ * `getFinnhubInsiderTransactionsWithStatus`. The russell2k checkpoint
+ * scan uses this so a 429-storm becomes visible (rateLimited count) and
+ * the W3 degraded-publish guard can refuse to swap _latest over a run
+ * with too many failed calls.
+ */
+export interface FinnhubInsiderTxStatus {
+  /** Parsed transactions (empty when the call had no data OR was rate-limited). */
+  data: FinnhubInsiderTx[];
+  /** True if the call was rate-limited at any point (including retries that ultimately succeeded). */
+  rateLimited: boolean;
+  /** True if every retry on this call returned 429 — the data is missing because of rate-limiting, not because the company has no transactions. */
+  rateLimitExhausted: boolean;
+  /** Non-429 failure (network, schema, etc.). When set, `data` is empty. */
+  errorMessage?: string;
+}
+
+/**
  * Fetch insider transactions for `ticker`. Default returns trades from
  * the past `daysBack` days.
  *
@@ -540,6 +559,12 @@ export interface FinnhubInsiderTx {
  * Both Finnhub's API-side `to=<asOfDate>` filter and an in-memory
  * `filingDate <= asOfDate` filter are applied for safety.
  *
+ * Phase 4o W1: requests pace through the Finnhub token bucket and a
+ * 429 triggers backoff-and-retry. A 429-storm no longer becomes a
+ * silent `[]` — exhausted-retry calls are still logged loudly and the
+ * status-aware sibling `getFinnhubInsiderTransactionsWithStatus`
+ * surfaces the rate-limit flag so the scan can mark the run degraded.
+ *
  * PIT-cacheable: keyed by (ticker, asOfDate, daysBack).
  */
 export async function getFinnhubInsiderTransactions(
@@ -547,7 +572,26 @@ export async function getFinnhubInsiderTransactions(
   daysBack: number = 180,
   opts: { asOfDate?: string } = {},
 ): Promise<FinnhubInsiderTx[]> {
+  const r = await getFinnhubInsiderTransactionsWithStatus(ticker, daysBack, opts);
+  return r.data;
+}
+
+/**
+ * Phase 4o W1 — status-aware variant of getFinnhubInsiderTransactions.
+ * The russell2k insider scan batch calls this so a 429-storm becomes a
+ * visible rate-limit count instead of a silent empty result.
+ */
+export async function getFinnhubInsiderTransactionsWithStatus(
+  ticker: string,
+  daysBack: number = 180,
+  opts: { asOfDate?: string } = {},
+): Promise<FinnhubInsiderTxStatus> {
   try {
+    // Pace through the per-invocation token bucket. Acquire blocks until
+    // a token is available — without this, the scan can issue 2,000+
+    // concurrent calls in seconds and Finnhub rejects most of them.
+    await getFinnhubBucket().acquire();
+
     // When asOfDate is set, anchor the lookback to it instead of "now".
     const anchor = opts.asOfDate
       ? Date.parse(opts.asOfDate + 'T23:59:59Z')
@@ -555,12 +599,20 @@ export async function getFinnhubInsiderTransactions(
     const from = new Date(anchor - daysBack * 86400000).toISOString().slice(0, 10);
     const to = new Date(anchor).toISOString().slice(0, 10);
     const url = `${FINNHUB}/stock/insider-transactions?symbol=${encodeURIComponent(ticker)}&from=${from}&to=${to}&token=${finnhubKey()}`;
-    const res = await fetch(url);
+    const { res, rateLimitHits, rateLimitExhausted } = await fetchWithRateLimit(url, undefined);
     if (!res.ok) {
       if (res.status === 429) {
-        console.warn(`[insider-tx] Finnhub 429 on ${ticker}; returning empty`);
+        // Logged loudly so a 429-storm shows up in Netlify function logs
+        // even if the caller doesn't read the status envelope.
+        console.warn(`[insider-tx] Finnhub 429 exhausted on ${ticker} after retries; flagging as rate-limited`);
+        return { data: [], rateLimited: true, rateLimitExhausted: true };
       }
-      return [];
+      return {
+        data: [],
+        rateLimited: rateLimitHits > 0,
+        rateLimitExhausted: false,
+        errorMessage: `finnhub status ${res.status}`,
+      };
     }
     const data = parseOrFallback(
       FinnhubInsiderTxResponseSchema,
@@ -598,9 +650,18 @@ export async function getFinnhubInsiderTransactions(
       mapped = mapped.filter((r) => r.filingDate && r.filingDate <= cutoff);
     }
 
-    return mapped;
-  } catch {
-    return [];
+    return {
+      data: mapped,
+      rateLimited: rateLimitHits > 0,
+      rateLimitExhausted: false,
+    };
+  } catch (err: any) {
+    return {
+      data: [],
+      rateLimited: false,
+      rateLimitExhausted: false,
+      errorMessage: String(err?.message ?? err),
+    };
   }
 }
 

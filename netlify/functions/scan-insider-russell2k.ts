@@ -2,6 +2,12 @@
 //
 // Cron: `30 21 * * 1-5` (21:30 UTC, weekdays, after US close).
 //
+// Phase 4o W1 — kept at 21:30 (earliest slot). The four insider-scan
+// crons are staggered so they no longer compete for Finnhub quota on
+// the same minute: russell2k first (longest scan, most calls), then
+// sp500, ndx, dow at 5-minute intervals. See the sister cron files
+// for the other slots.
+//
 // The russell2k insider scan walks ~2,000 Finnhub insider-transaction
 // calls — too many to finish in Netlify's 15-min background ceiling
 // as a single pass. Phase 4l W2 adopts the same checkpoint-resume

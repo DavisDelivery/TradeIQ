@@ -10,6 +10,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
   getInsiderTx: vi.fn(),
+  getInsiderTxStatus: vi.fn(),
   getPreviousClose: vi.fn(),
   lookupRole: vi.fn(),
 }));
@@ -19,6 +20,7 @@ vi.mock('../data-provider', async () => {
   return {
     ...actual,
     getFinnhubInsiderTransactions: mocks.getInsiderTx,
+    getFinnhubInsiderTransactionsWithStatus: mocks.getInsiderTxStatus,
     getPreviousClose: mocks.getPreviousClose,
   };
 });
@@ -46,8 +48,16 @@ import { runInsiderScanBatch, resolveInsiderUniverse } from '../scan-insider';
 
 beforeEach(() => {
   mocks.getInsiderTx.mockReset();
+  mocks.getInsiderTxStatus.mockReset();
   mocks.getPreviousClose.mockReset();
   mocks.lookupRole.mockReset();
+  // Default: status-aware shim just wraps the plain getInsiderTx mock so
+  // legacy tests calling `mocks.getInsiderTx.mockImplementation(...)` still
+  // drive the new code path.
+  mocks.getInsiderTxStatus.mockImplementation(async (ticker: string, daysBack: number) => {
+    const data = await mocks.getInsiderTx(ticker, daysBack);
+    return { data, rateLimited: false, rateLimitExhausted: false };
+  });
 });
 
 function buyTx(name: string, dollars: number, daysAgo: number) {

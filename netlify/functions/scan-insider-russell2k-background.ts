@@ -37,6 +37,7 @@ import {
   writeSnapshot,
   FRESHNESS_BUDGETS_MS,
   pruneOldSnapshots,
+  assessSnapshotPublish,
   type UniverseKey,
 } from './shared/snapshot-store';
 import {
@@ -65,10 +66,14 @@ const BOARD = 'insider';
 const BUDGET_MS = Number(process.env.INSIDER_SCAN_BUDGET_MS ?? 13 * 60_000);
 // Batch granularity. Insider per-ticker work is a single Finnhub call
 // (~200-400ms) + optional Polygon price (~200ms) + optional EDGAR role
-// enrichment (~500ms for the top buyer). At concurrency 8 a 50-ticker
-// batch runs ~6-8s; ~100 batches before the watchdog fires.
+// enrichment (~500ms for the top buyer).
 const BATCH_SIZE = Number(process.env.INSIDER_SCAN_BATCH_SIZE ?? 50);
-const CONCURRENCY = Number(process.env.INSIDER_SCAN_CONCURRENCY ?? 8);
+// Phase 4o W1: dropped from 8 to 4. Finnhub's free tier is ~60 calls/min;
+// the W1 token bucket paces the steady-state call rate, but a lower
+// concurrency keeps the cold-start burst from blowing through the
+// bucket's capacity (≈ FINNHUB_RPM) on the first batch and forcing
+// every later ticker into 429-retry backoff.
+const CONCURRENCY = Number(process.env.INSIDER_SCAN_CONCURRENCY ?? 4);
 // Retention identical to Phase 4h's russell2k target-board worker.
 const RETENTION_KEEP = 30;
 
@@ -127,6 +132,9 @@ export const handler: Handler = async (event, context) => {
       lastInvocationStartedAt: new Date().toISOString(),
       partialBatchCount: 0,
       scoredCount: 0,
+      apiCalls: 0,
+      apiRateLimited: 0,
+      apiErrors: 0,
     };
     await writeScanCursor(db, runId, cursor);
     log.info('scan_started', { runId, universe: UNIVERSE, totalTickers });
@@ -190,6 +198,9 @@ export const handler: Handler = async (event, context) => {
         partialBatchCount:
           activeCursor.partialBatchCount + (batchResult.rows.length > 0 ? 1 : 0),
         scoredCount: activeCursor.scoredCount + batchResult.rows.length,
+        apiCalls: (activeCursor.apiCalls ?? 0) + batchResult.finnhubCalls,
+        apiRateLimited: (activeCursor.apiRateLimited ?? 0) + batchResult.finnhubRateLimited,
+        apiErrors: (activeCursor.apiErrors ?? 0) + batchResult.finnhubErrors,
       };
       batchesThisInvocation += 1;
       await writeScanCursor(db, runId, activeCursor);
@@ -226,29 +237,79 @@ export const handler: Handler = async (event, context) => {
       return b.awardDollars - a.awardDollars;
     });
 
-    const { snapshotId } = await writeSnapshot(BOARD, STORE_KEY, {
-      modelVersion: MODEL_VERSION,
-      generatedAt: new Date().toISOString(),
-      scanDurationMs: Date.now() - new Date(cursor.startedAt).getTime(),
+    // Phase 4o W3 — degraded-publish guard. Decide whether the assembled
+    // result is healthy enough to swap _latest. The russell2k Bug A
+    // pattern (2,037 universe checked + 0 rows) lands here as a 'skip'
+    // so the previous good snapshot keeps serving.
+    const decision = assessSnapshotPublish({
+      resultCount: allRows.length,
       universeChecked: totalTickers,
-      results: allRows,
-      freshnessBudgetMs: FRESHNESS_BUDGETS_MS[BOARD],
-      warnings,
+      totalCalls: cursor.apiCalls ?? 0,
+      rateLimitedCalls: cursor.apiRateLimited ?? 0,
+      errorCalls: cursor.apiErrors ?? 0,
+    });
+    log.info('publish_guard_decision', {
+      runId,
+      action: decision.action,
+      reason: decision.reason,
+      resultCount: allRows.length,
+      universeChecked: totalTickers,
+      apiCalls: cursor.apiCalls,
+      apiRateLimited: cursor.apiRateLimited,
+      apiErrors: cursor.apiErrors,
     });
 
-    await clearScanCursor(db, runId, 'done');
+    if ((cursor.apiRateLimited ?? 0) > 0) {
+      warnings.push(
+        `finnhub rate-limit exhausted on ${cursor.apiRateLimited}/${cursor.apiCalls} tickers`,
+      );
+    }
+    if ((cursor.apiErrors ?? 0) > 0) {
+      warnings.push(
+        `finnhub errors on ${cursor.apiErrors}/${cursor.apiCalls} tickers`,
+      );
+    }
 
+    let snapshotId: string | null = null;
+    if (decision.action === 'skip') {
+      // The previous snapshot stays at _latest; record the run as failed.
+      log.warn('publish_guard_skip', { runId, reason: decision.reason });
+      await clearScanCursor(db, runId, 'error');
+    } else {
+      const written = await writeSnapshot(BOARD, STORE_KEY, {
+        modelVersion: MODEL_VERSION,
+        generatedAt: new Date().toISOString(),
+        scanDurationMs: Date.now() - new Date(cursor.startedAt).getTime(),
+        universeChecked: totalTickers,
+        results: allRows,
+        freshnessBudgetMs: FRESHNESS_BUDGETS_MS[BOARD],
+        warnings,
+        degraded: decision.action === 'publish-degraded' ? true : undefined,
+        degradedReason:
+          decision.action === 'publish-degraded' ? decision.reason : undefined,
+      });
+      snapshotId = written.snapshotId;
+      await clearScanCursor(db, runId, 'done');
+    }
+
+    // Partial-batch cleanup runs whether or not we published — the
+    // partials are just scratch space for this run; nothing else reads
+    // them once the terminal batch has assembled the full row list.
     try {
       const { deleted } = await deletePartialBatches(db, runId);
       log.info('partial_subcollection_cleaned', { runId, deleted });
     } catch (err: any) {
       log.warn('partial_cleanup_failed', { runId, err: String(err?.message ?? err) });
     }
-    try {
-      const { deleted, kept } = await pruneOldSnapshots(BOARD, STORE_KEY, RETENTION_KEEP);
-      log.info('snapshot_retention_pruned', { universe: STORE_KEY, deleted, kept });
-    } catch (err: any) {
-      log.warn('snapshot_retention_prune_failed', { err: String(err?.message ?? err) });
+    // Retention pruning only on a successful publish — when we skipped
+    // we didn't add a new snapshot, so there's nothing to age out.
+    if (snapshotId !== null) {
+      try {
+        const { deleted, kept } = await pruneOldSnapshots(BOARD, STORE_KEY, RETENTION_KEEP);
+        log.info('snapshot_retention_pruned', { universe: STORE_KEY, deleted, kept });
+      } catch (err: any) {
+        log.warn('snapshot_retention_prune_failed', { err: String(err?.message ?? err) });
+      }
     }
 
     log.info('scan_complete', {
@@ -258,6 +319,7 @@ export const handler: Handler = async (event, context) => {
       totalTickers,
       invocationCount: cursor.invocationCount,
       scanWallClockMs: Date.now() - new Date(cursor.startedAt).getTime(),
+      publishAction: decision.action,
     });
 
     return {
@@ -268,6 +330,8 @@ export const handler: Handler = async (event, context) => {
         snapshotId,
         resultsCount: allRows.length,
         invocationCount: cursor.invocationCount,
+        publishAction: decision.action,
+        publishReason: decision.reason,
       }),
     };
   }
@@ -294,6 +358,16 @@ export const handler: Handler = async (event, context) => {
     headers,
     '/.netlify/functions/scan-insider-russell2k-background',
   );
+
+  // Phase 4o W2 — stamp reinvoke attempt to the cursor before dispatch.
+  // See sibling target-board worker for the reasoning.
+  cursor = {
+    ...cursor,
+    lastReinvokeAt: new Date().toISOString(),
+    reinvokeAttempts: (cursor.reinvokeAttempts ?? 0) + 1,
+  };
+  await writeScanCursor(db, runId, cursor);
+  log.info('reinvoke_dispatching', { runId, reinvokeUrl, reinvokeAttempts: cursor.reinvokeAttempts });
 
   const reinvokeCtx: ReinvokeContext = context as unknown as ReinvokeContext;
   const dispatched = await dispatchReinvoke(reinvokeUrl, runId, reinvokeCtx);

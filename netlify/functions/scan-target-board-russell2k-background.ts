@@ -34,6 +34,7 @@ import {
   writeSnapshot,
   FRESHNESS_BUDGETS_MS,
   pruneOldSnapshots,
+  assessSnapshotPublish,
   type UniverseKey,
 } from './shared/snapshot-store';
 import {
@@ -249,30 +250,61 @@ export const handler: Handler = async (event, context) => {
     const allResults = await readAllPartialBatches<Target>(db, runId);
     allResults.sort((a, b) => b.composite - a.composite);
 
-    const { snapshotId } = await writeSnapshot(BOARD, STORE_KEY, {
-      modelVersion: MODEL_VERSION,
-      generatedAt: new Date().toISOString(),
-      scanDurationMs: Date.now() - new Date(cursor.startedAt).getTime(),
+    // Phase 4o W3 — degraded-publish guard. The target-board scan
+    // doesn't track API failures as granularly as the insider scan
+    // (Polygon errors land in per-row warnings), so for now we only
+    // consume the row-count arm of the guard. That alone is enough to
+    // block the Bug A-shaped pattern: a 2,000-name universe assembling
+    // 0 rows.
+    const decision = assessSnapshotPublish({
+      resultCount: allResults.length,
       universeChecked: totalTickers,
-      results: allResults,
-      freshnessBudgetMs: FRESHNESS_BUDGETS_MS[BOARD],
-      warnings,
+    });
+    log.info('publish_guard_decision', {
+      runId,
+      action: decision.action,
+      reason: decision.reason,
+      resultCount: allResults.length,
+      universeChecked: totalTickers,
     });
 
-    await clearScanCursor(db, runId, 'done');
+    let snapshotId: string | null = null;
+    if (decision.action === 'skip') {
+      log.warn('publish_guard_skip', { runId, reason: decision.reason });
+      await clearScanCursor(db, runId, 'error');
+    } else {
+      const written = await writeSnapshot(BOARD, STORE_KEY, {
+        modelVersion: MODEL_VERSION,
+        generatedAt: new Date().toISOString(),
+        scanDurationMs: Date.now() - new Date(cursor.startedAt).getTime(),
+        universeChecked: totalTickers,
+        results: allResults,
+        freshnessBudgetMs: FRESHNESS_BUDGETS_MS[BOARD],
+        warnings,
+        degraded: decision.action === 'publish-degraded' ? true : undefined,
+        degradedReason:
+          decision.action === 'publish-degraded' ? decision.reason : undefined,
+      });
+      snapshotId = written.snapshotId;
+      await clearScanCursor(db, runId, 'done');
+    }
 
-    // Best-effort cleanup of the partial subcollection + history pruning.
+    // Best-effort cleanup of the partial subcollection — runs whether
+    // or not we published; the partials are scratch space for this run.
     try {
       const { deleted } = await deletePartialBatches(db, runId);
       log.info('partial_subcollection_cleaned', { runId, deleted });
     } catch (err: any) {
       log.warn('partial_cleanup_failed', { runId, err: String(err?.message ?? err) });
     }
-    try {
-      const { deleted, kept } = await pruneOldSnapshots(BOARD, STORE_KEY, RETENTION_KEEP);
-      log.info('snapshot_retention_pruned', { universe: STORE_KEY, deleted, kept });
-    } catch (err: any) {
-      log.warn('snapshot_retention_prune_failed', { err: String(err?.message ?? err) });
+    // Retention pruning only on successful publish.
+    if (snapshotId !== null) {
+      try {
+        const { deleted, kept } = await pruneOldSnapshots(BOARD, STORE_KEY, RETENTION_KEEP);
+        log.info('snapshot_retention_pruned', { universe: STORE_KEY, deleted, kept });
+      } catch (err: any) {
+        log.warn('snapshot_retention_prune_failed', { err: String(err?.message ?? err) });
+      }
     }
 
     log.info('scan_complete', {
@@ -282,6 +314,7 @@ export const handler: Handler = async (event, context) => {
       totalTickers,
       invocationCount: cursor.invocationCount,
       scanWallClockMs: Date.now() - new Date(cursor.startedAt).getTime(),
+      publishAction: decision.action,
     });
 
     return {
@@ -292,6 +325,8 @@ export const handler: Handler = async (event, context) => {
         snapshotId,
         resultsCount: allResults.length,
         invocationCount: cursor.invocationCount,
+        publishAction: decision.action,
+        publishReason: decision.reason,
       }),
     };
   }
@@ -318,6 +353,21 @@ export const handler: Handler = async (event, context) => {
     headers,
     '/.netlify/functions/scan-target-board-russell2k-background',
   );
+
+  // Phase 4o W2 — stamp the cursor BEFORE dispatching so /api/scan-status
+  // can distinguish "watchdog never tripped, batch loop never finished"
+  // (no lastReinvokeAt) from "watchdog tripped, reinvoke dispatched, next
+  // invocation never ran" (lastReinvokeAt set but invocationCount didn't
+  // advance). The fetch in dispatchReinvoke runs through Context.waitUntil
+  // and may complete after this function returns; we can't observe its
+  // outcome synchronously, so the cursor stamp is the post-mortem record.
+  cursor = {
+    ...cursor,
+    lastReinvokeAt: new Date().toISOString(),
+    reinvokeAttempts: (cursor.reinvokeAttempts ?? 0) + 1,
+  };
+  await writeScanCursor(db, runId, cursor);
+  log.info('reinvoke_dispatching', { runId, reinvokeUrl, reinvokeAttempts: cursor.reinvokeAttempts });
 
   const reinvokeCtx: ReinvokeContext = context as unknown as ReinvokeContext;
   const dispatched = await dispatchReinvoke(reinvokeUrl, runId, reinvokeCtx);

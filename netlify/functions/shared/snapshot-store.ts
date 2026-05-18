@@ -51,6 +51,13 @@ export interface BoardSnapshot {
   freshnessBudgetMs: number;
   /** Optional warnings the scan emitted (rate-limit hits, partial failures). */
   warnings?: string[];
+  /** Phase 4o W3 — the scan completed with elevated error/rate-limit
+   *  signals. Read endpoints surface this so the UI can render a
+   *  "degraded" badge instead of an apparently-clean snapshot. */
+  degraded?: boolean;
+  /** Phase 4o W3 — when degraded=true, this carries the W3 guard's
+   *  human-readable reason (e.g. "8/100 finnhub calls rate-limited"). */
+  degradedReason?: string;
   /** 4c-2: sieve metadata for Russell snapshots produced by the 3-stage sieve. */
   sieve?: {
     stage1: { scored: number; survived: number; thresholdScore: number | null; budgetMs: number; partial: boolean };
@@ -77,6 +84,127 @@ export const FRESHNESS_BUDGETS_MS: Record<BoardName, number> = {
   insider: 24 * 60 * 60_000,
   lynch: 24 * 60 * 60_000,
 };
+
+// ====================================================================
+// Phase 4o W3 — degraded-publish guard
+// ====================================================================
+//
+// The russell2k insider Bug A had its true bite NOT in the rate-limit
+// (W1 fixes that) but in the *publish*: a scan that had been silently
+// ratelimit-massacred still atomic-swapped its empty result over the
+// previous good snapshot. Empty was served as clean. W3 closes that:
+// before the terminal writeSnapshot swaps _latest, assess the assembled
+// result + the run's accumulated call stats and decide whether the run
+// is healthy enough to publish.
+//
+// The decision is pure — no Firestore in here — so it's trivially
+// testable. The caller (the bg-worker's terminal batch) feeds it the
+// row count + universe size + call accounting, gets back a policy
+// decision: publish / publish-degraded / skip.
+//
+// Floors are tuned to be sane: the russell2k Bug A pattern (0 rows
+// across a 2,000-name universe) clearly trips "skip"; an ordinary low
+// yield (8 rows from sp500's 503 names) is fine because most companies
+// don't have insider activity in a 180d window. The threshold for
+// "skip" is intentionally narrow — we never refuse to publish for low
+// yield alone; we only refuse for 0 rows + meaningful universe size,
+// or for an error rate so high the data is fundamentally incomplete.
+
+export type PublishAction = 'publish' | 'publish-degraded' | 'skip';
+
+export interface PublishGuardInput {
+  /** Assembled row count for this run. */
+  resultCount: number;
+  /** Universe size at scan start (denominator for "no rows found anywhere"). */
+  universeChecked: number;
+  /** Phase 4o W1 — count of external-API calls whose retries exhausted on 429. */
+  rateLimitedCalls?: number;
+  /** Count of external-API calls that returned a non-429 error. */
+  errorCalls?: number;
+  /** Total external-API calls attempted. Denominator for the error-rate guard. */
+  totalCalls?: number;
+}
+
+export interface PublishGuardDecision {
+  action: PublishAction;
+  /** Human-readable reason. Always set for non-'publish' decisions; may
+   *  be set for 'publish' if the caller wants to record context. */
+  reason?: string;
+}
+
+/**
+ * Floor for the "0 rows" guard. Universes smaller than this can legitimately
+ * return 0 rows (no insider activity in the window), so the empty-result
+ * guard only fires for larger universes. Calibrated so sp500/ndx/dow are
+ * NOT subject to the empty guard alone — they're protected by the error-rate
+ * arm. The russell2k universe (~2,037) trivially clears this.
+ */
+export const PUBLISH_GUARD_EMPTY_UNIVERSE_MIN = 100;
+
+/** Skip the swap if more than this fraction of API calls failed. */
+export const PUBLISH_GUARD_SKIP_ERROR_RATE = 0.5;
+
+/** Mark the snapshot degraded if more than this fraction failed (but less than the skip threshold). */
+export const PUBLISH_GUARD_DEGRADED_ERROR_RATE = 0.1;
+
+/**
+ * Decide whether to publish the assembled scan result, publish it marked
+ * `degraded`, or skip the swap and keep the previous good snapshot.
+ *
+ * Decision order:
+ *   1. resultCount === 0 AND universeChecked >= PUBLISH_GUARD_EMPTY_UNIVERSE_MIN
+ *      → skip. This is the russell2k Bug A pattern — a 2,037-name scan
+ *      that returns 0 rows is almost certainly rate-limited into oblivion,
+ *      not a legitimate "no insider activity anywhere" finding.
+ *   2. totalCalls > 0 AND (rateLimited + errors) / totalCalls >= SKIP_ERROR_RATE
+ *      → skip. Data is fundamentally incomplete.
+ *   3. resultCount === 0 AND ANY rateLimited > 0 → skip. We can't trust
+ *      a 0-row result the moment rate-limiting was on the table at all.
+ *   4. totalCalls > 0 AND (rateLimited + errors) / totalCalls >= DEGRADED_ERROR_RATE
+ *      → publish-degraded. The data is mostly there but the reader should
+ *      know not to bet the farm on it.
+ *   5. Otherwise → publish.
+ */
+export function assessSnapshotPublish(input: PublishGuardInput): PublishGuardDecision {
+  const totalCalls = input.totalCalls ?? 0;
+  const rateLimited = input.rateLimitedCalls ?? 0;
+  const errors = input.errorCalls ?? 0;
+  const failures = rateLimited + errors;
+  const failureRate = totalCalls > 0 ? failures / totalCalls : 0;
+
+  if (
+    input.resultCount === 0 &&
+    input.universeChecked >= PUBLISH_GUARD_EMPTY_UNIVERSE_MIN
+  ) {
+    return {
+      action: 'skip',
+      reason: `empty result over ${input.universeChecked}-ticker universe; refusing to swap _latest`,
+    };
+  }
+
+  if (totalCalls > 0 && failureRate >= PUBLISH_GUARD_SKIP_ERROR_RATE) {
+    return {
+      action: 'skip',
+      reason: `failure rate ${failures}/${totalCalls} (${(failureRate * 100).toFixed(0)}%) exceeds skip threshold`,
+    };
+  }
+
+  if (input.resultCount === 0 && rateLimited > 0) {
+    return {
+      action: 'skip',
+      reason: `empty result with ${rateLimited} rate-limited calls; refusing to publish a hollow snapshot`,
+    };
+  }
+
+  if (totalCalls > 0 && failureRate >= PUBLISH_GUARD_DEGRADED_ERROR_RATE) {
+    return {
+      action: 'publish-degraded',
+      reason: `degraded: ${failures}/${totalCalls} calls failed (${(failureRate * 100).toFixed(0)}%)`,
+    };
+  }
+
+  return { action: 'publish' };
+}
 
 function snapshotIdFor(universe: UniverseKey, when: Date = new Date()): string {
   // YYYY-MM-DD-HHmm in UTC.
