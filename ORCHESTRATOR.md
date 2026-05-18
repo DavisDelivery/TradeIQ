@@ -32,6 +32,7 @@
 - Every phase that touches scoring/alpha logic must add a regression test before merge.
 - Briefs never contain literal secrets. Use `<read-only-PAT, provided per session>` placeholders.
 - Smoke-test every new HTTP route on the deploy preview BEFORE merging. Unit tests can't catch Netlify routing quirks.
+- Every new `/api/<endpoint>` function MUST get a matching `[[redirects]]` rule in `netlify.toml` (`/api/<name>` → `/.netlify/functions/<name>`, status 200). `netlify.toml` maps API routes individually — there is no `/api/*` wildcard, so a new function without its rule silently falls through to the SPA. (Phase 4j: `ticker-info`/`price-history`/`logo` shipped without rules; caught in post-merge verification, fixed in `de1a711`.)
 - Every phase ends by updating the Status table.
 
 ---
