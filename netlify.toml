@@ -70,6 +70,21 @@
   status = 200
 
 [[redirects]]
+  from = "/api/ticker-info"
+  to = "/.netlify/functions/ticker-info"
+  status = 200
+
+[[redirects]]
+  from = "/api/price-history"
+  to = "/.netlify/functions/price-history"
+  status = 200
+
+[[redirects]]
+  from = "/api/logo"
+  to = "/.netlify/functions/logo"
+  status = 200
+
+[[redirects]]
   from = "/api/health"
   to = "/.netlify/functions/health"
   status = 200
