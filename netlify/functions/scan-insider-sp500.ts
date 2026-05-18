@@ -2,10 +2,13 @@
 //
 // Board:    insider
 // Universe: sp500 (stored as 'sp500')
-// Schedule: 30 21 * * 1-5
+// Schedule: 35 21 * * 1-5
 //
 // Split from Phase 1's multi-universe scan-insider.ts so each universe gets
 // its own 15-min Netlify background container instead of competing for one.
+//
+// Phase 4o W1 — staggered from 21:30 to 21:35 so it doesn't share a
+// Finnhub-quota minute with russell2k (21:30), ndx (21:40), or dow (21:45).
 
 import { schedule } from '@netlify/functions';
 import { runInsiderScan, type InsiderUniverseKey } from './shared/scan-insider';
@@ -20,7 +23,7 @@ const PER_SCAN_BUDGET_MS = 14 * 60_000;
 const UNIVERSE: InsiderUniverseKey = 'sp500';
 const STORE_KEY: UniverseKey = 'sp500';
 
-export const handler = schedule('30 21 * * 1-5', async () => {
+export const handler = schedule('35 21 * * 1-5', async () => {
   const log = logger.child({ fn: 'scan-insider-sp500', universe: UNIVERSE });
   const overallStart = Date.now();
   log.info('scheduled_scan_started', { board: 'insider', universe: UNIVERSE });

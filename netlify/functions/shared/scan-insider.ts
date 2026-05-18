@@ -14,7 +14,11 @@
 // sp500/ndx/dow scheduled scans whose universe fits the 14-min budget.
 
 import { UNIVERSE, inIndex, type IndexTag } from './universe';
-import { getFinnhubInsiderTransactions, getPreviousClose } from './data-provider';
+import {
+  getFinnhubInsiderTransactions,
+  getFinnhubInsiderTransactionsWithStatus,
+  getPreviousClose,
+} from './data-provider';
 import { lookupInsiderRole } from './edgar-roles';
 import type { InsiderBoardRow } from './types';
 import { mapWithConcurrency } from './full-scan-iterator';
@@ -87,6 +91,12 @@ export interface RunInsiderScanBatchResult {
   rows: InsiderBoardRow[];
   tickersConsumed: number;
   warnings: string[];
+  /** Phase 4o W1/W3 — Finnhub call accounting for this batch. The cursor
+   *  aggregates these so the W3 degraded-publish guard can refuse to
+   *  swap _latest over a run where the call success rate is too low. */
+  finnhubCalls: number;
+  finnhubRateLimited: number;
+  finnhubErrors: number;
 }
 
 /**
@@ -111,19 +121,32 @@ export async function runInsiderScanBatch(
   const slice = allTickers.slice(opts.startIdx, opts.startIdx + opts.batchSize);
 
   if (slice.length === 0) {
-    return { rows: [], tickersConsumed: 0, warnings };
+    return {
+      rows: [],
+      tickersConsumed: 0,
+      warnings,
+      finnhubCalls: 0,
+      finnhubRateLimited: 0,
+      finnhubErrors: 0,
+    };
   }
 
   const now = Date.now();
   const cutoffTs = now - opts.windowDays * 86_400_000;
   const rows: InsiderBoardRow[] = [];
+  let finnhubCalls = 0;
+  let finnhubRateLimited = 0;
+  let finnhubErrors = 0;
 
   await mapWithConcurrency(
     slice,
     async (ticker) => {
-      const txs = await getFinnhubInsiderTransactions(ticker, opts.windowDays);
-      if (txs.length === 0) return null;
-      const row = buildRowFromTxs(ticker, txs, cutoffTs, now);
+      const status = await getFinnhubInsiderTransactionsWithStatus(ticker, opts.windowDays);
+      finnhubCalls += 1;
+      if (status.rateLimitExhausted) finnhubRateLimited += 1;
+      if (status.errorMessage) finnhubErrors += 1;
+      if (status.data.length === 0) return null;
+      const row = buildRowFromTxs(ticker, status.data, cutoffTs, now);
       if (row) rows.push(row);
       return row;
     },
@@ -134,6 +157,17 @@ export async function runInsiderScanBatch(
       },
     },
   );
+
+  if (finnhubRateLimited > 0) {
+    warnings.push(
+      `finnhub rate-limit exhausted on ${finnhubRateLimited}/${finnhubCalls} tickers in batch starting ${opts.startIdx}`,
+    );
+  }
+  if (finnhubErrors > 0) {
+    warnings.push(
+      `finnhub errors on ${finnhubErrors}/${finnhubCalls} tickers in batch starting ${opts.startIdx}`,
+    );
+  }
 
   // Polygon price enrichment for the rows this batch produced. Cheap:
   // ~1 call per ticker with insider activity. Failures are tolerated —
@@ -179,9 +213,19 @@ export async function runInsiderScanBatch(
     startIdx: opts.startIdx,
     consumed: slice.length,
     scored: rows.length,
+    finnhubCalls,
+    finnhubRateLimited,
+    finnhubErrors,
   });
 
-  return { rows, tickersConsumed: slice.length, warnings };
+  return {
+    rows,
+    tickersConsumed: slice.length,
+    warnings,
+    finnhubCalls,
+    finnhubRateLimited,
+    finnhubErrors,
+  };
 }
 
 /**

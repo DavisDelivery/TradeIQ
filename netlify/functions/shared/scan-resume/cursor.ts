@@ -49,6 +49,26 @@ export interface ScanCursor {
   lastError?: string;
   /** Set if a self-reinvoke fetch failed; orchestrator may need to recover. */
   lastReinvokeError?: string;
+  /** Phase 4o W2 — ISO timestamp of the most recent self-reinvoke
+   *  dispatch attempt. When `status === 'running'` and this is set, we
+   *  KNOW the watchdog tripped and we attempted to chain. If
+   *  `invocationCount` doesn't advance past this point, the reinvoke
+   *  fetch landed (or didn't) but the next invocation never ran. That
+   *  pinpoints the stall to the reinvoke layer rather than the
+   *  watchdog or the batch loop. */
+  lastReinvokeAt?: string;
+  /** Phase 4o W2 — running counter of self-reinvoke dispatches. Compare
+   *  to `invocationCount` post-mortem: if reinvokeAttempts === N and
+   *  invocationCount === N, the chain stalled at the Nth handoff. */
+  reinvokeAttempts?: number;
+  /** Phase 4o W1/W3 — total external-API calls attempted across all
+   *  batches so far. The terminal batch feeds this to the W3 guard so
+   *  a degraded run can't atomic-swap _latest. */
+  apiCalls?: number;
+  /** Phase 4o W1/W3 — calls whose retries exhausted on 429. */
+  apiRateLimited?: number;
+  /** Phase 4o W1/W3 — calls that returned non-429 errors. */
+  apiErrors?: number;
 }
 
 const RUN_COLLECTION = 'scanRuns';
