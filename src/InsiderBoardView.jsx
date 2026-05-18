@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import {
-  Users, RefreshCw, AlertCircle, ChevronDown, ChevronUp,
-  ArrowUpDown, ArrowUp, ArrowDown, TrendingUp, TrendingDown,
+  ChevronDown, ChevronUp,
+  AlertCircle, TrendingUp, TrendingDown,
 } from 'lucide-react';
 import { useSortable, SortableTh } from './lib/useSortable.jsx';
 import { FreshnessPill } from './components/FreshnessPill.jsx';
@@ -14,6 +14,15 @@ const WINDOW_OPTIONS = [
   { id: 180, label: '180d' },
 ];
 
+// Phase 4l W3 — the insiders tab opens defaulted to net buyers.
+// The toggle flips between net buyers (netDollars > 0), net sellers
+// (netDollars < 0), and all rows. Default sort matches the active view.
+const VIEW_OPTIONS = [
+  { id: 'buyers', label: 'Buyers', defaultSortKey: 'netDollars', defaultSortDir: 'desc' },
+  { id: 'sellers', label: 'Sellers', defaultSortKey: 'sellDollars', defaultSortDir: 'desc' },
+  { id: 'all', label: 'All', defaultSortKey: 'netDollars', defaultSortDir: 'desc' },
+];
+
 const fmtUsd = (n) => {
   if (!Number.isFinite(n) || n === 0) return '—';
   const abs = Math.abs(n);
@@ -21,6 +30,13 @@ const fmtUsd = (n) => {
   if (abs >= 1_000_000) return `${sign}$${(abs / 1_000_000).toFixed(1)}M`;
   if (abs >= 1_000) return `${sign}$${(abs / 1_000).toFixed(0)}K`;
   return `${sign}$${abs.toFixed(0)}`;
+};
+
+const fmtPrice = (n) => {
+  if (!Number.isFinite(n) || n === null) return '—';
+  if (n >= 1000) return `$${n.toFixed(0)}`;
+  if (n >= 10) return `$${n.toFixed(2)}`;
+  return `$${n.toFixed(2)}`;
 };
 
 const fmtDate = (s) => {
@@ -41,22 +57,51 @@ export const InsiderBoardView = ({ universe = 'all' }) => {
     }
     return 90;
   });
+  const [view, setView] = useState(() => {
+    if (typeof window !== 'undefined') {
+      const u = new URL(window.location.href);
+      const v = u.searchParams.get('insiderView');
+      if (v === 'buyers' || v === 'sellers' || v === 'all') return v;
+    }
+    return 'buyers'; // Phase 4l W3: default to net buyers
+  });
   const [expandedTicker, setExpandedTicker] = useState(null);
 
-  const { sortKey, sortDir, sortBy, sortRows } = useSortable('buyDollars', 'desc');
+  // Default sort is netDollars desc (buyers view). Switching views below
+  // re-points the sort to the natural key for that view.
+  const { sortKey, sortDir, sortBy, sortRows } = useSortable('netDollars', 'desc');
   const { data, error, isLoading: loading, isFetching, forceRescan } = useInsider(universe, windowDays);
   const isRescanning = isFetching && !loading;
 
-  // Sync window choice to URL for bookmarkability
   useEffect(() => {
     if (typeof window === 'undefined') return;
     const u = new URL(window.location.href);
     u.searchParams.set('insiderDays', String(windowDays));
+    u.searchParams.set('insiderView', view);
     window.history.replaceState({}, '', u.toString());
-  }, [windowDays]);
+  }, [windowDays, view]);
 
   const rows = data?.rows ?? [];
-  const sorted = useMemo(() => sortRows(rows), [rows, sortKey, sortDir, sortRows]);
+
+  // Apply view filter BEFORE sort so the count + sortRows agree.
+  const filtered = useMemo(() => {
+    if (view === 'buyers') return rows.filter((r) => Number(r.netDollars) > 0);
+    if (view === 'sellers') return rows.filter((r) => Number(r.netDollars) < 0);
+    return rows;
+  }, [rows, view]);
+
+  const sorted = useMemo(() => sortRows(filtered), [filtered, sortKey, sortDir, sortRows]);
+
+  const setViewAndSort = (id) => {
+    setView(id);
+    const opt = VIEW_OPTIONS.find((v) => v.id === id);
+    if (opt && opt.defaultSortKey !== sortKey) {
+      // Re-anchor the sort to the new view's natural column.
+      sortBy(opt.defaultSortKey);
+      // sortBy toggles direction if same key. We just changed to a new
+      // key, so the hook sets desc — which matches all VIEW_OPTIONS.
+    }
+  };
 
   return (
     <div className="p-4 sm:p-6 max-w-[1400px] mx-auto">
@@ -70,7 +115,11 @@ export const InsiderBoardView = ({ universe = 'all' }) => {
             ) : (
               <>
                 <span className="text-emerald-400">{sorted.length}</span>
-                <span className="text-neutral-500 italic font-light">tickers with insider activity</span>
+                <span className="text-neutral-500 italic font-light">
+                  {view === 'buyers' && 'net insider buyers'}
+                  {view === 'sellers' && 'net insider sellers'}
+                  {view === 'all' && 'tickers with insider activity'}
+                </span>
               </>
             )}
           </h1>
@@ -84,6 +133,24 @@ export const InsiderBoardView = ({ universe = 'all' }) => {
           isRescanning={isRescanning}
           onForceRescan={() => forceRescan()}
         />
+      </div>
+
+      {/* View toggle (Buyers / Sellers / All) — Phase 4l W3 */}
+      <div className="flex items-center gap-1 text-[11px] font-mono mb-3 flex-wrap">
+        <span className="text-neutral-500 mr-2 uppercase tracking-widest">View</span>
+        {VIEW_OPTIONS.map(({ id, label }) => (
+          <button
+            key={id}
+            onClick={() => setViewAndSort(id)}
+            className={`px-2.5 h-7 transition-colors ${
+              view === id
+                ? 'bg-emerald-500/15 text-emerald-300 border border-emerald-500/40'
+                : 'text-neutral-500 border border-neutral-800 hover:border-neutral-600'
+            }`}
+          >
+            {label}
+          </button>
+        ))}
       </div>
 
       {/* Window selector */}
@@ -132,7 +199,9 @@ export const InsiderBoardView = ({ universe = 'all' }) => {
       {/* Empty */}
       {!loading && data && sorted.length === 0 && (
         <div className="border border-neutral-800 p-6 text-center text-neutral-500 text-sm">
-          No insider activity in the selected window.
+          {view === 'buyers' && 'No net insider buyers in the selected window. Try the Sellers or All view.'}
+          {view === 'sellers' && 'No net insider sellers in the selected window. Try the Buyers or All view.'}
+          {view === 'all' && 'No insider activity in the selected window.'}
         </div>
       )}
 
@@ -144,6 +213,7 @@ export const InsiderBoardView = ({ universe = 'all' }) => {
               <tr>
                 <th className="text-left px-3 py-2.5 w-10"></th>
                 <SortableTh sortKey={sortKey} sortDir={sortDir} sortBy={sortBy} field="ticker" align="left">Ticker</SortableTh>
+                <SortableTh sortKey={sortKey} sortDir={sortDir} sortBy={sortBy} field="price" align="right">Price</SortableTh>
                 <SortableTh sortKey={sortKey} sortDir={sortDir} sortBy={sortBy} field="buyDollars" align="right">$ Bought</SortableTh>
                 <SortableTh sortKey={sortKey} sortDir={sortDir} sortBy={sortBy} field="awardDollars" align="right">$ Awards</SortableTh>
                 <SortableTh sortKey={sortKey} sortDir={sortDir} sortBy={sortBy} field="sellDollars" align="right">$ Sold</SortableTh>
@@ -167,6 +237,7 @@ export const InsiderBoardView = ({ universe = 'all' }) => {
                         {isOpen ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
                       </td>
                       <td className="px-3 py-2.5 font-serif text-neutral-100 font-bold text-[13px]">{r.ticker}</td>
+                      <td className="px-3 py-2.5 text-right tabular-nums text-neutral-300">{fmtPrice(r.price)}</td>
                       <td className="px-3 py-2.5 text-right tabular-nums text-emerald-400">{fmtUsd(r.buyDollars)}</td>
                       <td className="px-3 py-2.5 text-right tabular-nums text-sky-400/80">{fmtUsd(r.awardDollars)}</td>
                       <td className="px-3 py-2.5 text-right tabular-nums text-rose-400">{fmtUsd(r.sellDollars)}</td>
@@ -187,7 +258,7 @@ export const InsiderBoardView = ({ universe = 'all' }) => {
                     </tr>
                     {isOpen && (
                       <tr className="border-t border-neutral-800/60 bg-neutral-950/60">
-                        <td colSpan={9} className="p-0">
+                        <td colSpan={10} className="p-0">
                           <FilingsTable filings={r.filings} />
                         </td>
                       </tr>
@@ -202,7 +273,7 @@ export const InsiderBoardView = ({ universe = 'all' }) => {
 
       {/* Footer note */}
       <div className="mt-6 border border-neutral-800/60 bg-neutral-950/40 p-3 text-[11px] text-neutral-500 leading-relaxed">
-        Source: Finnhub Form 4 feed.
+        Source: Finnhub Form 4 feed; price from Polygon previous close.
         <span className="text-emerald-400 font-medium"> $ Bought</span> shows
         open-market purchases (Form 4 code P) — the high-conviction signal.
         <span className="text-sky-400/80 font-medium"> $ Awards</span> shows

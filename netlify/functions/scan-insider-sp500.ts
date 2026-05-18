@@ -32,6 +32,7 @@ export const handler = schedule('30 21 * * 1-5', async () => {
       scanBudgetMs: PER_SCAN_BUDGET_MS,
       concurrency: 8,
       enrichRoles: true,
+      enrichPrice: true,
       logger: log,
     });
 

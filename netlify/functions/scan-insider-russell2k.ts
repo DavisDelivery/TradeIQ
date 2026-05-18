@@ -1,78 +1,64 @@
-// Per-universe scheduled scan: insider board (daily, after US close).
+// Phase 4l W2 — scheduled trigger for the russell2k insider scan.
 //
-// Board:    insider
-// Universe: russell2k (stored as 'russell2k')
-// Schedule: 30 21 * * 1-5
+// Cron: `30 21 * * 1-5` (21:30 UTC, weekdays, after US close).
 //
-// Split from Phase 1's multi-universe scan-insider.ts so each universe gets
-// its own 15-min Netlify background container instead of competing for one.
+// The russell2k insider scan walks ~2,000 Finnhub insider-transaction
+// calls — too many to finish in Netlify's 15-min background ceiling
+// as a single pass. Phase 4l W2 adopts the same checkpoint-resume
+// pattern Phase 4h shipped for `scan-target-board-russell2k`: a thin
+// scheduled trigger fires a background worker that batches the
+// universe, checkpoints a cursor in Firestore, and self-reinvokes via
+// `Context.waitUntil` until the sweep completes.
+//
+// This file is intentionally thin. The actual scan lives in
+// `scan-insider-russell2k-background.ts`. The trigger fires that
+// worker with an empty body (fresh-start payload); the worker
+// generates its own runId and chains itself until the universe is
+// done.
 
 import { schedule } from '@netlify/functions';
-import { runInsiderScan, type InsiderUniverseKey } from './shared/scan-insider';
-import { writeSnapshot, FRESHNESS_BUDGETS_MS, type UniverseKey } from './shared/snapshot-store';
-import { MODEL_VERSION } from './shared/model-version';
 import { logger } from './shared/logger';
-import { INSIDER_SCHEDULED_WINDOW_DAYS } from './shared/scan-insider';
 
-// 14 min — leaves 60s margin under the 15-min Netlify background timeout.
-const PER_SCAN_BUDGET_MS = 14 * 60_000;
-
-const UNIVERSE: InsiderUniverseKey = 'russell2k';
-const STORE_KEY: UniverseKey = 'russell2k';
+const WORKER_PATH = '/.netlify/functions/scan-insider-russell2k-background';
 
 export const handler = schedule('30 21 * * 1-5', async () => {
-  const log = logger.child({ fn: 'scan-insider-russell2k', universe: UNIVERSE });
-  const overallStart = Date.now();
-  log.info('scheduled_scan_started', { board: 'insider', universe: UNIVERSE });
+  const log = logger.child({
+    fn: 'scan-insider-russell2k',
+    universe: 'russell2k',
+    schedule: '30 21 * * 1-5',
+  });
+  const origin = process.env.URL ?? 'https://tradeiq-alpha.netlify.app';
+  const url = `${origin}${WORKER_PATH}`;
 
   try {
-    const scan = await runInsiderScan({
-      universe: UNIVERSE,
-      windowDays: INSIDER_SCHEDULED_WINDOW_DAYS,
-      scanBudgetMs: PER_SCAN_BUDGET_MS,
-      concurrency: 8,
-      enrichRoles: true,
-      logger: log,
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      // Empty body: worker treats this as a fresh-start invocation
+      // and generates its own runId for the checkpoint chain.
+      body: JSON.stringify({}),
     });
-
-    const { snapshotId } = await writeSnapshot('insider', STORE_KEY, {
-      modelVersion: MODEL_VERSION,
-      generatedAt: new Date().toISOString(),
-      scanDurationMs: scan.scanDurationMs,
-      universeChecked: scan.universeChecked,
-      results: scan.rows,
-      freshnessBudgetMs: FRESHNESS_BUDGETS_MS.insider,
-      warnings: scan.warnings,
-    });
-
-    const count = scan.rows.length;
-    log.info('snapshot_written', {
-      snapshotId,
-      rows: count,
-      universeChecked: scan.universeChecked,
-      scanDurationMs: scan.scanDurationMs,
-      overallDurationMs: Date.now() - overallStart,
-    });
-
+    const body = await res.text();
+    log.info('worker_dispatched', { status: res.status, body: body.slice(0, 200) });
     return {
       statusCode: 200,
       body: JSON.stringify({
         ok: true,
         board: 'insider',
-        universe: UNIVERSE,
-        snapshotId,
-        rows: count,
-        universeChecked: scan.universeChecked,
-        scanDurationMs: scan.scanDurationMs,
-        warnings: scan.warnings,
+        universe: 'russell2k',
+        workerStatus: res.status,
       }),
     };
   } catch (err: any) {
-    const msg = String(err?.message ?? err);
-    log.error('scheduled_scan_failed', { err: msg, universe: UNIVERSE });
+    log.error('worker_dispatch_failed', { err: String(err?.message ?? err) });
     return {
       statusCode: 500,
-      body: JSON.stringify({ ok: false, board: 'insider', universe: UNIVERSE, error: msg }),
+      body: JSON.stringify({
+        ok: false,
+        board: 'insider',
+        universe: 'russell2k',
+        error: String(err?.message ?? err),
+      }),
     };
   }
 });
