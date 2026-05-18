@@ -30,6 +30,10 @@ interface BacktestSummary {
   runId: string;
   window: string;
   status: 'pending' | 'running' | 'done' | 'failed';
+  // Phase 4r W1 — rule version this run executed under. Optional because
+  // pre-4r result docs don't carry it; the verdict treats `undefined` as
+  // the pre-Phase-4i v1 default for the mixed-history banner.
+  version?: string;
   startDate?: string;
   endDate?: string;
   portfolioReturnPct?: number;
@@ -100,6 +104,21 @@ async function latestPerWindow(): Promise<Map<string, BacktestSummary>> {
 const NAMED_WINDOWS = ['full', 'half-2018', 'half-2022', 'covid', 'rate-hikes'];
 const ROLLING_WINDOWS = ['rolling-2018', 'rolling-2019', 'rolling-2020', 'rolling-2021', 'rolling-2022', 'rolling-2023', 'rolling-2024', 'rolling-2025'];
 
+// Phase 4r W1 — active rule version. The verdict only counts a rolling-*
+// or full window as "done" toward the binding rule if its result was
+// produced under this version. Otherwise we'd silently aggregate a v1
+// rolling-2021 result with a v2 full-window result and call it a
+// verdict, which it isn't. Configurable via env so the orchestrator can
+// pin a verdict to a specific historical run if needed.
+const ACTIVE_VERSION = process.env.PORTFOLIO_RULE_VERSION ?? 'v2';
+// Treat pre-Phase-4i result docs (no `version` field) as v1.
+function resolveVersion(s: BacktestSummary): string {
+  return s.version ?? 'v1';
+}
+function isDoneAtActiveVersion(s: BacktestSummary | undefined): boolean {
+  return !!s && s.status === 'done' && resolveVersion(s) === ACTIVE_VERSION;
+}
+
 function fmt(n: number | null | undefined, suffix = ''): string {
   if (n == null || !Number.isFinite(n)) return '—';
   return `${n.toFixed(2)}${suffix}`;
@@ -122,10 +141,21 @@ function deriveVerdict(audit: AuditRow | null, results: Map<string, BacktestSumm
   rollingDone: number;
   fullExcess: number | null;
   qqqDelta: number | null;
+  /** Phase 4r W1 — windows whose latest doc is `done` but at an older
+   *  rule version than the active one. Surfaced so the report can flag
+   *  the v1-vs-v2 mix instead of silently aggregating it. */
+  staleVersionWindows: string[];
 } {
   const full = results.get('full');
-  if (!audit || !full || full.status !== 'done') {
-    return { verdict: 'PENDING LIVE-DATA RUN', rollingBeats: 0, rollingDone: 0, fullExcess: null, qqqDelta: null };
+  if (!audit || !full || !isDoneAtActiveVersion(full)) {
+    return {
+      verdict: 'PENDING LIVE-DATA RUN',
+      rollingBeats: 0,
+      rollingDone: 0,
+      fullExcess: null,
+      qqqDelta: null,
+      staleVersionWindows: [],
+    };
   }
   const fullExcess = full.excessReturnPct ?? 0;
   const qqqDelta =
@@ -135,11 +165,16 @@ function deriveVerdict(audit: AuditRow | null, results: Map<string, BacktestSumm
 
   let beats = 0;
   let done = 0;
+  const staleVersionWindows: string[] = [];
   for (const w of ROLLING_WINDOWS) {
     const r = results.get(w);
-    if (r && r.status === 'done') {
+    if (!r) continue;
+    if (isDoneAtActiveVersion(r)) {
       done++;
       if ((r.excessReturnPct ?? 0) > 0) beats++;
+    } else if (r.status === 'done') {
+      // done at a non-active version — surfaced to the operator.
+      staleVersionWindows.push(w);
     }
   }
   if (done < ROLLING_WINDOWS.length) {
@@ -149,13 +184,14 @@ function deriveVerdict(audit: AuditRow | null, results: Map<string, BacktestSumm
       rollingDone: done,
       fullExcess,
       qqqDelta,
+      staleVersionWindows,
     };
   }
 
   const beatsMajority = beats >= 5;
-  if (fullExcess > 0 && beatsMajority) return { verdict: 'SHIP', rollingBeats: beats, rollingDone: done, fullExcess, qqqDelta };
-  if (fullExcess > 0 || beatsMajority) return { verdict: 'SHIP WITH CAVEATS', rollingBeats: beats, rollingDone: done, fullExcess, qqqDelta };
-  return { verdict: "DON'T SHIP", rollingBeats: beats, rollingDone: done, fullExcess, qqqDelta };
+  if (fullExcess > 0 && beatsMajority) return { verdict: 'SHIP', rollingBeats: beats, rollingDone: done, fullExcess, qqqDelta, staleVersionWindows };
+  if (fullExcess > 0 || beatsMajority) return { verdict: 'SHIP WITH CAVEATS', rollingBeats: beats, rollingDone: done, fullExcess, qqqDelta, staleVersionWindows };
+  return { verdict: "DON'T SHIP", rollingBeats: beats, rollingDone: done, fullExcess, qqqDelta, staleVersionWindows };
 }
 
 function buildMarkdown(audit: AuditRow | null, results: Map<string, BacktestSummary>): string {
@@ -171,15 +207,25 @@ function buildMarkdown(audit: AuditRow | null, results: Map<string, BacktestSumm
   if (v.verdict.startsWith('SHIP')) {
     lines.push(`Full-window excess vs SPY: ${fmt(v.fullExcess, '%')}. Rolling 1y windows that beat SPY: ${v.rollingBeats}/${v.rollingDone}. QQQ check (portfolio - QQQ): ${fmt(v.qqqDelta, ' pp')}.`);
   } else if (v.verdict === "DON'T SHIP") {
-    lines.push(`Full-window excess vs SPY: ${fmt(v.fullExcess, '%')} (negative). Rolling 1y windows beating SPY: ${v.rollingBeats}/${v.rollingDone} (<5 of 8). Rule v1 disqualified — file 4e-1-fix with v2 proposal.`);
+    lines.push(`Full-window excess vs SPY: ${fmt(v.fullExcess, '%')} (negative). Rolling 1y windows beating SPY: ${v.rollingBeats}/${v.rollingDone} (<5 of 8). Rule ${ACTIVE_VERSION} disqualified — file a fix brief with a new rule proposal.`);
   } else {
-    lines.push(`Full-window: ${results.get('full')?.status === 'done' ? 'done' : 'PENDING'}. Audit: ${audit ? 'done' : 'PENDING'}. Rolling: ${v.rollingDone}/${ROLLING_WINDOWS.length} done. Awaiting cron-driven completion.`);
+    const fullState = results.get('full');
+    const fullStatus = isDoneAtActiveVersion(fullState)
+      ? `done (${ACTIVE_VERSION})`
+      : fullState?.status === 'done'
+        ? `done (stale version ${resolveVersion(fullState)})`
+        : 'PENDING';
+    lines.push(`Full-window: ${fullStatus}. Audit: ${audit ? 'done' : 'PENDING'}. Rolling: ${v.rollingDone}/${ROLLING_WINDOWS.length} done at ${ACTIVE_VERSION}. Awaiting cron-driven completion.`);
+  }
+  if (v.staleVersionWindows.length > 0) {
+    lines.push(``);
+    lines.push(`> ⚠️ **Stale rule version detected.** ${v.staleVersionWindows.length} rolling window(s) have a \`done\` result from an older rule version and will NOT count toward the ≥5/8 binding rule until re-run under \`${ACTIVE_VERSION}\`: \`${v.staleVersionWindows.join('`, `')}\`. The cron (Phase 4r W1) will re-fire these automatically.`);
   }
   lines.push(``);
   lines.push(`**Generated:** ${new Date().toISOString()}`);
   lines.push(`**Audit generated:** ${audit?.generatedAt ?? 'never'}`);
   lines.push(`**Source:** \`/api/portfolio-verdict\` (live, computed from Firestore)`);
-  lines.push(`**Rule version:** v1`);
+  lines.push(`**Rule version:** ${ACTIVE_VERSION}`);
   lines.push(`**Costs:** 10 bps slippage per side, $0 commission, $100,000 initial capital`);
   lines.push(``);
   lines.push(`---`);

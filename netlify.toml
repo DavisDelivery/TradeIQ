@@ -201,6 +201,15 @@
   to = "/.netlify/functions/scan-status"
   status = 200
 
+# Phase 4r W1 — diagnostic surface for the portfolio backtest loop.
+# Mirrors /api/scan-status but for portfolioBacktests/{runId} docs:
+# per-window latest run, done-for-version count toward 8/8 rolling,
+# stale-pending and stale-running inventory.
+[[redirects]]
+  from = "/api/backtest-status"
+  to = "/.netlify/functions/backtest-status"
+  status = 200
+
 # Phase 4b backtest run viewer (read-only).
 # List endpoint:    GET  /api/backtest-runs?limit=20  → list
 # Detail endpoint:  GET  /api/backtest-runs/:runId    → get
