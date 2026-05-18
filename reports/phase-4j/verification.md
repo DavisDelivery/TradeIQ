@@ -8,6 +8,56 @@ custom shape on a `ComposedChart` rather than adding `lightweight-charts`)
 
 ---
 
+## Hotfix during review (PR #37 review pass)
+
+The first version of this PR appended `?apiKey=...` to the Polygon
+branding URL inside `getTickerInfo` and returned the keyed URL straight
+to the browser. The hand-off described this as "matches the existing
+Polygon-image pattern" — that claim was wrong. There is no pre-existing
+client-side Polygon-image pattern in `src/`; the original PR would have
+**introduced** the exposure. The `/v3/reference/tickers` call uses
+`?apiKey=` safely because it runs server-side inside the Netlify
+function — but the logo URL was being rendered into `<img src>`, which
+puts the key in network traffic and the DOM.
+
+The fix:
+
+1. **`netlify/functions/logo.ts` (new).** `GET /api/logo?ticker=X` (and
+   `&kind=icon`) resolves the ticker's raw Polygon branding URL via
+   `getTickerInfo`, appends `apiKey=` **server-side**, fetches the
+   image, and streams the bytes back base64-encoded with the right
+   `Content-Type` and a 24h `Cache-Control: immutable` header. 404
+   when the ticker has no branding → the client's existing
+   ticker-monogram fallback in `CompanyInfo` handles it. 502 on other
+   upstream errors.
+
+2. **`ticker-reference.ts`.** Stores the **raw** Polygon branding URLs
+   (no `?apiKey=`) in `tickerReference/{ticker}.logoUrl` /
+   `.iconUrl`. The `TickerInfo` interface now documents these fields
+   as "raw, server-side use only." `SCHEMA_V` bumped 2 → 3 so any
+   already-cached `v2` doc with a key-bearing URL is invalidated and
+   refetched lazily.
+
+3. **`ticker-info.ts`.** The HTTP handler rewrites `logoUrl` /
+   `iconUrl` from the raw Polygon URL to the proxy URL
+   (`/api/logo?ticker=X` / `&kind=icon`) before sending. The Polygon
+   API key cannot leave this function in the response body.
+
+4. **`CompanyInfo.jsx`** — no functional change; it just renders
+   `<img src={info.logoUrl}>` and the new URL is the proxy. Test mock
+   data updated to use the proxy-URL shape for documentation accuracy.
+
+5. **Tests.** Flipped two assertions that previously verified the key
+   WAS in the URL — they now assert the key MUST NOT be in any
+   client-facing URL. Added a belt-and-braces "the response body
+   never contains `apiKey` / `polygon.io`" check. Eleven new tests in
+   `logo.test.ts` exercise the proxy: cache-resolution, server-side
+   key append, base64 binary streaming, 404 on no branding, 502
+   forwarding, content-type fallback, browser cache header,
+   uppercase normalization.
+
+---
+
 ## Pre-flight (baseline before any change)
 
 ```
@@ -32,9 +82,9 @@ npx tsc --noEmit
 (clean — no output)
 
 npm test
-Test Files  84 passed (84)
-     Tests  798 passed (798)
-   Duration  17.40s
+Test Files  85 passed (85)
+     Tests  811 passed (811)
+   Duration  17.26s
 
 npm run build
 dist/index.html                   0.86 kB │ gzip:   0.46 kB
@@ -43,17 +93,18 @@ dist/assets/index-67ogdhIm.js   967.10 kB │ gzip: 264.43 kB
 ✓ built in 5.83s
 ```
 
-**Test delta: +52 (746 → 798)**, broken out below:
+**Test delta: +65 (746 → 811)**, broken out below:
 
 | Workstream | New tests | File |
 |---|---|---|
 | W1 | +9 (11 → 20) | `netlify/functions/shared/__tests__/ticker-reference.test.ts` |
-| W2 endpoint | +7 | `netlify/functions/__tests__/ticker-info.test.ts` |
+| W2 endpoint | +9 | `netlify/functions/__tests__/ticker-info.test.ts` |
 | W2 guardrail | +3 | `netlify/functions/__tests__/snapshot-pick-no-description.test.ts` |
 | W3 endpoint | +16 | `netlify/functions/__tests__/price-history.test.ts` |
 | W4 CompanyInfo | +9 | `src/__tests__/CompanyInfo.test.jsx` |
 | W4 PriceChart | +8 | `src/__tests__/PriceChart.test.jsx` |
-| **Total** | **+52** | |
+| Hotfix logo proxy | +11 | `netlify/functions/__tests__/logo.test.ts` |
+| **Total** | **+65** | |
 
 Existing 746 tests all still pass — no regressions.
 
@@ -197,7 +248,10 @@ against production:
 - **No volume strip beneath the price.** The brief flagged volume as
   optional ("optional thin volume strip"); skipped for scope to keep the
   candlestick implementation tight. Easy follow-up if Chad wants it.
-- **Logo URLs carry the Polygon API key.** Documented as acceptable in
-  the brief — matches the existing Polygon-image pattern. A future
+- **Logo URLs carry the Polygon API key.** ~~Documented as acceptable
+  in the brief — matches the existing Polygon-image pattern. A future
   proxy through a Netlify function would remove the key from the page
-  source if that ever becomes a concern.
+  source if that ever becomes a concern.~~ **Resolved in the hotfix
+  above.** The `/api/logo` Netlify function now proxies branding
+  images; the API key is appended server-side and never reaches the
+  client. The cached Firestore docs carry raw URLs only.

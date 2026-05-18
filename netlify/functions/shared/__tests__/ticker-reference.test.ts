@@ -226,9 +226,17 @@ describe('getTickerInfo', () => {
     expect(setCalls).toHaveLength(1);
     expect(setCalls[0].payload.schemaV).toBe(_internals.SCHEMA_V);
     expect(setCalls[0].payload.description).toBeTypeOf('string');
-    // Polygon key is appended to logo URL so the browser can load it
-    // without a 401 from Polygon's branding endpoint.
-    expect(setCalls[0].payload.logoUrl).toContain('apiKey=');
+    // SECURITY: the cached logoUrl MUST be the raw Polygon URL with
+    // no apiKey. The key is appended server-side by /api/logo at
+    // fetch time, never written into the cache or returned to clients.
+    expect(setCalls[0].payload.logoUrl).toBe('https://api.polygon.io/branding/apple-logo.svg');
+    expect(setCalls[0].payload.logoUrl).not.toContain('apiKey');
+    expect(setCalls[0].payload.iconUrl).toBe('https://api.polygon.io/branding/apple-icon.png');
+    expect(setCalls[0].payload.iconUrl).not.toContain('apiKey');
+    // The TickerInfo returned to the backend caller also carries the
+    // raw URL - it's the HTTP handler's job to translate to a proxy URL.
+    expect(info!.logoUrl).toBe('https://api.polygon.io/branding/apple-logo.svg');
+    expect(info!.logoUrl).not.toContain('apiKey');
   });
 
   it('treats a 4h-era doc (no schemaV, no description) as a miss → refetches', async () => {

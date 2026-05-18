@@ -32,8 +32,13 @@ const POLYGON_CONCURRENCY = 6;
 
 // Bump this whenever the cached shape changes. A doc with a smaller (or
 // missing) schemaV is treated as a cache miss and re-fetched. 4h shipped
-// the implicit schema v1 ({name, fetchedAt}); 4j is v2 (full info).
-const SCHEMA_V = 2;
+// the implicit schema v1 ({name, fetchedAt}); 4j v2 added the full info
+// but cached a logo URL with the Polygon API key appended — a security
+// bug, since the URL was returned to the browser. v3 stores RAW Polygon
+// branding URLs (no apiKey); the key is appended server-side in the
+// /api/logo proxy. Bumping invalidates any v2 docs that already exist
+// in a dev/test Firestore.
+const SCHEMA_V = 3;
 
 export interface TickerReferenceDoc {
   name: string;
@@ -54,7 +59,14 @@ export interface TickerInfo {
   name: string;
   description: string | null;
   homepageUrl: string | null;
+  /** RAW Polygon branding URL (no apiKey appended). Server-side use
+   *  only — never return directly to the browser. The /api/logo proxy
+   *  reads this and fetches the image with the key server-side; the
+   *  /api/ticker-info HTTP handler rewrites it to a proxy URL before
+   *  sending to the client. */
   logoUrl: string | null;
+  /** RAW Polygon branding URL (no apiKey appended). Same contract as
+   *  logoUrl. */
   iconUrl: string | null;
   employees: number | null;
   marketCap: number | null;
@@ -354,17 +366,13 @@ async function fetchInfoFromPolygon(ticker: string): Promise<PolygonInfo | null>
     const r = data?.results;
     if (!r || typeof r.name !== 'string' || r.name.length === 0) return null;
 
-    // Polygon's branding URLs require the API key appended for image
-    // fetches — they return 401 without it. The CompanyInfo logo loads
-    // these URLs directly from the browser, so we attach the key here.
-    // This matches the existing Polygon-image pattern; the deploy's
-    // POLYGON_API_KEY is read-scoped.
-    const logoUrl = r.branding?.logo_url
-      ? `${r.branding.logo_url}?apiKey=${key}`
-      : undefined;
-    const iconUrl = r.branding?.icon_url
-      ? `${r.branding.icon_url}?apiKey=${key}`
-      : undefined;
+    // Store the RAW Polygon branding URLs (no apiKey). The browser
+    // never sees these directly — /api/logo is a server-side proxy
+    // that appends the API key at fetch time and streams the bytes
+    // back. Putting the key in a client-rendered <img src> would leak
+    // it into network traffic and the DOM.
+    const logoUrl = r.branding?.logo_url ?? undefined;
+    const iconUrl = r.branding?.icon_url ?? undefined;
 
     return {
       name: r.name,

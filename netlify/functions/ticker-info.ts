@@ -36,8 +36,17 @@ export const handler: Handler = async (event) => {
       log.info('response', { status: 404, ticker, durationMs: Date.now() - start });
       return json(404, { ok: false, ticker, error: 'ticker not found' });
     }
+    // SECURITY: rewrite raw Polygon branding URLs (which would require
+    // ?apiKey= to load) into proxy URLs that hit /api/logo - which
+    // appends the key server-side. The raw URL and the Polygon API
+    // key must NEVER leave this function in the response body.
+    const safe = {
+      ...info,
+      logoUrl: info.logoUrl ? `/api/logo?ticker=${encodeURIComponent(ticker)}` : null,
+      iconUrl: info.iconUrl ? `/api/logo?ticker=${encodeURIComponent(ticker)}&kind=icon` : null,
+    };
     log.info('response', { status: 200, ticker, durationMs: Date.now() - start });
-    return json(200, { ok: true, ...info });
+    return json(200, { ok: true, ...safe });
   } catch (err: any) {
     log.error('failed', { ticker, error: err, durationMs: Date.now() - start });
     return json(500, { ok: false, ticker, error: String(err?.message ?? err) });

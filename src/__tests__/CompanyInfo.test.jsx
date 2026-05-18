@@ -37,7 +37,10 @@ describe('CompanyInfo', () => {
       name: 'Apple Inc.',
       description: 'Apple designs and sells consumer electronics.',
       homepageUrl: 'https://www.apple.com',
-      logoUrl: 'https://api.polygon.io/logo.svg?apiKey=k',
+      // /api/ticker-info returns a proxy URL, never the raw Polygon
+      // URL or the apiKey - the proxy /api/logo appends the key
+      // server-side. The component just renders <img src={url}>.
+      logoUrl: '/api/logo?ticker=AAPL',
       employees: 164000,
       marketCap: 3000000000000,
       listDate: '1980-12-12',

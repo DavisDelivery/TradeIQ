@@ -65,13 +65,16 @@ describe('GET /api/ticker-info', () => {
   });
 
   it('returns the full info on a successful lookup', async () => {
+    // getTickerInfo (backend) returns the RAW Polygon branding URL.
+    // The HTTP handler must rewrite it to /api/logo before sending
+    // to the client.
     getTickerInfoMock.mockResolvedValue({
       ticker: 'AAPL',
       name: 'Apple Inc.',
       description: 'Apple designs and sells consumer electronics.',
       homepageUrl: 'https://www.apple.com',
-      logoUrl: 'https://api.polygon.io/logo.svg?apiKey=k',
-      iconUrl: null,
+      logoUrl: 'https://api.polygon.io/branding/aapl-logo.svg',
+      iconUrl: 'https://api.polygon.io/branding/aapl-icon.png',
       employees: 164000,
       marketCap: 3000000000000,
       listDate: '1980-12-12',
@@ -88,7 +91,57 @@ describe('GET /api/ticker-info', () => {
     expect(body.marketCap).toBe(3000000000000);
     expect(body.listDate).toBe('1980-12-12');
     expect(body.industry).toBe('ELECTRONIC COMPUTERS');
-    expect(body.logoUrl).toContain('apiKey=');
+    // SECURITY: the client-facing logoUrl MUST be a proxy URL, not
+    // the raw Polygon URL, and MUST NOT contain the API key.
+    expect(body.logoUrl).toBe('/api/logo?ticker=AAPL');
+    expect(body.logoUrl).not.toContain('apiKey');
+    expect(body.logoUrl).not.toContain('polygon');
+    expect(body.iconUrl).toBe('/api/logo?ticker=AAPL&kind=icon');
+    expect(body.iconUrl).not.toContain('apiKey');
+  });
+
+  it('returns null logoUrl/iconUrl when the ticker has no branding', async () => {
+    getTickerInfoMock.mockResolvedValue({
+      ticker: 'OBSC',
+      name: 'Obscure Co',
+      description: null,
+      homepageUrl: null,
+      logoUrl: null,
+      iconUrl: null,
+      employees: null,
+      marketCap: null,
+      listDate: null,
+      industry: null,
+    });
+    const res = await handler(evt({ ticker: 'OBSC' }), {} as any, () => {});
+    expect((res as any).statusCode).toBe(200);
+    const body = JSON.parse((res as any).body);
+    // No raw URL → no proxy URL. The client's monogram fallback handles it.
+    expect(body.logoUrl).toBeNull();
+    expect(body.iconUrl).toBeNull();
+  });
+
+  it('never returns a Polygon URL or any apiKey-bearing string in the response body', async () => {
+    // Belt-and-braces: even if getTickerInfo ever returns a string that
+    // contains apiKey (it shouldn't, post-schemaV bump), the HTTP layer
+    // overwrites the logo/icon URLs so no key can leak.
+    getTickerInfoMock.mockResolvedValue({
+      ticker: 'AAPL',
+      name: 'Apple',
+      description: 'A',
+      homepageUrl: null,
+      logoUrl: 'https://api.polygon.io/branding/legacy.svg?apiKey=LEAKED',
+      iconUrl: 'https://api.polygon.io/branding/legacy-icon.png?apiKey=LEAKED',
+      employees: null,
+      marketCap: null,
+      listDate: null,
+      industry: null,
+    });
+    const res = await handler(evt({ ticker: 'AAPL' }), {} as any, () => {});
+    const body = (res as any).body as string;
+    expect(body).not.toContain('apiKey');
+    expect(body).not.toContain('LEAKED');
+    expect(body).not.toContain('polygon.io');
   });
 
   it('returns 404 when the ticker cannot be resolved at all', async () => {

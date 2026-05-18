@@ -14,10 +14,11 @@ See **`briefs/phase-4j-brief.md`** for full rationale + architecture and
   full company info (description, homepage, logo, employees, market cap,
   list date, industry) from the Polygon call it was already making. New
   `getTickerInfo()`; `getTickerName()` keeps its 4h contract. Bumps
-  `schemaV` to 2 with a **lazy cache-migration guard** so 4h's
+  `schemaV` to 3 with a **lazy cache-migration guard** so 4h's
   `{name,fetchedAt}`-only docs are treated as a miss by `getTickerInfo`
   and refetched on first detail-panel open — not all at once during a
-  scan.
+  scan. Cached branding URLs are stored raw (no `apiKey=`) — the proxy
+  appends the key server-side.
 
 - **W2** — `GET /api/ticker-info?ticker=X` on-demand endpoint serving
   the full company info. **Architectural guardrail (the rule that
@@ -44,13 +45,21 @@ See **`briefs/phase-4j-brief.md`** for full rationale + architecture and
   added. Both components stack on phone, expand on `sm:` / `md:` so the
   detail panel uses the wider desktop viewport per Chad's direction.
 
+- **Hotfix (review pass)** — new `netlify/functions/logo.ts` proxies
+  Polygon branding images so the API key never reaches the browser.
+  `/api/ticker-info` now returns `/api/logo?ticker=X` URLs instead of
+  raw Polygon URLs; the proxy appends the key server-side and streams
+  the image bytes back. `schemaV` bumped 2 → 3 so any v2 docs with
+  key-bearing URLs are invalidated. See the hotfix section in
+  `reports/phase-4j/verification.md` for the full rationale.
+
 APP_VERSION 0.18.5-alpha → 0.18.6-alpha. MODEL_VERSION unchanged.
 
 ## Verification
 
 ```
 npx tsc --noEmit       # clean
-npm test               # 798 passing (was 746, +52)
+npm test               # 811 passing (was 746, +65)
 npm run build          # clean (one chunk-size advisory, pre-existing)
 ```
 
@@ -59,11 +68,12 @@ Test delta breakdown:
 | Workstream | + tests | File |
 |---|---|---|
 | W1 | +9 | `netlify/functions/shared/__tests__/ticker-reference.test.ts` |
-| W2 endpoint | +7 | `netlify/functions/__tests__/ticker-info.test.ts` |
+| W2 endpoint | +9 | `netlify/functions/__tests__/ticker-info.test.ts` |
 | W2 guardrail | +3 | `netlify/functions/__tests__/snapshot-pick-no-description.test.ts` |
 | W3 endpoint | +16 | `netlify/functions/__tests__/price-history.test.ts` |
 | W4 CompanyInfo | +9 | `src/__tests__/CompanyInfo.test.jsx` |
 | W4 PriceChart | +8 | `src/__tests__/PriceChart.test.jsx` |
+| Hotfix logo proxy | +11 | `netlify/functions/__tests__/logo.test.ts` |
 
 ## Live acceptance (post-merge, by the orchestrator)
 
@@ -86,5 +96,7 @@ confirm:
 - No volume strip below the price chart — flagged as optional in the
   brief; skipped to keep the candlestick implementation tight. Easy
   follow-up if Chad wants it.
-- Polygon logo URLs carry the API key in the URL, matching the existing
-  Polygon-image pattern; acceptable per the brief.
+- ~~Polygon logo URLs carry the API key in the URL~~ — **resolved in
+  the review hotfix.** The key is now appended only on the server-side
+  fetch inside `/api/logo`; cache stores raw URLs; client receives
+  proxy URLs.
