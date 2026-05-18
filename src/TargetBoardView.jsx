@@ -1,6 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import {
   AlertTriangle, Circle, CircleX, CircleCheck, Eye, ExternalLink, Filter,
+  ArrowUpRight, ArrowDownRight,
 } from 'lucide-react';
 import {
   RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, Radar, ResponsiveContainer,
@@ -13,7 +14,9 @@ import { LogButton } from './components/LogButton.jsx';
 import { AnalystContributions } from './components/AnalystContributions.jsx';
 import { CompanyInfo } from './components/CompanyInfo.jsx';
 import { PriceChart } from './components/PriceChart.jsx';
+import { useSortable, SortableTh } from './lib/useSortable.jsx';
 import { useTargetBoard } from './hooks/useTargetBoard.js';
+import { useBreakpoint } from './hooks/useBreakpoint.js';
 import { MasterDetail } from './layout/MasterDetail.jsx';
 
 // ---------------------------------------------------------------------------
@@ -113,11 +116,108 @@ const TargetCard = ({ target, onOpen }) => {
 };
 
 // ---------------------------------------------------------------------------
-// TargetBoardView — the grid + filters surface (presentational)
+// Phase 4k W3 — TargetTable
+//
+// Desktop-density table view of the same target rows that the mobile
+// card grid shows. Activates at >=1280px (TargetBoardView branches on
+// isDesktop below). Every column is sortable via the standard
+// useSortable + SortableTh pattern. Mobile rendering is unchanged.
 // ---------------------------------------------------------------------------
-export const TargetBoardView = ({ targets, onOpenTarget, scanMeta, freshnessPill }) => {
+const TargetTable = ({ targets, onOpenTarget, selectedTicker }) => {
+  const { sortKey, sortDir, sortBy, sortRows } = useSortable('composite', 'desc');
+  const rows = useMemo(() => sortRows(targets), [targets, sortRows]);
+  return (
+    <div className="border border-neutral-800/80 overflow-x-auto">
+      <table className="w-full text-[12px] font-mono">
+        <thead className="bg-neutral-900/40 text-[10px] uppercase tracking-widest text-neutral-500">
+          <tr>
+            <SortableTh sortKey={sortKey} sortDir={sortDir} sortBy={sortBy} field="ticker" align="left">Ticker</SortableTh>
+            <SortableTh sortKey={sortKey} sortDir={sortDir} sortBy={sortBy} field="companyName" align="left">Company</SortableTh>
+            <SortableTh sortKey={sortKey} sortDir={sortDir} sortBy={sortBy} field="sector" align="left">Sector</SortableTh>
+            <SortableTh sortKey={sortKey} sortDir={sortDir} sortBy={sortBy} field="tier" align="left">Tier</SortableTh>
+            <SortableTh sortKey={sortKey} sortDir={sortDir} sortBy={sortBy} field="direction" align="left">Side</SortableTh>
+            <SortableTh sortKey={sortKey} sortDir={sortDir} sortBy={sortBy} field="composite" align="right">Composite</SortableTh>
+            <SortableTh sortKey={sortKey} sortDir={sortDir} sortBy={sortBy} field="price" align="right">Price</SortableTh>
+            <SortableTh sortKey={sortKey} sortDir={sortDir} sortBy={sortBy} field="priceChangePct" align="right">Chg %</SortableTh>
+            <SortableTh sortKey={sortKey} sortDir={sortDir} sortBy={sortBy} field="conflictLevel" align="left">Conflict</SortableTh>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((t) => {
+            const isSelected = selectedTicker === t.ticker;
+            const up = (t.priceChangePct ?? 0) >= 0;
+            const Arrow = up ? ArrowUpRight : ArrowDownRight;
+            return (
+              <tr
+                key={t.ticker}
+                onClick={() => onOpenTarget(t)}
+                className={`border-t border-neutral-800/60 cursor-pointer transition-colors ${
+                  isSelected ? 'bg-emerald-500/[0.07]' : 'hover:bg-neutral-900/30'
+                }`}
+              >
+                <td className="px-3 py-1.5 font-serif text-neutral-100 font-bold text-[13px] relative">
+                  {isSelected && <span className="absolute left-0 top-0 bottom-0 w-[2px] bg-emerald-400" />}
+                  {t.ticker}
+                </td>
+                <td className="px-3 py-1.5 text-neutral-200 max-w-[220px] truncate" title={t.companyName ?? ''}>
+                  {t.companyName && t.companyName !== t.ticker ? t.companyName : <span className="text-neutral-600">—</span>}
+                </td>
+                <td className="px-3 py-1.5 text-neutral-400 text-[11px] uppercase tracking-widest max-w-[140px] truncate">
+                  {t.sector ?? <span className="text-neutral-700">—</span>}
+                </td>
+                <td className="px-3 py-1.5">
+                  <span
+                    className="inline-flex items-center px-1.5 py-0.5 border text-[10px] font-bold tracking-wider"
+                    style={{ color: tierColor(t.tier), borderColor: `${tierColor(t.tier)}55` }}
+                  >
+                    {t.tier}
+                  </span>
+                </td>
+                <td className="px-3 py-1.5">
+                  <DirectionPill direction={t.direction} />
+                </td>
+                <td className="px-3 py-1.5 text-right tabular-nums font-semibold" style={{ color: tierColor(t.tier) }}>
+                  {t.composite}
+                </td>
+                <td className="px-3 py-1.5 text-right tabular-nums text-neutral-200">{fmt.moneyDec(t.price)}</td>
+                <td className={`px-3 py-1.5 text-right tabular-nums ${up ? 'text-emerald-400' : 'text-rose-400'}`}>
+                  <span className="inline-flex items-center gap-0.5 justify-end">
+                    <Arrow className="h-3 w-3" />
+                    {fmt.pct(t.priceChangePct)}
+                  </span>
+                </td>
+                <td className="px-3 py-1.5 text-[11px]">
+                  {t.conflictLevel && t.conflictLevel !== 'none' ? (
+                    <span className="inline-flex items-center gap-1 text-amber-400/80 uppercase tracking-wider">
+                      <AlertTriangle className="h-3 w-3" />
+                      {t.conflictLevel}
+                    </span>
+                  ) : (
+                    <span className="text-neutral-700">—</span>
+                  )}
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+      {rows.length === 0 && (
+        <div className="p-10 text-center text-neutral-500 text-sm">No targets match filters</div>
+      )}
+    </div>
+  );
+};
+
+// ---------------------------------------------------------------------------
+// TargetBoardView — the grid + filters surface (presentational).
+// Mobile: 1-/2-/3-column card grid (unchanged from pre-4k). Desktop
+// (>=1280px): dense sortable table (Phase 4k W3) that uses the
+// horizontal space the docked-detail layout leaves for the board pane.
+// ---------------------------------------------------------------------------
+export const TargetBoardView = ({ targets, onOpenTarget, scanMeta, freshnessPill, selectedTicker }) => {
   const [filterTier, setFilterTier] = useState('all');
   const [filterDirection, setFilterDirection] = useState('all');
+  const { isDesktop } = useBreakpoint();
 
   const filtered = useMemo(() => {
     return targets
@@ -135,7 +235,7 @@ export const TargetBoardView = ({ targets, onOpenTarget, scanMeta, freshnessPill
   }), [targets]);
 
   return (
-    <div className="px-3 py-4 sm:p-6 max-w-[1600px] mx-auto">
+    <div className={isDesktop ? 'px-6 py-5' : 'px-3 py-4 sm:p-6 max-w-[1600px] mx-auto'}>
       <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-4 mb-5 sm:mb-6">
         <div>
           <div className="flex items-center gap-3 mb-2">
@@ -213,17 +313,27 @@ export const TargetBoardView = ({ targets, onOpenTarget, scanMeta, freshnessPill
         </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-        {filtered.map(t => (
-          <TargetCard key={t.ticker} target={t} onOpen={onOpenTarget} />
-        ))}
-      </div>
+      {isDesktop ? (
+        <TargetTable
+          targets={filtered}
+          onOpenTarget={onOpenTarget}
+          selectedTicker={selectedTicker}
+        />
+      ) : (
+        <>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+            {filtered.map(t => (
+              <TargetCard key={t.ticker} target={t} onOpen={onOpenTarget} />
+            ))}
+          </div>
 
-      {filtered.length === 0 && (
-        <div className="border border-neutral-800 p-16 text-center">
-          <Filter className="h-6 w-6 mx-auto text-neutral-600 mb-3" />
-          <div className="text-neutral-400">No targets match filters</div>
-        </div>
+          {filtered.length === 0 && (
+            <div className="border border-neutral-800 p-16 text-center">
+              <Filter className="h-6 w-6 mx-auto text-neutral-600 mb-3" />
+              <div className="text-neutral-400">No targets match filters</div>
+            </div>
+          )}
+        </>
       )}
     </div>
   );
@@ -243,6 +353,7 @@ export const TargetBoardView = ({ targets, onOpenTarget, scanMeta, freshnessPill
 export const LiveTargetBoard = ({ universe = 'all' }) => {
   const { data, error, isLoading: loading, isFetching, forceRescan } = useTargetBoard(universe);
   const isRescanning = isFetching && !loading;
+  const { isDesktop } = useBreakpoint();
   const [selectedTarget, setSelectedTarget] = useState(null);
 
   if (loading && !data) {
@@ -290,6 +401,7 @@ export const LiveTargetBoard = ({ universe = 'all' }) => {
         targets={targets}
         onOpenTarget={setSelectedTarget}
         scanMeta={data}
+        selectedTicker={selectedTarget?.ticker}
         freshnessPill={
           <FreshnessPill
             meta={data}
@@ -299,7 +411,7 @@ export const LiveTargetBoard = ({ universe = 'all' }) => {
         }
       />
       {data && (
-        <div className="max-w-[1400px] mx-auto px-4 sm:px-6 pb-6 text-[10px] font-mono text-neutral-600 flex items-center gap-3 flex-wrap">
+        <div className={`${isDesktop ? 'px-6' : 'max-w-[1400px] mx-auto px-4 sm:px-6'} pb-6 text-[10px] font-mono text-neutral-600 flex items-center gap-3 flex-wrap`}>
           <span>Source: <span className="text-neutral-400">{data.source}</span></span>
           <span>·</span>
           <span>Generated: <span className="text-neutral-400">{safeTimestamp(data.generatedAt)}</span></span>
