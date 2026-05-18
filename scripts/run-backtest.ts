@@ -32,6 +32,7 @@ interface CliArgs {
   board?: BacktestBoard;
   capital?: number;
   noPersist?: boolean;
+  discreteSignalOnly?: boolean;
 }
 
 function parseArgs(argv: string[]): CliArgs {
@@ -75,6 +76,9 @@ function parseArgs(argv: string[]): CliArgs {
       case '--no-persist':
         out.noPersist = true;
         break;
+      case '--discrete-signal-only':
+        out.discreteSignalOnly = true;
+        break;
       case '--help':
       case '-h':
         printHelpAndExit();
@@ -101,6 +105,7 @@ Options:
   --board <name>            prophet (V1) | target | catalyst | insider | williams | lynch
   --capital <USD>           initial capital (default 100000)
   --no-persist              do not write run to Firestore (dry run)
+  --discrete-signal-only    williams/lynch: only BUY-verdict candidates score
 
 Examples:
   npx tsx scripts/run-backtest.ts --config configs/dow-2018-2024-monthly-top20.json
@@ -134,6 +139,7 @@ function loadConfig(args: CliArgs): BacktestConfig {
     costs: base.costs ?? DEFAULT_COSTS,
     initialCapital: args.capital ?? base.initialCapital ?? 100_000,
     scoringConcurrency: base.scoringConcurrency ?? 5,
+    discreteSignalOnly: args.discreteSignalOnly ?? base.discreteSignalOnly,
   };
   if (args.topN !== undefined) {
     merged.portfolio = { ...merged.portfolio, topN: args.topN };
@@ -153,6 +159,9 @@ async function main(): Promise<void> {
   console.log(`Board:        ${config.board}`);
   console.log(`Top-N:        ${config.portfolio.topN}`);
   console.log(`Capital:      $${config.initialCapital.toLocaleString()}`);
+  if (config.discreteSignalOnly) {
+    console.log(`Filter:       discrete-signal-only (BUY only)`);
+  }
   console.log('');
 
   const startMs = Date.now();

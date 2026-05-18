@@ -1,0 +1,23 @@
+{
+  "_comment_": "Phase 4n Lynch backtest config. Quarterly rebalance matches Lynch's 6-24 month investment horizon (one decision per filing cycle). S&P 500 universe (cleanest PIT fundamentals — large caps have the most reliable Polygon filing-date coverage). discreteSignalOnly: true so only BUY-verdict GARP candidates form the portfolio.",
+  "universe": "sp500",
+  "startDate": "2018-01-31",
+  "endDate": "2024-12-31",
+  "rebalanceFrequency": "quarterly",
+  "board": "lynch",
+  "portfolio": {
+    "topN": 20,
+    "weighting": "equal",
+    "maxPositionPct": 0.08,
+    "maxSectorPct": 0.40,
+    "cashSleeve": 0.05,
+    "minComposite": 30
+  },
+  "costs": {
+    "slippageBps": { "sp500": 5 },
+    "commission": 0
+  },
+  "initialCapital": 100000,
+  "scoringConcurrency": 5,
+  "discreteSignalOnly": true
+}

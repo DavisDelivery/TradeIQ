@@ -46,6 +46,15 @@ export interface BacktestConfig {
   // Optional override for "now" — used only by integrity tests. Engine
   // never reads system clock for asOfDate decisions.
   clockOverride?: string;
+  /**
+   * For boards with a discrete signal (Phase 4n: williams, lynch), when
+   * true the PIT scoring path returns null for candidates whose verdict
+   * is not BUY. Makes the engine validate the discrete signal itself —
+   * "BUY portfolio vs SPY" — rather than a score-ranked basket.
+   *
+   * Has no effect on the prophet board (no discrete verdict).
+   */
+  discreteSignalOnly?: boolean;
 }
 
 // --- per-rebalance / per-trade records ------------------------------------

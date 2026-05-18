@@ -21,6 +21,7 @@ import { SECTOR_ETFS, SPY } from '../universe';
 import {
   getDailyBars,
   getFundamentals,
+  getEarningsHistory,
   type Bar,
 } from '../data-provider';
 import { getEarningsIntel } from '../earnings-intel';
@@ -50,6 +51,16 @@ import { computeRegime } from '../regime';
 import { pitCacheWrap, type PitCacheKey } from '../pit-cache';
 import { addDays } from './trading-calendar';
 import { getPoliticalActivityForBacktest } from './stock-act-shift';
+import { runWilliams } from '../../styles/williams';
+import {
+  deriveWilliamsSignal,
+  type WilliamsSignal,
+} from '../../styles/williams-signal';
+import { runLynch } from '../../styles/lynch';
+import {
+  deriveLynchSignalFromAnalyst,
+  type LynchSignal,
+} from '../../styles/lynch-signal';
 import type { BacktestBoard, ScoredCandidate } from './types';
 
 /**
@@ -267,20 +278,210 @@ async function scoreProphetAtDate(
   };
 }
 
+// ---------------------------------------------------------------------------
+// Williams PIT scoring (Phase 4n, W4)
+// ---------------------------------------------------------------------------
+//
+// Williams' inputs are price bars only — Williams %R, volatility breakout,
+// closing-strength proxy, EMA trend gate. Daily bars are PIT-clean by
+// nature (they don't get restated after publication), so a Williams score
+// at date D is honest as long as we feed bars ≤ D into runWilliams. The
+// `addDays(asOfDate, -CONTEXT_WINDOW_DAYS)` window plus the asOfDate `to`
+// is exactly that — no future bars are visible.
+//
+// The discrete trade signal (BUY/SELL/HOLD + ATR-based levels) is derived
+// from the same (score, bars) pair. We carry both the continuous score
+// (as the engine's composite) and the discrete verdict (in metadata) so
+// downstream consumers — including the backtest harness in W5 — can
+// rank by composite OR filter to BUY-verdict candidates as they choose.
+
+const WILLIAMS_MIN_BARS = 30;
+
+async function scoreWilliamsAtDate(
+  ticker: string,
+  asOfDate: string,
+  opts: { discreteSignalOnly?: boolean } = {},
+): Promise<ScoredCandidate | null> {
+  const entry = UNIVERSE.find((u) => u.ticker === ticker);
+  if (!entry) return null;
+
+  const to = asOfDate;
+  // 180 calendar-day lookback gives ~125 trading bars — comfortably above
+  // the 30-bar minimum runWilliams requires.
+  const from = addDays(asOfDate, -180);
+
+  const barsKey: PitCacheKey = {
+    provider: 'polygon',
+    dataClass: 'bars',
+    ticker,
+    asOfDate,
+    extra: `from=${from}:williams`,
+  };
+  const bars = await pitCacheWrap(barsKey, () => getDailyBars(ticker, from, to));
+  if (!bars || bars.length < WILLIAMS_MIN_BARS) return null;
+
+  const analyst = runWilliams({ ticker, bars });
+  const signal: WilliamsSignal = deriveWilliamsSignal(
+    { score: analyst.score, signals: analyst.signals },
+    bars,
+  );
+
+  if (opts.discreteSignalOnly && signal.verdict !== 'BUY') return null;
+
+  const latestBar = bars[bars.length - 1];
+  return {
+    ticker,
+    composite: analyst.score,
+    layers: { williamsScore: analyst.score },
+    sector: entry.sector,
+    metadata: {
+      price: latestBar.c,
+      direction: analyst.score >= 0 ? 'long' : 'short',
+      conviction: analyst.confidence,
+      // The discrete signal — backtest harnesses filter on this for the
+      // 4n "BUY-only portfolio" validation.
+      verdict: signal.verdict,
+      entry: signal.entry,
+      stop: signal.stop,
+      target: signal.target,
+      atr: signal.atr,
+      rationale: analyst.rationale,
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Lynch PIT scoring (Phase 4n, W4)
+// ---------------------------------------------------------------------------
+//
+// Lynch's inputs are fundamentals (PEG, EPS growth, revenue growth, debt,
+// earnings consistency) plus a current price for the fair-value band.
+// Fundamentals are the hard case: they get RESTATED. The look-ahead-bias
+// hazard the brief (PART V) warns about is real.
+//
+// PIT integrity story for the Lynch scoring path:
+//   - Filing-date filter: `getFundamentals(ticker, { asOfDate })` and
+//     `getEarningsHistory(ticker, 4, { asOfDate })` both server- AND
+//     in-memory filter on `filing_date <= asOfDate` (or `period <=
+//     asOfDate` for earnings). The agent at date D cannot see filings
+//     made AFTER D — that part is correct.
+//   - Restatement risk: Polygon's `/vX/reference/financials` silently
+//     incorporates later restatements into earlier filings. If a company
+//     restated 2021 revenue downward in 2023, scoring a 2021 date today
+//     uses the restated 2021 numbers, not what was publicly available
+//     on 2021. This is documented in `docs/POINT_IN_TIME_AUDIT.md` and
+//     is residual look-ahead risk we CANNOT eliminate without snapshot
+//     storage of fundamentals at scan time (Phase 1 extension, out of
+//     scope here).
+//   - Price (current close at asOfDate): PIT-clean by construction.
+//   - Earnings beats/positive-quarter counts: PIT-correct only as far
+//     as the report PERIOD filter goes; the EPS-actual values inside
+//     those rows can also be restated (less common than financials).
+//
+// 4n's report MUST surface this caveat. The PIT path here is wired
+// correctly; the residual restatement risk lives in the data provider.
+
+const LYNCH_MIN_BARS = 30; // we need a recent price for the fair-value band
+
+async function scoreLynchAtDate(
+  ticker: string,
+  asOfDate: string,
+  opts: { discreteSignalOnly?: boolean } = {},
+): Promise<ScoredCandidate | null> {
+  const entry = UNIVERSE.find((u) => u.ticker === ticker);
+  if (!entry) return null;
+
+  const to = asOfDate;
+  const from = addDays(asOfDate, -90);
+
+  // Bars (for the latest close — fair-value band needs a price)
+  const barsKey: PitCacheKey = {
+    provider: 'polygon',
+    dataClass: 'bars',
+    ticker,
+    asOfDate,
+    extra: `from=${from}:lynch`,
+  };
+  const bars = await pitCacheWrap(barsKey, () => getDailyBars(ticker, from, to));
+  if (!bars || bars.length < LYNCH_MIN_BARS) return null;
+  const latestBar = bars[bars.length - 1];
+
+  const [fund, earnings] = await Promise.all([
+    pitCacheWrap<unknown>(
+      { provider: 'polygon', dataClass: 'fundamentals', ticker, asOfDate, extra: 'lynch' },
+      () => getFundamentals(ticker, { asOfDate }).catch(() => null),
+    ).then((v) => v as Awaited<ReturnType<typeof getFundamentals>> | null),
+    pitCacheWrap<unknown>(
+      { provider: 'finnhub', dataClass: 'earnings_history', ticker, asOfDate, extra: 'lb=4:lynch' },
+      () => getEarningsHistory(ticker, 4, { asOfDate }).catch(() => [] as Awaited<ReturnType<typeof getEarningsHistory>>),
+    ).then((v) => v as Awaited<ReturnType<typeof getEarningsHistory>>),
+  ]);
+
+  // If we have neither fundamentals nor earnings, there's nothing to score on.
+  if (!fund && (!earnings || earnings.length === 0)) return null;
+
+  const peRatio =
+    fund?.ttmEps && fund.ttmEps !== 0 ? latestBar.c / fund.ttmEps : undefined;
+
+  const analyst = runLynch({
+    ticker,
+    peRatio,
+    epsGrowthYoY: fund?.epsGrowthYoY,
+    revenueGrowthYoY: fund?.revenueGrowthYoY,
+    debtToEquity: fund?.debtToEquity,
+    operatingMargin: fund?.operatingMargin,
+    earningsHistory: earnings,
+    marketCapUsd: undefined,
+    recentReturnPct: undefined,
+    sector: entry.sector,
+  });
+
+  const signal: LynchSignal = deriveLynchSignalFromAnalyst(
+    { score: analyst.score, signals: analyst.signals },
+    { currentPrice: latestBar.c, ttmEps: fund?.ttmEps },
+  );
+
+  if (opts.discreteSignalOnly && signal.verdict !== 'BUY') return null;
+
+  return {
+    ticker,
+    composite: analyst.score,
+    layers: { lynchScore: analyst.score },
+    sector: entry.sector,
+    metadata: {
+      price: latestBar.c,
+      direction: analyst.score >= 0 ? 'long' : 'short',
+      conviction: analyst.confidence,
+      verdict: signal.verdict,
+      fairValueLow: signal.fairValueLow,
+      fairValueHigh: signal.fairValueHigh,
+      peg: signal.peg,
+      rationale: analyst.rationale,
+      // Surfaced for the 4n report — a flag set when the data layer
+      // could not provide PIT-correct fundamentals for this date.
+      pitCaveat: 'restatement-risk: Polygon may serve restated fundamentals',
+    },
+  };
+}
+
 /**
- * Public entry point. Dispatches to per-board scoring. Currently V1
- * supports the prophet board — the brief makes prophet the workhorse;
- * other boards return null with a warning until a per-board scoring
- * function is added.
+ * Public entry point. Dispatches to per-board scoring.
+ *
+ * As of Phase 4n: prophet, williams, and lynch boards have PIT scoring
+ * paths. Catalyst, insider, and target remain stubs returning null.
  *
  * The market context is shared across one rebalance — callers should
  * pre-build it once via buildMarketContextAtDate and pass it here.
+ * Williams and Lynch don't currently use `ctx` (no sector-relative or
+ * macro inputs); we still accept it for signature uniformity with the
+ * engine, and for forward compatibility if those layers are added.
  */
 export async function scoreTickerAtDate(
   ticker: string,
   asOfDate: string,
   board: BacktestBoard,
   ctx: MarketContextAtDate,
+  opts: { discreteSignalOnly?: boolean } = {},
 ): Promise<ScoredCandidate | null> {
   if (ctx.asOfDate !== asOfDate) {
     throw new Error(
@@ -288,14 +489,9 @@ export async function scoreTickerAtDate(
         `Build a fresh context per rebalance date.`,
     );
   }
-  // V1: prophet is the only board with a full PIT scoring path. Catalyst,
-  // insider, target, williams, lynch boards build on the same primitives
-  // (insider/political/contracts/patents + bars + earnings_intel) and can
-  // be added in Phase 4a follow-up commits. For now non-prophet boards
-  // emit null and the engine emits a warning; the brief notes that the
-  // metric machinery is board-agnostic so the engine is still useful.
-  if (board === 'prophet') {
-    return scoreProphetAtDate(ticker, asOfDate, ctx);
-  }
+  if (board === 'prophet') return scoreProphetAtDate(ticker, asOfDate, ctx);
+  if (board === 'williams') return scoreWilliamsAtDate(ticker, asOfDate, opts);
+  if (board === 'lynch') return scoreLynchAtDate(ticker, asOfDate, opts);
+  // catalyst / insider / target remain stubs — no PIT path yet.
   return null;
 }
