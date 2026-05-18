@@ -192,6 +192,15 @@
   to = "/.netlify/functions/snapshot-history"
   status = 200
 
+# Phase 4o W2 — diagnostic surface for the checkpoint-resume scan
+# workers. Reads the latest scanRuns/{runId} doc and exposes its cursor
+# state: nextTickerIndex, invocationCount, lastError, age of the last
+# invocation (a stalled chain shows hours instead of minutes).
+[[redirects]]
+  from = "/api/scan-status"
+  to = "/.netlify/functions/scan-status"
+  status = 200
+
 # Phase 4b backtest run viewer (read-only).
 # List endpoint:    GET  /api/backtest-runs?limit=20  → list
 # Detail endpoint:  GET  /api/backtest-runs/:runId    → get
