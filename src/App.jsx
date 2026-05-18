@@ -25,7 +25,7 @@ import { FreshnessPill } from './components/FreshnessPill.jsx';
 import { readLog, logTrade, removeTrade, computeForwardReturns } from './tradeLog.js';
 import { useSortable, SortableTh } from './lib/useSortable.jsx';
 import { captureException } from './lib/sentry.js';
-import { TargetBoardView, LiveTargetBoard, TargetDetail } from './TargetBoardView.jsx';
+import { TargetBoardView, LiveTargetBoard } from './TargetBoardView.jsx';
 import { RegimeView } from './RegimeView.jsx';
 import { AnalystsView } from './AnalystsView.jsx';
 import { AlertsView } from './AlertsView.jsx';
@@ -40,9 +40,36 @@ import { fmt, safeTimestamp, tierColor, tierGlow, directionIcon, analystIcon, an
 import { MOCK_REGIME, MOCK_TARGETS, MOCK_ANALYSTS, MOCK_ALERTS, MOCK_EQUITY_CURVE } from './lib/mockData.js';
 import { useRegime } from './hooks/useRegime.js';
 import { useAnalystsStatus } from './hooks/useAnalystsStatus.js';
+import { useBreakpoint } from './hooks/useBreakpoint.js';
+import { Sidebar } from './layout/Sidebar.jsx';
+import { DesktopShell } from './layout/DesktopShell.jsx';
+import { RegimeStrip } from './layout/RegimeStrip.jsx';
 
 
-const APP_VERSION = '0.18.9-alpha';
+const APP_VERSION = '0.19.0-alpha';
+
+// Phase 4k W1 — single navigation source-of-truth shared by the mobile
+// TopBar and the desktop Sidebar. Mobile renders the same array as a
+// horizontal scroller; desktop renders it as the vertical sidebar nav.
+const VIEWS = [
+  { id: 'board', label: 'Target Board', shortLabel: 'Board', icon: Target },
+  { id: 'prophet', label: 'Prophet', shortLabel: 'Prophet', icon: Sparkles },
+  { id: 'catalyst', label: 'Catalyst', shortLabel: 'Catalyst', icon: Zap },
+  { id: 'insiders', label: 'Insiders', shortLabel: 'Insiders', icon: Eye },
+  { id: 'williams', label: 'Williams', shortLabel: 'Williams', icon: Activity },
+  { id: 'lynch', label: 'Lynch', shortLabel: 'Lynch', icon: Shield },
+  { id: 'earnings', label: 'Earnings', shortLabel: 'Earnings', icon: Zap },
+  { id: 'history', label: 'History', shortLabel: 'History', icon: Clock },
+  { id: 'options', label: 'Options Flow', shortLabel: 'Options', icon: Cpu },
+  { id: 'engine', label: 'Engine Test', shortLabel: 'Engine', icon: Activity },
+  { id: 'backtest', label: 'Backtest', shortLabel: 'Backtest', icon: BarChart3 },
+  { id: 'chart', label: 'Chart', shortLabel: 'Chart', icon: LineChartIcon },
+  { id: 'regime', label: 'Regime', shortLabel: 'Regime', icon: Gauge },
+  { id: 'analysts', label: 'Analysts', shortLabel: 'Analysts', icon: Brain },
+  { id: 'alerts', label: 'Alerts', shortLabel: 'Alerts', icon: Bell },
+  { id: 'journal', label: 'Journal', shortLabel: 'Journal', icon: BookMarked },
+  { id: 'settings', label: 'Settings', shortLabel: 'Settings', icon: Settings },
+];
 
 // ======================================================================
 // ERROR BOUNDARY — catches React render errors in any child subtree and
@@ -107,25 +134,7 @@ const TopBar = ({ activeView, setActiveView, regime, universeStats }) => {
   const scrollerRef = React.useRef(null);
   const buttonRefs = React.useRef({});
 
-  const views = [
-    { id: 'board', label: 'Target Board', shortLabel: 'Board', icon: Target },
-    { id: 'prophet', label: 'Prophet', shortLabel: 'Prophet', icon: Sparkles },
-    { id: 'catalyst', label: 'Catalyst', shortLabel: 'Catalyst', icon: Zap },
-    { id: 'insiders', label: 'Insiders', shortLabel: 'Insiders', icon: Eye },
-    { id: 'williams', label: 'Williams', shortLabel: 'Williams', icon: Activity },
-    { id: 'lynch', label: 'Lynch', shortLabel: 'Lynch', icon: Shield },
-    { id: 'earnings', label: 'Earnings', shortLabel: 'Earnings', icon: Zap },
-    { id: 'history', label: 'History', shortLabel: 'History', icon: Clock },
-    { id: 'options', label: 'Options Flow', shortLabel: 'Options', icon: Cpu },
-    { id: 'engine', label: 'Engine Test', shortLabel: 'Engine', icon: Activity },
-    { id: 'backtest', label: 'Backtest', shortLabel: 'Backtest', icon: BarChart3 },
-    { id: 'chart', label: 'Chart', shortLabel: 'Chart', icon: LineChartIcon },
-    { id: 'regime', label: 'Regime', shortLabel: 'Regime', icon: Gauge },
-    { id: 'analysts', label: 'Analysts', shortLabel: 'Analysts', icon: Brain },
-    { id: 'alerts', label: 'Alerts', shortLabel: 'Alerts', icon: Bell },
-    { id: 'journal', label: 'Journal', shortLabel: 'Journal', icon: BookMarked },
-    { id: 'settings', label: 'Settings', shortLabel: 'Settings', icon: Settings },
-  ];
+  const views = VIEWS;
 
   // Auto-scroll the active tab into view (center it) whenever activeView changes
   React.useEffect(() => {
@@ -251,9 +260,9 @@ const TopBar = ({ activeView, setActiveView, regime, universeStats }) => {
 
 export default function App() {
   const [activeView, setActiveView] = useState('board');
-  const [selectedTarget, setSelectedTarget] = useState(null);
   const [universe, setUniverse] = useState('sp500');
   const showUniverseBar = UNIVERSE_AWARE_VIEWS.has(activeView);
+  const { isDesktop } = useBreakpoint();
 
   // Live regime + analyst roster from the API. Both fall back gracefully
   // to MOCK_* on network/auth failure (TanStack returns `data: undefined`
@@ -264,25 +273,100 @@ export default function App() {
   const regime = regimeData?.regime ? regimeData : MOCK_REGIME;
   const analysts = analystsData?.analysts?.length ? analystsData.analysts : MOCK_ANALYSTS;
 
+  // Phase 4k W1 — content body shared by the mobile and desktop shells.
+  // The universe selector and the view router are identical across
+  // breakpoints; only the chrome around them (TopBar vs Sidebar +
+  // DesktopShell) changes.
+  const universeBar = showUniverseBar && (
+    <div className={
+      isDesktop
+        ? 'sticky top-8 z-20 border-b border-neutral-800/60 bg-[#0a0b0d]/95 backdrop-blur-xl'
+        : 'sticky top-[80px] sm:top-[92px] z-30 border-b border-neutral-800/60 bg-[#0a0b0d]/95 backdrop-blur-xl'
+    }>
+      <div className={isDesktop ? 'px-6 py-2' : 'px-3 sm:px-6 py-2 max-w-[1400px] mx-auto'}>
+        <UniverseSelector universe={universe} setUniverse={setUniverse} />
+      </div>
+    </div>
+  );
+
+  const viewRouter = (
+    <>
+      {activeView === 'board' && <ErrorBoundary label="Board"><LiveTargetBoard universe={universe} /></ErrorBoundary>}
+      {activeView === 'prophet' && <ErrorBoundary label="Prophet"><ProphetView /></ErrorBoundary>}
+      {activeView === 'catalyst' && <ErrorBoundary label="Catalyst"><CatalystView universe={universe} onNavigate={setActiveView} /></ErrorBoundary>}
+      {activeView === 'insiders' && <ErrorBoundary label="Insiders"><InsiderBoardView universe={universe} /></ErrorBoundary>}
+      {activeView === 'williams' && <ErrorBoundary label="Williams"><WilliamsView universe={universe} /></ErrorBoundary>}
+      {activeView === 'lynch' && <ErrorBoundary label="Lynch"><LynchView universe={universe} /></ErrorBoundary>}
+      {activeView === 'earnings' && <ErrorBoundary label="Earnings"><EarningsPlaysView universe={universe} /></ErrorBoundary>}
+      {activeView === 'history' && <ErrorBoundary label="History"><HistoryView /></ErrorBoundary>}
+      {activeView === 'options' && <ErrorBoundary label="Options"><OptionsFlowView universe={universe} /></ErrorBoundary>}
+      {activeView === 'engine' && <ErrorBoundary label="Engine"><EngineTestView /></ErrorBoundary>}
+      {activeView === 'backtest' && <ErrorBoundary label="Backtest"><BacktestView /></ErrorBoundary>}
+      {activeView === 'chart' && <ErrorBoundary label="Chart"><ChartView /></ErrorBoundary>}
+      {activeView === 'regime' && <ErrorBoundary label="Regime"><RegimeView regime={regime} /></ErrorBoundary>}
+      {activeView === 'analysts' && <ErrorBoundary label="Analysts"><AnalystsView analysts={analysts} /></ErrorBoundary>}
+      {activeView === 'alerts' && <ErrorBoundary label="Alerts"><AlertsView /></ErrorBoundary>}
+      {activeView === 'journal' && <ErrorBoundary label="Journal"><JournalView /></ErrorBoundary>}
+      {activeView === 'settings' && <ErrorBoundary label="Settings"><SettingsView /></ErrorBoundary>}
+    </>
+  );
+
+  const footer = (
+    <footer className="mt-16 py-6 border-t border-neutral-900 text-center">
+      <div className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600">
+        TradeIQ Alpha · Personal · Not Financial Advice · v{APP_VERSION}
+      </div>
+    </footer>
+  );
+
+  const fontsAndScrollbars = (
+    <style>{`
+      @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Serif:ital,wght@0,400;0,500;0,600;0,700;1,400&family=IBM+Plex+Mono:wght@400;500;600&family=Sora:wght@300;400;500;600&display=swap');
+      body { font-family: 'Sora', system-ui, sans-serif; }
+      .font-serif { font-family: 'IBM Plex Serif', Georgia, serif; }
+      .font-mono { font-family: 'IBM Plex Mono', ui-monospace, monospace; }
+      .tabular-nums { font-variant-numeric: tabular-nums; }
+      ::-webkit-scrollbar { width: 8px; height: 8px; }
+      ::-webkit-scrollbar-track { background: #0a0b0d; }
+      ::-webkit-scrollbar-thumb { background: #2a2b2e; }
+      ::-webkit-scrollbar-thumb:hover { background: #3a3b3e; }
+    `}</style>
+  );
+
+  const rootStyle = {
+    fontFamily: '"Sora", system-ui, sans-serif',
+    backgroundImage: `
+      radial-gradient(ellipse at top, rgba(20, 232, 154, 0.04) 0%, transparent 45%),
+      radial-gradient(ellipse at bottom, rgba(77, 186, 242, 0.02) 0%, transparent 45%)
+    `,
+  };
+
+  if (isDesktop) {
+    return (
+      <div className="min-h-screen bg-[#050607] text-neutral-200" style={rootStyle}>
+        {fontsAndScrollbars}
+        <DesktopShell
+          sidebar={
+            <Sidebar
+              views={VIEWS}
+              activeView={activeView}
+              setActiveView={setActiveView}
+              appVersion={APP_VERSION}
+            />
+          }
+          topStrip={<RegimeStrip regime={regime} universeStats={{ core: 784, watchlist: 12 }} />}
+        >
+          {universeBar}
+          {viewRouter}
+          {footer}
+        </DesktopShell>
+      </div>
+    );
+  }
+
   return (
-    <div className="min-h-screen bg-[#050607] text-neutral-200 overflow-x-hidden" style={{
-      fontFamily: '"Sora", system-ui, sans-serif',
-      backgroundImage: `
-        radial-gradient(ellipse at top, rgba(20, 232, 154, 0.04) 0%, transparent 45%),
-        radial-gradient(ellipse at bottom, rgba(77, 186, 242, 0.02) 0%, transparent 45%)
-      `,
-    }}>
-      <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Serif:ital,wght@0,400;0,500;0,600;0,700;1,400&family=IBM+Plex+Mono:wght@400;500;600&family=Sora:wght@300;400;500;600&display=swap');
-        body { font-family: 'Sora', system-ui, sans-serif; }
-        .font-serif { font-family: 'IBM Plex Serif', Georgia, serif; }
-        .font-mono { font-family: 'IBM Plex Mono', ui-monospace, monospace; }
-        .tabular-nums { font-variant-numeric: tabular-nums; }
-        ::-webkit-scrollbar { width: 8px; height: 8px; }
-        ::-webkit-scrollbar-track { background: #0a0b0d; }
-        ::-webkit-scrollbar-thumb { background: #2a2b2e; }
-        ::-webkit-scrollbar-thumb:hover { background: #3a3b3e; }
-      `}</style>
+    <div className="min-h-screen bg-[#050607] text-neutral-200 overflow-x-hidden" style={rootStyle}>
+      {fontsAndScrollbars}
 
       <TopBar
         activeView={activeView}
@@ -291,41 +375,11 @@ export default function App() {
         universeStats={{ core: 784, watchlist: 12 }}
       />
 
-      {showUniverseBar && (
-        <div className="sticky top-[80px] sm:top-[92px] z-30 border-b border-neutral-800/60 bg-[#0a0b0d]/95 backdrop-blur-xl">
-          <div className="px-3 sm:px-6 py-2 max-w-[1400px] mx-auto">
-            <UniverseSelector universe={universe} setUniverse={setUniverse} />
-          </div>
-        </div>
-      )}
+      {universeBar}
 
-      <main>
-        {activeView === 'board' && <ErrorBoundary label="Board"><LiveTargetBoard onOpenTarget={setSelectedTarget} universe={universe} /></ErrorBoundary>}
-        {activeView === 'prophet' && <ErrorBoundary label="Prophet"><ProphetView /></ErrorBoundary>}
-        {activeView === 'catalyst' && <ErrorBoundary label="Catalyst"><CatalystView universe={universe} onNavigate={setActiveView} /></ErrorBoundary>}
-        {activeView === 'insiders' && <ErrorBoundary label="Insiders"><InsiderBoardView universe={universe} /></ErrorBoundary>}
-        {activeView === 'williams' && <ErrorBoundary label="Williams"><WilliamsView universe={universe} /></ErrorBoundary>}
-        {activeView === 'lynch' && <ErrorBoundary label="Lynch"><LynchView universe={universe} /></ErrorBoundary>}
-        {activeView === 'earnings' && <ErrorBoundary label="Earnings"><EarningsPlaysView universe={universe} /></ErrorBoundary>}
-        {activeView === 'history' && <ErrorBoundary label="History"><HistoryView /></ErrorBoundary>}
-        {activeView === 'options' && <ErrorBoundary label="Options"><OptionsFlowView universe={universe} /></ErrorBoundary>}
-        {activeView === 'engine' && <ErrorBoundary label="Engine"><EngineTestView /></ErrorBoundary>}
-        {activeView === 'backtest' && <ErrorBoundary label="Backtest"><BacktestView /></ErrorBoundary>}
-        {activeView === 'chart' && <ErrorBoundary label="Chart"><ChartView /></ErrorBoundary>}
-        {activeView === 'regime' && <ErrorBoundary label="Regime"><RegimeView regime={regime} /></ErrorBoundary>}
-        {activeView === 'analysts' && <ErrorBoundary label="Analysts"><AnalystsView analysts={analysts} /></ErrorBoundary>}
-        {activeView === 'alerts' && <ErrorBoundary label="Alerts"><AlertsView /></ErrorBoundary>}
-        {activeView === 'journal' && <ErrorBoundary label="Journal"><JournalView /></ErrorBoundary>}
-        {activeView === 'settings' && <ErrorBoundary label="Settings"><SettingsView /></ErrorBoundary>}
-      </main>
+      <main>{viewRouter}</main>
 
-      <TargetDetail target={selectedTarget} onClose={() => setSelectedTarget(null)} />
-
-      <footer className="mt-16 py-6 border-t border-neutral-900 text-center">
-        <div className="text-[10px] font-mono uppercase tracking-[0.2em] text-neutral-600">
-          TradeIQ Alpha · Personal · Not Financial Advice · v{APP_VERSION}
-        </div>
-      </footer>
+      {footer}
     </div>
   );
 }

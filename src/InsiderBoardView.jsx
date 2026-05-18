@@ -6,6 +6,7 @@ import {
 import { useSortable, SortableTh } from './lib/useSortable.jsx';
 import { FreshnessPill } from './components/FreshnessPill.jsx';
 import { useInsider } from './hooks/useInsider.js';
+import { useBreakpoint } from './hooks/useBreakpoint.js';
 
 const WINDOW_OPTIONS = [
   { id: 30, label: '30d' },
@@ -66,6 +67,7 @@ export const InsiderBoardView = ({ universe = 'all' }) => {
     return 'buyers'; // Phase 4l W3: default to net buyers
   });
   const [expandedTicker, setExpandedTicker] = useState(null);
+  const { isDesktop } = useBreakpoint();
 
   // Default sort is netDollars desc (buyers view). Switching views below
   // re-points the sort to the natural key for that view.
@@ -103,8 +105,15 @@ export const InsiderBoardView = ({ universe = 'all' }) => {
     }
   };
 
+  // Phase 4k W3 — at desktop widths the insider board drops the narrow
+  // phone-friendly max-width and tightens row padding so more filings
+  // fit per screen. Mobile rendering is unchanged.
+  const cellPadY = isDesktop ? 'py-1.5' : 'py-2.5';
+  const cellPadX = 'px-3';
+  const tickerCellSize = isDesktop ? 'text-[12px]' : 'text-[13px]';
+
   return (
-    <div className="p-4 sm:p-6 max-w-[1400px] mx-auto">
+    <div className={isDesktop ? 'px-6 py-5' : 'p-4 sm:p-6 max-w-[1400px] mx-auto'}>
       {/* Header */}
       <div className="mb-6 flex items-start justify-between gap-3 flex-wrap">
         <div>
@@ -207,11 +216,11 @@ export const InsiderBoardView = ({ universe = 'all' }) => {
 
       {/* Table */}
       {sorted.length > 0 && (
-        <div className="border border-neutral-800 overflow-x-auto">
+        <div className={`border border-neutral-800 ${isDesktop ? '' : 'overflow-x-auto'}`}>
           <table className="w-full text-[12px] font-mono">
             <thead className="bg-neutral-900/40 text-[10px] uppercase tracking-widest text-neutral-500">
               <tr>
-                <th className="text-left px-3 py-2.5 w-10"></th>
+                <th className={`text-left ${cellPadX} ${cellPadY} w-10`}></th>
                 <SortableTh sortKey={sortKey} sortDir={sortDir} sortBy={sortBy} field="ticker" align="left">Ticker</SortableTh>
                 <SortableTh sortKey={sortKey} sortDir={sortDir} sortBy={sortBy} field="price" align="right">Price</SortableTh>
                 <SortableTh sortKey={sortKey} sortDir={sortDir} sortBy={sortBy} field="buyDollars" align="right">$ Bought</SortableTh>
@@ -233,17 +242,17 @@ export const InsiderBoardView = ({ universe = 'all' }) => {
                       onClick={() => setExpandedTicker(isOpen ? null : r.ticker)}
                       className={`border-t border-neutral-800/60 cursor-pointer transition-colors ${isOpen ? 'bg-neutral-900/40' : 'hover:bg-neutral-900/20'}`}
                     >
-                      <td className="px-3 py-2.5 text-neutral-500">
+                      <td className={`${cellPadX} ${cellPadY} text-neutral-500`}>
                         {isOpen ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
                       </td>
-                      <td className="px-3 py-2.5 font-serif text-neutral-100 font-bold text-[13px]">{r.ticker}</td>
-                      <td className="px-3 py-2.5 text-right tabular-nums text-neutral-300">{fmtPrice(r.price)}</td>
-                      <td className="px-3 py-2.5 text-right tabular-nums text-emerald-400">{fmtUsd(r.buyDollars)}</td>
-                      <td className="px-3 py-2.5 text-right tabular-nums text-sky-400/80">{fmtUsd(r.awardDollars)}</td>
-                      <td className="px-3 py-2.5 text-right tabular-nums text-rose-400">{fmtUsd(r.sellDollars)}</td>
-                      <td className={`px-3 py-2.5 text-right tabular-nums ${netColor}`}>{fmtUsd(r.netDollars)}</td>
-                      <td className="px-3 py-2.5 text-right tabular-nums text-neutral-300">{r.buyerCount}</td>
-                      <td className="px-3 py-2.5 text-neutral-300 max-w-[180px] truncate">
+                      <td className={`${cellPadX} ${cellPadY} font-serif text-neutral-100 font-bold ${tickerCellSize}`}>{r.ticker}</td>
+                      <td className={`${cellPadX} ${cellPadY} text-right tabular-nums text-neutral-300`}>{fmtPrice(r.price)}</td>
+                      <td className={`${cellPadX} ${cellPadY} text-right tabular-nums text-emerald-400`}>{fmtUsd(r.buyDollars)}</td>
+                      <td className={`${cellPadX} ${cellPadY} text-right tabular-nums text-sky-400/80`}>{fmtUsd(r.awardDollars)}</td>
+                      <td className={`${cellPadX} ${cellPadY} text-right tabular-nums text-rose-400`}>{fmtUsd(r.sellDollars)}</td>
+                      <td className={`${cellPadX} ${cellPadY} text-right tabular-nums ${netColor}`}>{fmtUsd(r.netDollars)}</td>
+                      <td className={`${cellPadX} ${cellPadY} text-right tabular-nums text-neutral-300`}>{r.buyerCount}</td>
+                      <td className={`${cellPadX} ${cellPadY} text-neutral-300 ${isDesktop ? 'max-w-[260px]' : 'max-w-[180px]'} truncate`}>
                         {r.topBuyer ? (
                           <span title={r.topBuyer.name}>
                             <span className="text-neutral-200">{r.topBuyer.name}</span>
@@ -252,7 +261,7 @@ export const InsiderBoardView = ({ universe = 'all' }) => {
                           <span className="text-neutral-600">—</span>
                         )}
                       </td>
-                      <td className="px-3 py-2.5 text-right tabular-nums text-neutral-400">
+                      <td className={`${cellPadX} ${cellPadY} text-right tabular-nums text-neutral-400`}>
                         {r.daysSinceLatest !== null ? `${r.daysSinceLatest}d ago` : '—'}
                       </td>
                     </tr>
