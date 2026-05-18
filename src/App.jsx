@@ -25,7 +25,7 @@ import { FreshnessPill } from './components/FreshnessPill.jsx';
 import { readLog, logTrade, removeTrade, computeForwardReturns } from './tradeLog.js';
 import { useSortable, SortableTh } from './lib/useSortable.jsx';
 import { captureException } from './lib/sentry.js';
-import { TargetBoardView, LiveTargetBoard, TargetDetail } from './TargetBoardView.jsx';
+import { TargetBoardView, LiveTargetBoard } from './TargetBoardView.jsx';
 import { RegimeView } from './RegimeView.jsx';
 import { AnalystsView } from './AnalystsView.jsx';
 import { AlertsView } from './AlertsView.jsx';
@@ -260,7 +260,6 @@ const TopBar = ({ activeView, setActiveView, regime, universeStats }) => {
 
 export default function App() {
   const [activeView, setActiveView] = useState('board');
-  const [selectedTarget, setSelectedTarget] = useState(null);
   const [universe, setUniverse] = useState('sp500');
   const showUniverseBar = UNIVERSE_AWARE_VIEWS.has(activeView);
   const { isDesktop } = useBreakpoint();
@@ -292,7 +291,7 @@ export default function App() {
 
   const viewRouter = (
     <>
-      {activeView === 'board' && <ErrorBoundary label="Board"><LiveTargetBoard onOpenTarget={setSelectedTarget} universe={universe} /></ErrorBoundary>}
+      {activeView === 'board' && <ErrorBoundary label="Board"><LiveTargetBoard universe={universe} /></ErrorBoundary>}
       {activeView === 'prophet' && <ErrorBoundary label="Prophet"><ProphetView /></ErrorBoundary>}
       {activeView === 'catalyst' && <ErrorBoundary label="Catalyst"><CatalystView universe={universe} onNavigate={setActiveView} /></ErrorBoundary>}
       {activeView === 'insiders' && <ErrorBoundary label="Insiders"><InsiderBoardView universe={universe} /></ErrorBoundary>}
@@ -361,7 +360,6 @@ export default function App() {
           {viewRouter}
           {footer}
         </DesktopShell>
-        <TargetDetail target={selectedTarget} onClose={() => setSelectedTarget(null)} />
       </div>
     );
   }
@@ -380,8 +378,6 @@ export default function App() {
       {universeBar}
 
       <main>{viewRouter}</main>
-
-      <TargetDetail target={selectedTarget} onClose={() => setSelectedTarget(null)} />
 
       {footer}
     </div>

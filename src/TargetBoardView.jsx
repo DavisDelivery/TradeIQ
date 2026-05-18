@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import {
-  AlertTriangle, Circle, CircleX, X, CircleCheck, Eye, ExternalLink, Filter,
+  AlertTriangle, Circle, CircleX, CircleCheck, Eye, ExternalLink, Filter,
 } from 'lucide-react';
 import {
   RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, Radar, ResponsiveContainer,
@@ -14,6 +14,7 @@ import { AnalystContributions } from './components/AnalystContributions.jsx';
 import { CompanyInfo } from './components/CompanyInfo.jsx';
 import { PriceChart } from './components/PriceChart.jsx';
 import { useTargetBoard } from './hooks/useTargetBoard.js';
+import { MasterDetail } from './layout/MasterDetail.jsx';
 
 // ---------------------------------------------------------------------------
 // TargetCard — single ticker card on the grid
@@ -231,13 +232,18 @@ export const TargetBoardView = ({ targets, onOpenTarget, scanMeta, freshnessPill
 // ---------------------------------------------------------------------------
 // LiveTargetBoard — data-fetching wrapper. Wired to useTargetBoard via
 // TanStack Query: cache dedup, focus-revalidate, force-rescan via
-// setQueryData. The old request-ID race guard is no longer needed —
-// useQuery's abort signal supersedes prior in-flight requests
-// automatically when the queryKey changes.
+// setQueryData.
+//
+// Phase 4k W2 — owns the row-selection state (previously lived in
+// App.jsx as `selectedTarget`) and delegates the layout to the
+// MasterDetail container: full-screen modal on mobile (unchanged from
+// pre-4k), docked side panel on desktop with the board still visible
+// beside it.
 // ---------------------------------------------------------------------------
-export const LiveTargetBoard = ({ onOpenTarget, universe = 'all' }) => {
+export const LiveTargetBoard = ({ universe = 'all' }) => {
   const { data, error, isLoading: loading, isFetching, forceRescan } = useTargetBoard(universe);
   const isRescanning = isFetching && !loading;
+  const [selectedTarget, setSelectedTarget] = useState(null);
 
   if (loading && !data) {
     const universeMeta = {
@@ -278,11 +284,11 @@ export const LiveTargetBoard = ({ onOpenTarget, universe = 'all' }) => {
   }
 
   const targets = data?.targets || [];
-  return (
+  const list = (
     <>
       <TargetBoardView
         targets={targets}
-        onOpenTarget={onOpenTarget}
+        onOpenTarget={setSelectedTarget}
         scanMeta={data}
         freshnessPill={
           <FreshnessPill
@@ -293,7 +299,7 @@ export const LiveTargetBoard = ({ onOpenTarget, universe = 'all' }) => {
         }
       />
       {data && (
-        <div className="max-w-[1400px] mx-auto px-4 sm:px-6 pb-6 text-[10px] font-mono text-neutral-600 flex items-center gap-3">
+        <div className="max-w-[1400px] mx-auto px-4 sm:px-6 pb-6 text-[10px] font-mono text-neutral-600 flex items-center gap-3 flex-wrap">
           <span>Source: <span className="text-neutral-400">{data.source}</span></span>
           <span>·</span>
           <span>Generated: <span className="text-neutral-400">{safeTimestamp(data.generatedAt)}</span></span>
@@ -309,156 +315,154 @@ export const LiveTargetBoard = ({ onOpenTarget, universe = 'all' }) => {
       )}
     </>
   );
+
+  return (
+    <MasterDetail
+      selected={selectedTarget}
+      onClose={() => setSelectedTarget(null)}
+      list={list}
+      detailHeader={selectedTarget ? <TargetDetailHeader target={selectedTarget} /> : null}
+      detail={selectedTarget ? <TargetDetailBody target={selectedTarget} /> : null}
+      closeLabel="Close target detail"
+    />
+  );
 };
 
 // ---------------------------------------------------------------------------
-// TargetDetail — modal opened from cards. Mounted at App root so it
-// overlays whichever view is active.
+// TargetDetailHeader — title / badges / price summary. Designed to render
+// inside the MasterDetail container's sticky chrome (modal on mobile,
+// docked panel on desktop). The close button is provided by MasterDetail
+// so this slot never paints one.
 // ---------------------------------------------------------------------------
-export const TargetDetail = ({ target, onClose }) => {
-  if (!target) return null;
+const TargetDetailHeader = ({ target }) => (
+  <div>
+    <div className="flex items-baseline gap-3 flex-wrap">
+      <h2 className="font-serif font-bold text-2xl xl:text-3xl tracking-tight">{target.ticker}</h2>
+      <ConvictionBadge tier={target.tier} />
+      <DirectionPill direction={target.direction} />
+    </div>
+    {(target.companyName || target.sector) && (
+      <div className="mt-1 flex items-baseline gap-3 flex-wrap">
+        {target.companyName && target.companyName !== target.ticker && (
+          <span className="text-[13px] text-neutral-200">{target.companyName}</span>
+        )}
+        {target.sector && (
+          <span className="text-[10px] uppercase tracking-widest font-mono text-neutral-500">
+            {target.sector}
+          </span>
+        )}
+      </div>
+    )}
+    <div className="mt-1 font-mono text-[12px] text-neutral-400">
+      <span className="text-neutral-200">{fmt.moneyDec(target.price)}</span>
+      <span className={`ml-2 ${target.priceChangePct >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+        {fmt.pct(target.priceChangePct)}
+      </span>
+      <span className="text-neutral-600 mx-2">│</span>
+      <span>Composite <span className="font-semibold" style={{ color: tierColor(target.tier) }}>{target.composite}</span></span>
+      {target.scoredAt && (
+        <>
+          <span className="text-neutral-600 mx-2">│</span>
+          <span className="text-neutral-500">Scored {new Date(target.scoredAt).toLocaleTimeString()}</span>
+        </>
+      )}
+    </div>
+    <div className="mt-2">
+      <LogButton
+        size="sm"
+        payload={{
+          ticker: target.ticker,
+          source: 'board',
+          loggedPrice: target.price,
+          composite: target.composite,
+          tier: target.tier,
+          direction: target.direction,
+          rationale: target.rationale,
+        }}
+      />
+    </div>
+  </div>
+);
 
-  const radarData = target.analystContributions?.map(c => ({
+// ---------------------------------------------------------------------------
+// TargetDetailBody — the scrolling detail content. Container-agnostic:
+// renders identical content whether wrapped in a full-screen modal
+// (mobile) or a docked side panel (desktop). Charts use ResponsiveContainer
+// so they size up to whichever pane they land in.
+// ---------------------------------------------------------------------------
+const TargetDetailBody = ({ target }) => {
+  const radarData = target.analystContributions?.map((c) => ({
     subject: analystLabel[c.analyst] || c.analyst,
     score: c.score,
     fullMark: 100,
   })) || [];
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 md:p-8 bg-black/70 backdrop-blur-sm" onClick={onClose}>
-      <div
-        className="relative w-full max-w-5xl max-h-[92vh] overflow-y-auto bg-[#0a0b0d] border border-neutral-800"
-        onClick={e => e.stopPropagation()}
-      >
-        <div className="sticky top-0 z-10 bg-[#0a0b0d] border-b border-neutral-800 px-6 py-4 flex items-center justify-between">
-          <div>
-            <div className="flex items-baseline gap-4">
-              <h2 className="font-serif font-bold text-3xl tracking-tight">{target.ticker}</h2>
-              <ConvictionBadge tier={target.tier} />
-              <DirectionPill direction={target.direction} />
-            </div>
-            {/* Phase 4h W4 — company name + sector. Same source as the card. */}
-            {(target.companyName || target.sector) && (
-              <div className="mt-1 flex items-baseline gap-3 flex-wrap">
-                {target.companyName && target.companyName !== target.ticker && (
-                  <span className="text-[13px] text-neutral-200">{target.companyName}</span>
-                )}
-                {target.sector && (
-                  <span className="text-[10px] uppercase tracking-widest font-mono text-neutral-500">
-                    {target.sector}
-                  </span>
-                )}
-              </div>
-            )}
-            <div className="mt-1 font-mono text-[12px] text-neutral-400">
-              <span className="text-neutral-200">{fmt.moneyDec(target.price)}</span>
-              <span className={`ml-2 ${target.priceChangePct >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                {fmt.pct(target.priceChangePct)}
-              </span>
-              <span className="text-neutral-600 mx-2">│</span>
-              <span>Composite <span className="font-semibold" style={{ color: tierColor(target.tier) }}>{target.composite}</span></span>
-              {target.scoredAt && (
-                <>
-                  <span className="text-neutral-600 mx-2">│</span>
-                  <span className="text-neutral-500">Scored {new Date(target.scoredAt).toLocaleTimeString()}</span>
-                </>
-              )}
-            </div>
-          </div>
-          <div className="flex items-center gap-2">
-            <LogButton
-              size="md"
-              payload={{
-                ticker: target.ticker,
-                source: 'board',
-                loggedPrice: target.price,
-                composite: target.composite,
-                tier: target.tier,
-                direction: target.direction,
-                rationale: target.rationale,
-              }}
-            />
-            <button onClick={onClose} className="text-neutral-400 hover:text-neutral-200 p-1">
-              <X className="h-5 w-5" />
-            </button>
+    <>
+      <CompanyInfo ticker={target.ticker} />
+      <PriceChart ticker={target.ticker} />
+
+      <div className="border-l-2 border-emerald-500/40 pl-4 py-2">
+        <div className="text-[10px] uppercase tracking-[0.2em] text-neutral-500 font-mono mb-2">Thesis</div>
+        <p className="text-neutral-200 leading-relaxed">{target.rationale}</p>
+      </div>
+
+      <ResearchPanel ticker={target.ticker} />
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="border border-neutral-800 p-4">
+          <div className="text-[10px] uppercase tracking-[0.2em] text-neutral-500 font-mono mb-3">Analyst Agreement</div>
+          <div className="h-64">
+            <ResponsiveContainer width="100%" height="100%">
+              <RadarChart data={radarData}>
+                <PolarGrid stroke="#2a2b2e" />
+                <PolarAngleAxis
+                  dataKey="subject"
+                  tick={{ fill: '#9ca3af', fontSize: 11, fontFamily: 'IBM Plex Mono' }}
+                />
+                <PolarRadiusAxis
+                  domain={[0, 100]}
+                  tick={{ fill: '#525252', fontSize: 9 }}
+                  stroke="#2a2b2e"
+                />
+                <Radar
+                  dataKey="score"
+                  stroke="#14e89a"
+                  fill="#14e89a"
+                  fillOpacity={0.2}
+                  strokeWidth={1.5}
+                />
+              </RadarChart>
+            </ResponsiveContainer>
           </div>
         </div>
 
-        <div className="p-4 sm:p-6 space-y-5 sm:space-y-6">
-          {/* Phase 4j W4 — CompanyInfo (what is this company) sits at the
-              top of the panel so a user reads context before analyst detail.
-              Backed by /api/ticker-info, served on-demand from the
-              extended ticker-reference cache (never on the snapshot pick). */}
-          <CompanyInfo ticker={target.ticker} />
+        <AnalystContributions target={target} />
+      </div>
 
-          {/* Phase 4j W4 — PriceChart (what has the stock done). 6M default,
-              area chart with a candlestick toggle. Backed by
-              /api/price-history (per-day Firestore cache). */}
-          <PriceChart ticker={target.ticker} />
-
-          <div className="border-l-2 border-emerald-500/40 pl-4 py-2">
-            <div className="text-[10px] uppercase tracking-[0.2em] text-neutral-500 font-mono mb-2">Thesis</div>
-            <p className="text-neutral-200 leading-relaxed">{target.rationale}</p>
-          </div>
-
-          <ResearchPanel ticker={target.ticker} />
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div className="border border-neutral-800 p-4">
-              <div className="text-[10px] uppercase tracking-[0.2em] text-neutral-500 font-mono mb-3">Analyst Agreement</div>
-              <div className="h-64">
-                <ResponsiveContainer width="100%" height="100%">
-                  <RadarChart data={radarData}>
-                    <PolarGrid stroke="#2a2b2e" />
-                    <PolarAngleAxis
-                      dataKey="subject"
-                      tick={{ fill: '#9ca3af', fontSize: 11, fontFamily: 'IBM Plex Mono' }}
-                    />
-                    <PolarRadiusAxis
-                      domain={[0, 100]}
-                      tick={{ fill: '#525252', fontSize: 9 }}
-                      stroke="#2a2b2e"
-                    />
-                    <Radar
-                      dataKey="score"
-                      stroke="#14e89a"
-                      fill="#14e89a"
-                      fillOpacity={0.2}
-                      strokeWidth={1.5}
-                    />
-                  </RadarChart>
-                </ResponsiveContainer>
-              </div>
+      <div>
+        <div className="text-[10px] uppercase tracking-[0.2em] text-neutral-500 font-mono mb-3">Top Signals</div>
+        <div className="flex flex-wrap gap-2">
+          {target.topSignals?.map((s, i) => (
+            <div key={i} className="border border-neutral-800 px-3 py-2 bg-neutral-950/50">
+              <div className="font-mono text-[11px] text-neutral-400">{(s.type ?? 'signal').replace(/_/g, ' ')}</div>
+              <div className="font-mono text-sm text-neutral-100 mt-0.5">{s.score ?? '—'}</div>
             </div>
-
-            <AnalystContributions target={target} />
-          </div>
-
-          <div>
-            <div className="text-[10px] uppercase tracking-[0.2em] text-neutral-500 font-mono mb-3">Top Signals</div>
-            <div className="flex flex-wrap gap-2">
-              {target.topSignals?.map((s, i) => (
-                <div key={i} className="border border-neutral-800 px-3 py-2 bg-neutral-950/50">
-                  <div className="font-mono text-[11px] text-neutral-400">{(s.type ?? 'signal').replace(/_/g, ' ')}</div>
-                  <div className="font-mono text-sm text-neutral-100 mt-0.5">{s.score ?? '—'}</div>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          <div className="flex items-center gap-2 pt-2">
-            <button className="flex items-center gap-2 px-4 h-9 text-[12px] font-mono uppercase tracking-wider bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 hover:bg-emerald-500/15">
-              <CircleCheck className="h-3.5 w-3.5" /> Log as Trade
-            </button>
-            <button className="flex items-center gap-2 px-4 h-9 text-[12px] font-mono uppercase tracking-wider text-neutral-400 border border-neutral-800 hover:border-neutral-700">
-              <Eye className="h-3.5 w-3.5" /> Watchlist
-            </button>
-            <button className="flex items-center gap-2 px-4 h-9 text-[12px] font-mono uppercase tracking-wider text-neutral-400 border border-neutral-800 hover:border-neutral-700 ml-auto">
-              <ExternalLink className="h-3.5 w-3.5" /> Open in TradeStation
-            </button>
-          </div>
+          ))}
         </div>
       </div>
-    </div>
+
+      <div className="flex items-center gap-2 pt-2 flex-wrap">
+        <button className="flex items-center gap-2 px-4 h-9 text-[12px] font-mono uppercase tracking-wider bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 hover:bg-emerald-500/15">
+          <CircleCheck className="h-3.5 w-3.5" /> Log as Trade
+        </button>
+        <button className="flex items-center gap-2 px-4 h-9 text-[12px] font-mono uppercase tracking-wider text-neutral-400 border border-neutral-800 hover:border-neutral-700">
+          <Eye className="h-3.5 w-3.5" /> Watchlist
+        </button>
+        <button className="flex items-center gap-2 px-4 h-9 text-[12px] font-mono uppercase tracking-wider text-neutral-400 border border-neutral-800 hover:border-neutral-700 ml-auto">
+          <ExternalLink className="h-3.5 w-3.5" /> Open in TradeStation
+        </button>
+      </div>
+    </>
   );
 };
