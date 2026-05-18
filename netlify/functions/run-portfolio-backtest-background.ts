@@ -254,6 +254,13 @@ export const handler: Handler = async (event, context) => {
         runId,
         window: label,
         status: 'done' as const,
+        // Phase 4r W1 — persist the rule version onto the result doc so
+        // the verdict endpoint and the next-undone cron strategy can
+        // filter rolling-* completions by version. Without this, a v1
+        // result (pre-Phase 4i) and a v2 result (post-Phase 4i) would
+        // both count toward the same "8/8 done" without anyone noticing
+        // the rule-version mix.
+        version: config.version,
         startDate: result.startDate,
         endDate: result.endDate,
         portfolioReturnPct: result.portfolioReturnPct,
