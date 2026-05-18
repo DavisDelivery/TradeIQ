@@ -5,6 +5,7 @@
 
 import { UNIVERSE, inIndex, type IndexTag } from './universe';
 import { runLynch } from '../styles/lynch';
+import { deriveLynchSignalFromAnalyst, type LynchSignal } from '../styles/lynch-signal';
 import {
   getFundamentals,
   getEarningsHistory,
@@ -24,6 +25,10 @@ export interface LynchCandidate {
   rationale: string;
   signals: Record<string, any>;
   side: 'long' | 'short';
+  /** Discrete investment signal (Phase 4m): BUY/HOLD/AVOID + fair-value band. */
+  signal: LynchSignal;
+  /** Latest close at scan time, for reference. */
+  price: number | null;
 }
 
 export interface RunLynchScanOpts {
@@ -90,6 +95,10 @@ export async function runLynchScan(opts: RunLynchScanOpts): Promise<RunLynchScan
         sector: t.sector,
       });
       if (s.confidence < minConfidence) return null;
+      const signal = deriveLynchSignalFromAnalyst(
+        { score: s.score, signals: s.signals },
+        { currentPrice: snap?.c, ttmEps: fund?.ttmEps },
+      );
       const cand: LynchCandidate = {
         ticker,
         name: t.name,
@@ -99,6 +108,8 @@ export async function runLynchScan(opts: RunLynchScanOpts): Promise<RunLynchScan
         rationale: s.rationale,
         signals: s.signals,
         side: s.score >= 0 ? 'long' : 'short',
+        signal,
+        price: snap?.c ?? null,
       };
       candidates.push(cand);
       return cand;
