@@ -6,9 +6,15 @@
 // award / sell dollars for that subset. This means one snapshot per
 // universe per scan covers all 4 window variants (30/60/90/180) without
 // 4× the storage or scan cost.
+//
+// Phase 4l W2 splits the per-ticker scan loop out of `runInsiderScan` into
+// `runInsiderScanBatch` so the russell2k background worker can iterate
+// batches against the same Firestore cursor + reinvoke chain used by
+// 4h target-board. `runInsiderScan` (single-pass) stays for the
+// sp500/ndx/dow scheduled scans whose universe fits the 14-min budget.
 
 import { UNIVERSE, inIndex, type IndexTag } from './universe';
-import { getFinnhubInsiderTransactions } from './data-provider';
+import { getFinnhubInsiderTransactions, getPreviousClose } from './data-provider';
 import { lookupInsiderRole } from './edgar-roles';
 import type { InsiderBoardRow } from './types';
 import { mapWithConcurrency } from './full-scan-iterator';
@@ -26,6 +32,8 @@ export interface RunInsiderScanOpts {
   concurrency?: number;
   /** True for scheduled scans — enables EDGAR role enrichment (slow). */
   enrichRoles?: boolean;
+  /** True for scheduled scans — enables Polygon price enrichment (cheap). */
+  enrichPrice?: boolean;
   logger?: Logger;
 }
 
@@ -49,6 +57,192 @@ interface InsiderFiling {
   daysSince: number;
 }
 
+/**
+ * Resolve a universe key to the full ticker list. Mirrors
+ * `resolveTargetUniverse` from scan-target.ts so the bg-worker can iterate.
+ */
+export function resolveInsiderUniverse(universe: InsiderUniverseKey): string[] {
+  if (universe === 'all') return UNIVERSE.map((u) => u.ticker);
+  return inIndex(universe).map((u) => u.ticker);
+}
+
+export interface RunInsiderScanBatchOpts {
+  universe: InsiderUniverseKey;
+  windowDays: number;
+  /** Inclusive start index into the universe ticker list. */
+  startIdx: number;
+  /** Max tickers to consume in this batch. */
+  batchSize: number;
+  concurrency?: number;
+  /** True for scheduled scans — enables EDGAR role enrichment for top buyers
+   *  found in this batch. Off for live (capped) paths. */
+  enrichRoles?: boolean;
+  /** True for scheduled scans — fetches a Polygon previous-close per
+   *  surviving row. ~1 call per ticker with insider activity in window. */
+  enrichPrice?: boolean;
+  logger?: Logger;
+}
+
+export interface RunInsiderScanBatchResult {
+  rows: InsiderBoardRow[];
+  tickersConsumed: number;
+  warnings: string[];
+}
+
+/**
+ * Phase 4l W2 — process a contiguous slice of the universe for the insider
+ * scan. Per-ticker logic mirrors `runInsiderScan` exactly (same
+ * Finnhub call, same window filter, same aggregation). Optional role and
+ * price enrichment runs over the rows this batch produced (top buyers /
+ * surviving tickers only), bounded so a single batch can't blow its
+ * caller's wall-clock budget.
+ *
+ * Used by `scan-insider-russell2k-background.ts`. The bg-worker
+ * appends each batch's rows to a partial subcollection and reinvokes
+ * itself when the watchdog trips; the terminal batch reads back the
+ * full partial set, sorts, and writes one snapshot.
+ */
+export async function runInsiderScanBatch(
+  opts: RunInsiderScanBatchOpts,
+): Promise<RunInsiderScanBatchResult> {
+  const log = opts.logger;
+  const warnings: string[] = [];
+  const allTickers = resolveInsiderUniverse(opts.universe);
+  const slice = allTickers.slice(opts.startIdx, opts.startIdx + opts.batchSize);
+
+  if (slice.length === 0) {
+    return { rows: [], tickersConsumed: 0, warnings };
+  }
+
+  const now = Date.now();
+  const cutoffTs = now - opts.windowDays * 86_400_000;
+  const rows: InsiderBoardRow[] = [];
+
+  await mapWithConcurrency(
+    slice,
+    async (ticker) => {
+      const txs = await getFinnhubInsiderTransactions(ticker, opts.windowDays);
+      if (txs.length === 0) return null;
+      const row = buildRowFromTxs(ticker, txs, cutoffTs, now);
+      if (row) rows.push(row);
+      return row;
+    },
+    {
+      batchSize: opts.concurrency ?? 8,
+      onError: (err, ticker) => {
+        log?.warn('insider_ticker_error', { ticker, err: String(err) });
+      },
+    },
+  );
+
+  // Polygon price enrichment for the rows this batch produced. Cheap:
+  // ~1 call per ticker with insider activity. Failures are tolerated —
+  // `price: null` flows through to the UI which shows "—".
+  if (opts.enrichPrice && rows.length > 0) {
+    const byTicker = new Map(rows.map((r) => [r.ticker, r] as const));
+    await mapWithConcurrency(
+      rows.map((r) => r.ticker),
+      async (ticker) => {
+        try {
+          const prev = await getPreviousClose(ticker);
+          if (prev) {
+            const r = byTicker.get(ticker);
+            if (r) r.price = +prev.c.toFixed(2);
+          }
+        } catch (err: any) {
+          log?.warn('insider_price_enrich_failed', { ticker, err: String(err) });
+        }
+      },
+      { batchSize: opts.concurrency ?? 8 },
+    );
+  }
+
+  // EDGAR role enrichment for the top buyers in this batch's rows.
+  if (opts.enrichRoles) {
+    const enrichTargets = rows.filter((r) => r.topBuyer !== null);
+    for (let i = 0; i < enrichTargets.length; i += 5) {
+      const chunk = enrichTargets.slice(i, i + 5);
+      const roles = await Promise.all(
+        chunk.map((r) => lookupInsiderRole(r.topBuyer!.name, r.ticker).catch(() => null)),
+      );
+      for (let j = 0; j < chunk.length; j++) {
+        const role = roles[j];
+        if (role && chunk[j].topBuyer) {
+          chunk[j].topBuyer = { ...chunk[j].topBuyer!, role };
+        }
+      }
+    }
+  }
+
+  log?.debug('insider_batch_complete', {
+    universe: opts.universe,
+    startIdx: opts.startIdx,
+    consumed: slice.length,
+    scored: rows.length,
+  });
+
+  return { rows, tickersConsumed: slice.length, warnings };
+}
+
+/**
+ * Build a single InsiderBoardRow from a list of Finnhub insider
+ * transactions filtered to the window. Returns null when nothing in the
+ * window is a non-derivative buy/award/sell. Shared between the
+ * single-pass `runInsiderScan` and the batch-based `runInsiderScanBatch`.
+ */
+function buildRowFromTxs(
+  ticker: string,
+  txs: Awaited<ReturnType<typeof getFinnhubInsiderTransactions>>,
+  cutoffTs: number,
+  now: number,
+): InsiderBoardRow | null {
+  const inWindow = txs.filter((tx) => {
+    if (!tx.transactionDate) return false;
+    if (tx.isDerivative) return false;
+    const txTs = new Date(tx.transactionDate).getTime();
+    return txTs >= cutoffTs;
+  });
+  if (inWindow.length === 0) return null;
+
+  const filings: InsiderFiling[] = inWindow
+    .map((tx) => {
+      const sharesAbs = Math.abs(tx.change);
+      const dollars = sharesAbs * tx.transactionPrice;
+      const txTs = new Date(tx.transactionDate).getTime();
+      return {
+        name: tx.name,
+        role: '—',
+        shares: tx.change,
+        dollars: +dollars.toFixed(0),
+        filingDate: tx.filingDate || tx.transactionDate,
+        transactionDate: tx.transactionDate,
+        code: tx.transactionCode || (tx.change > 0 ? 'P' : 'S'),
+        daysSince: Math.max(0, Math.round((now - txTs) / 86_400_000)),
+      };
+    })
+    .sort((a, b) => a.daysSince - b.daysSince);
+
+  const agg = aggregate(filings);
+  if (agg.totalBuys === 0 && agg.totalAwards === 0 && agg.totalSells === 0) return null;
+
+  return {
+    ticker,
+    buyDollars: +agg.buyDollars.toFixed(0),
+    awardDollars: +agg.awardDollars.toFixed(0),
+    sellDollars: +agg.sellDollars.toFixed(0),
+    netDollars: +(agg.buyDollars - agg.sellDollars).toFixed(0),
+    buyerCount: agg.buyers.size,
+    totalBuys: agg.totalBuys,
+    totalAwards: agg.totalAwards,
+    totalSells: agg.totalSells,
+    topBuyer: agg.topBuyer,
+    latestFilingDate: filings.length > 0 ? filings[0].filingDate : null,
+    daysSinceLatest: filings.length > 0 ? filings[0].daysSince : null,
+    price: null,
+    filings,
+  };
+}
+
 export async function runInsiderScan(opts: RunInsiderScanOpts): Promise<RunInsiderScanResult> {
   const log = opts.logger;
   const start = Date.now();
@@ -65,6 +259,7 @@ export async function runInsiderScan(opts: RunInsiderScanOpts): Promise<RunInsid
     windowDays: opts.windowDays,
     scanCap: cap === Infinity ? 'Infinity' : cap,
     enrichRoles: !!opts.enrichRoles,
+    enrichPrice: !!opts.enrichPrice,
     budgetMs: opts.scanBudgetMs,
   });
 
@@ -78,52 +273,8 @@ export async function runInsiderScan(opts: RunInsiderScanOpts): Promise<RunInsid
     async (ticker) => {
       const txs = await getFinnhubInsiderTransactions(ticker, opts.windowDays);
       if (txs.length === 0) return null;
-
-      const inWindow = txs.filter((tx) => {
-        if (!tx.transactionDate) return false;
-        if (tx.isDerivative) return false;
-        const txTs = new Date(tx.transactionDate).getTime();
-        return txTs >= cutoffTs;
-      });
-      if (inWindow.length === 0) return null;
-
-      const filings: InsiderFiling[] = inWindow
-        .map((tx) => {
-          const sharesAbs = Math.abs(tx.change);
-          const dollars = sharesAbs * tx.transactionPrice;
-          const txTs = new Date(tx.transactionDate).getTime();
-          return {
-            name: tx.name,
-            role: '—',
-            shares: tx.change,
-            dollars: +dollars.toFixed(0),
-            filingDate: tx.filingDate || tx.transactionDate,
-            transactionDate: tx.transactionDate,
-            code: tx.transactionCode || (tx.change > 0 ? 'P' : 'S'),
-            daysSince: Math.max(0, Math.round((now - txTs) / 86_400_000)),
-          };
-        })
-        .sort((a, b) => a.daysSince - b.daysSince);
-
-      const agg = aggregate(filings);
-      if (agg.totalBuys === 0 && agg.totalAwards === 0 && agg.totalSells === 0) return null;
-
-      const row: InsiderBoardRow = {
-        ticker,
-        buyDollars: +agg.buyDollars.toFixed(0),
-        awardDollars: +agg.awardDollars.toFixed(0),
-        sellDollars: +agg.sellDollars.toFixed(0),
-        netDollars: +(agg.buyDollars - agg.sellDollars).toFixed(0),
-        buyerCount: agg.buyers.size,
-        totalBuys: agg.totalBuys,
-        totalAwards: agg.totalAwards,
-        totalSells: agg.totalSells,
-        topBuyer: agg.topBuyer,
-        latestFilingDate: filings.length > 0 ? filings[0].filingDate : null,
-        daysSinceLatest: filings.length > 0 ? filings[0].daysSince : null,
-        filings,
-      };
-      rows.push(row);
+      const row = buildRowFromTxs(ticker, txs, cutoffTs, now);
+      if (row) rows.push(row);
       return row;
     },
     {
@@ -146,6 +297,32 @@ export async function runInsiderScan(opts: RunInsiderScanOpts): Promise<RunInsid
     if (a.buyDollars !== b.buyDollars) return b.buyDollars - a.buyDollars;
     return b.awardDollars - a.awardDollars;
   });
+
+  // Polygon price enrichment for scheduled scans (cheap: ~1 call per
+  // surviving ticker, concurrency-limited). The live capped path leaves
+  // it off because the snapshot path will refresh price next scan.
+  if (opts.enrichPrice && rows.length > 0) {
+    const byTicker = new Map(rows.map((r) => [r.ticker, r] as const));
+    await mapWithConcurrency(
+      rows.map((r) => r.ticker),
+      async (ticker) => {
+        if (Date.now() - start > opts.scanBudgetMs) {
+          warnings.push('insider price-enrichment budget exceeded');
+          return;
+        }
+        try {
+          const prev = await getPreviousClose(ticker);
+          if (prev) {
+            const r = byTicker.get(ticker);
+            if (r) r.price = +prev.c.toFixed(2);
+          }
+        } catch (err: any) {
+          log?.warn('insider_price_enrich_failed', { ticker, err: String(err) });
+        }
+      },
+      { batchSize: opts.concurrency ?? 8 },
+    );
+  }
 
   // EDGAR role enrichment — only for scheduled scans (we have 14 min there).
   if (opts.enrichRoles) {
@@ -176,6 +353,7 @@ export async function runInsiderScan(opts: RunInsiderScanOpts): Promise<RunInsid
     rows: rows.length,
     scanDurationMs,
     enriched: !!opts.enrichRoles,
+    priceEnriched: !!opts.enrichPrice,
   });
 
   return {
@@ -275,6 +453,7 @@ export function filterRowsToWindow(
       topBuyer: agg.topBuyer ?? r.topBuyer, // keep enriched role if cached
       latestFilingDate: filings[0].filingDate,
       daysSinceLatest: filings[0].daysSince,
+      price: r.price ?? null, // carry through any enriched price from the source row
       filings,
     });
   }

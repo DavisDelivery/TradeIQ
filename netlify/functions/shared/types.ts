@@ -202,6 +202,9 @@ export interface InsiderBoardRow {
   topBuyer: { name: string; role: string; dollars: number } | null;
   latestFilingDate: string | null;
   daysSinceLatest: number | null;
+  /** Phase 4l W3: most recent close price for the ticker. Null if the price
+   *  fetch failed (Polygon hiccup, delisted, etc.) — UI shows "—". */
+  price: number | null;
   filings: Array<{
     name: string;
     role: string;
