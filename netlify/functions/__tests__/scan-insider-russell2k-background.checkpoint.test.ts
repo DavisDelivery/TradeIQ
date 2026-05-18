@@ -239,7 +239,7 @@ describe('russell2k insider bg-worker — checkpoint resume chain', () => {
     expect(partials).toHaveLength(2);
   });
 
-  it('resumes from cursor on subsequent invocation; terminal write fires once', async () => {
+  it('resumes from cursor on subsequent invocation; terminal write fires once on the finalizing invocation', async () => {
     setUniverse(200);
     mocks.createWatchdog.mockReturnValue(fakeWatchdog(2));
     mocks.batchScan.mockImplementation(async (opts: any) => ({
@@ -250,28 +250,48 @@ describe('russell2k insider bg-worker — checkpoint resume chain', () => {
       warnings: [],
     }));
 
-    // Invocation 1: writes cursor at nextTickerIndex = 100.
+    // Invocation 1: walks half the universe (watchdog trips after 2 batches).
     await handler(postEvent({}), { waitUntil: vi.fn() } as any);
     const runIds = Object.keys(store).filter(
       (k) => k.startsWith('scanRuns/') && !k.includes('/partial/'),
     );
     const runId = runIds[0].split('/')[1];
 
-    // Invocation 2: 2 more batches, should finish (200 total).
+    // Invocation 2: finishes the walk and dispatches the finalizing reinvoke
+    // (Phase 4p W1 — the terminal step is NEVER inline anymore).
     mocks.createWatchdog.mockReturnValue(fakeWatchdog(2));
     const res2 = (await handler(
       postEvent({ runId, resume: true }),
       { waitUntil: vi.fn() } as any,
     )) as any;
+    expect(res2.statusCode).toBe(202);
+    expect(JSON.parse(res2.body).phase).toBe('finalizing');
+    expect(mocks.writeSnapshot).not.toHaveBeenCalled();
+    // The cursor was flipped to finalizing.
+    expect(store[`scanRuns/${runId}`].cursor.phase).toBe('finalizing');
 
-    expect(res2.statusCode).toBe(200);
-    const body2 = JSON.parse(res2.body);
-    expect(body2.ok).toBe(true);
-    expect(body2.snapshotId).toBe('insider-russell2k-snap-x');
-    expect(body2.invocationCount).toBe(2);
-    expect(body2.resultsCount).toBe(200);
+    // Invocation 3: finalizing — skips the batch loop and runs the terminal step.
+    const res3 = (await handler(
+      postEvent({ runId, resume: true }),
+      { waitUntil: vi.fn() } as any,
+    )) as any;
+    expect(res3.statusCode).toBe(200);
+    const body3 = JSON.parse(res3.body);
+    expect(body3.ok).toBe(true);
+    expect(body3.snapshotId).toBe('insider-russell2k-snap-x');
+    expect(body3.invocationCount).toBe(3);
+    expect(body3.resultsCount).toBe(200);
+    // The finalizing entry must NOT have called the batch worker.
+    expect(mocks.batchScan).toHaveBeenCalledTimes(4); // 2 + 2 walk batches, no extra in finalizing
+    // The runId stays stable across the chain (no fresh runId minted on
+    // resume) — proves the chain truly resumed.
+    const runIdsAfter = Object.keys(store).filter(
+      (k) => k.startsWith('scanRuns/') && !k.includes('/partial/'),
+    );
+    expect(runIdsAfter).toHaveLength(1);
+    expect(runIdsAfter[0]).toBe(`scanRuns/${runId}`);
 
-    // writeSnapshot fired exactly once, on the terminal invocation.
+    // writeSnapshot fired exactly once, on the finalizing invocation.
     expect(mocks.writeSnapshot).toHaveBeenCalledTimes(1);
     const [board, universe, snap] = mocks.writeSnapshot.mock.calls[0];
     expect(board).toBe('insider');
@@ -294,7 +314,7 @@ describe('russell2k insider bg-worker — checkpoint resume chain', () => {
     }
   });
 
-  it('completes inside one invocation when the universe fits the budget', async () => {
+  it('walks the whole universe in one invocation but still chains a finalizing reinvoke (Phase 4p W1)', async () => {
     setUniverse(50); // exactly one batch
     mocks.createWatchdog.mockReturnValue(fakeWatchdog(10)); // generous
     mocks.batchScan.mockImplementation(async (_opts: any) => ({
@@ -302,15 +322,27 @@ describe('russell2k insider bg-worker — checkpoint resume chain', () => {
       tickersConsumed: 50,
       warnings: [],
     }));
-    const res = (await handler(postEvent({}), { waitUntil: vi.fn() } as any)) as any;
-    expect(res.statusCode).toBe(200);
-    const body = JSON.parse(res.body);
-    expect(body.invocationCount).toBe(1);
+
+    // Walk invocation: 202 with phase: 'finalizing'. No snapshot yet.
+    const res1 = (await handler(postEvent({}), { waitUntil: vi.fn() } as any)) as any;
+    expect(res1.statusCode).toBe(202);
+    const body1 = JSON.parse(res1.body);
+    expect(body1.phase).toBe('finalizing');
+    expect(mocks.writeSnapshot).not.toHaveBeenCalled();
+    expect(mocks.dispatchReinvoke).toHaveBeenCalledTimes(1); // the finalizing reinvoke
+
+    // Finalizing invocation: terminal step runs, snapshot writes.
+    const res2 = (await handler(
+      postEvent({ runId: body1.runId, resume: true }),
+      { waitUntil: vi.fn() } as any,
+    )) as any;
+    expect(res2.statusCode).toBe(200);
+    const body2 = JSON.parse(res2.body);
+    expect(body2.invocationCount).toBe(2);
     expect(mocks.writeSnapshot).toHaveBeenCalledTimes(1);
-    expect(mocks.dispatchReinvoke).not.toHaveBeenCalled();
   });
 
-  it('skips empty batches: partialBatchCount only advances when rows are returned', async () => {
+  it('skips empty batches: partialBatchCount only advances when rows are returned (across walk + finalizing)', async () => {
     setUniverse(150); // 3 batches of 50
     mocks.createWatchdog.mockReturnValue(fakeWatchdog(3));
     // First batch: no rows; second batch: 2 rows; third batch: no rows.
@@ -321,10 +353,20 @@ describe('russell2k insider bg-worker — checkpoint resume chain', () => {
       return { rows, tickersConsumed: opts.batchSize, warnings: [] };
     });
 
-    const res = (await handler(postEvent({}), { waitUntil: vi.fn() } as any)) as any;
-    expect(res.statusCode).toBe(200); // completed
-    const body = JSON.parse(res.body);
-    expect(body.resultsCount).toBe(2);
+    // Walk invocation: 202 finalizing.
+    const res1 = (await handler(postEvent({}), { waitUntil: vi.fn() } as any)) as any;
+    expect(res1.statusCode).toBe(202);
+    const body1 = JSON.parse(res1.body);
+    expect(body1.phase).toBe('finalizing');
+
+    // Finalizing invocation: terminal step runs.
+    const res2 = (await handler(
+      postEvent({ runId: body1.runId, resume: true }),
+      { waitUntil: vi.fn() } as any,
+    )) as any;
+    expect(res2.statusCode).toBe(200);
+    const body2 = JSON.parse(res2.body);
+    expect(body2.resultsCount).toBe(2);
 
     // Only the non-empty batch wrote a partial doc.
     expect(mocks.writeSnapshot).toHaveBeenCalledTimes(1);
@@ -344,6 +386,118 @@ describe('russell2k insider bg-worker — checkpoint resume chain', () => {
     expect(body.note).toMatch(/already complete/);
     expect(mocks.writeSnapshot).not.toHaveBeenCalled();
     expect(mocks.batchScan).not.toHaveBeenCalled();
+  });
+
+  // Phase 4p W1 — finalizing-phase entry behavior.
+  it('a finalizing cursor on entry skips the batch loop entirely and runs only the terminal step (W1)', async () => {
+    setUniverse(200);
+    mocks.createWatchdog.mockReturnValue(fakeWatchdog(10));
+    mocks.batchScan.mockImplementation(async (opts: any) => ({
+      rows: [makeInsiderRow(`R${opts.startIdx.toString().padStart(4, '0')}`, 50)],
+      tickersConsumed: opts.batchSize,
+      warnings: [],
+    }));
+
+    // Pre-stage a finalizing cursor + partial data.
+    const runId = 'insider-russell2k-prestaged';
+    store[`scanRuns/${runId}`] = {
+      status: 'running',
+      updatedAt: '2026-05-18T09:30:00.000Z',
+      cursor: {
+        universe: 'russell2k',
+        board: 'insider',
+        status: 'running',
+        phase: 'finalizing',
+        nextTickerIndex: 200,
+        totalTickers: 200,
+        invocationCount: 2,
+        startedAt: '2026-05-18T09:00:00.000Z',
+        lastInvocationStartedAt: '2026-05-18T09:25:00.000Z',
+        partialBatchCount: 1,
+        scoredCount: 1,
+        apiCalls: 200,
+        apiRateLimited: 0,
+        apiErrors: 0,
+      },
+    };
+    store[`scanRuns/${runId}/partial/batch-000000`] = {
+      batchIndex: 0,
+      rowCount: 1,
+      rows: [makeInsiderRow('PRE', 1_234_567)],
+    };
+
+    const res = (await handler(
+      postEvent({ runId, resume: true }),
+      { waitUntil: vi.fn() } as any,
+    )) as any;
+
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.body);
+    expect(body.resultsCount).toBe(1);
+
+    // W1 contract: NO batch work during finalizing.
+    expect(mocks.batchScan).not.toHaveBeenCalled();
+    expect(mocks.dispatchReinvoke).not.toHaveBeenCalled();
+
+    expect(mocks.writeSnapshot).toHaveBeenCalledTimes(1);
+    const [, , snap] = mocks.writeSnapshot.mock.calls[0];
+    expect(snap.results[0].ticker).toBe('PRE');
+  });
+
+  // Phase 4p W2 — idempotency: a killed-and-retried finalizing invocation
+  // must redo assemble+write cleanly.
+  it('terminal step is idempotent — a re-fired finalizing invocation redoes the work without error (W2)', async () => {
+    setUniverse(100);
+    mocks.createWatchdog.mockReturnValue(fakeWatchdog(10));
+
+    const runId = 'insider-russell2k-idempotent';
+    const stageFinalizingState = () => {
+      store[`scanRuns/${runId}`] = {
+        status: 'running',
+        updatedAt: '2026-05-18T09:00:00.000Z',
+        cursor: {
+          universe: 'russell2k',
+          board: 'insider',
+          status: 'running',
+          phase: 'finalizing',
+          nextTickerIndex: 100,
+          totalTickers: 100,
+          invocationCount: 2,
+          startedAt: '2026-05-18T08:50:00.000Z',
+          lastInvocationStartedAt: '2026-05-18T08:55:00.000Z',
+          partialBatchCount: 1,
+          scoredCount: 1,
+          apiCalls: 100,
+          apiRateLimited: 0,
+          apiErrors: 0,
+        },
+      };
+      store[`scanRuns/${runId}/partial/batch-000000`] = {
+        batchIndex: 0,
+        rowCount: 1,
+        rows: [makeInsiderRow('R0001', 9999)],
+      };
+    };
+
+    // First finalizing invocation: completes.
+    stageFinalizingState();
+    const res1 = (await handler(
+      postEvent({ runId, resume: true }),
+      { waitUntil: vi.fn() } as any,
+    )) as any;
+    expect(res1.statusCode).toBe(200);
+    expect(mocks.writeSnapshot).toHaveBeenCalledTimes(1);
+    expect(store[`scanRuns/${runId}`].status).toBe('done');
+
+    // Simulate a kill-and-retry mid-write: re-stage and re-fire.
+    stageFinalizingState();
+    const res2 = (await handler(
+      postEvent({ runId, resume: true }),
+      { waitUntil: vi.fn() } as any,
+    )) as any;
+    expect(res2.statusCode).toBe(200);
+    expect(mocks.writeSnapshot).toHaveBeenCalledTimes(2);
+    expect(store[`scanRuns/${runId}`].status).toBe('done');
   });
 
   it('partial scan does NOT advance _latest: writeSnapshot never called during mid-chain', async () => {

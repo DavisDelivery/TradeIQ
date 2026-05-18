@@ -35,6 +35,7 @@ import {
   FRESHNESS_BUDGETS_MS,
   pruneOldSnapshots,
   assessSnapshotPublish,
+  trimResultsForDocLimit,
   type UniverseKey,
 } from './shared/snapshot-store';
 import {
@@ -44,8 +45,10 @@ import {
   readAllPartialBatches,
   readScanCursor,
   writeScanCursor,
+  getCursorPhase,
   type ScanCursor,
 } from './shared/scan-resume/cursor';
+import { dispatchFinalizingReinvoke } from './shared/scan-resume/finalize';
 import { createWatchdog } from './shared/backtest-resume/watchdog';
 import {
   dispatchReinvoke,
@@ -117,6 +120,7 @@ export const handler: Handler = async (event, context) => {
       universe: UNIVERSE,
       board: BOARD,
       status: 'running',
+      phase: 'scanning',
       nextTickerIndex: 0,
       totalTickers,
       invocationCount: 1,
@@ -139,7 +143,26 @@ export const handler: Handler = async (event, context) => {
       invocationCount: cursor.invocationCount,
       nextTickerIndex: cursor.nextTickerIndex,
       totalTickers,
+      phase: getCursorPhase(cursor),
     });
+  }
+
+  // Phase 4p W1 — dedicated terminal-step invocation. A `finalizing`
+  // cursor means the universe walk is complete; this invocation skips
+  // every batch-loop concern (nameMap prefetch, regime, watchdog, the
+  // loop itself) and runs only the terminal step with a fresh 15-min
+  // platform budget. The previous design crammed the terminal step into
+  // the tail of the last batch-processing invocation and timed out; see
+  // briefs/phase-4p-brief.md.
+  if (getCursorPhase(cursor) === 'finalizing') {
+    log.info('scan_finalizing_invocation', {
+      runId,
+      invocationCount: cursor.invocationCount,
+      totalScored: cursor.scoredCount,
+      totalTickers,
+    });
+    await writeScanCursor(db, runId, cursor);
+    return await runTerminalStep({ db, log, runId, cursor, warnings: [] });
   }
 
   // First-invocation cost: pre-fetch the Polygon company-name cache
@@ -237,112 +260,9 @@ export const handler: Handler = async (event, context) => {
 
   const elapsedMs = Date.now() - invocationStart;
 
-  // Terminal batch: assemble the full snapshot.
-  if (cursor.nextTickerIndex >= totalTickers) {
-    log.info('scan_terminal_batch', {
-      runId,
-      invocationCount: cursor.invocationCount,
-      batchesThisInvocation,
-      totalScored: cursor.scoredCount,
-      totalTickers,
-    });
-
-    const allResults = await readAllPartialBatches<Target>(db, runId);
-    allResults.sort((a, b) => b.composite - a.composite);
-
-    // Phase 4o W3 — degraded-publish guard. The target-board scan
-    // doesn't track API failures as granularly as the insider scan
-    // (Polygon errors land in per-row warnings), so for now we only
-    // consume the row-count arm of the guard. That alone is enough to
-    // block the Bug A-shaped pattern: a 2,000-name universe assembling
-    // 0 rows.
-    const decision = assessSnapshotPublish({
-      resultCount: allResults.length,
-      universeChecked: totalTickers,
-    });
-    log.info('publish_guard_decision', {
-      runId,
-      action: decision.action,
-      reason: decision.reason,
-      resultCount: allResults.length,
-      universeChecked: totalTickers,
-    });
-
-    let snapshotId: string | null = null;
-    if (decision.action === 'skip') {
-      log.warn('publish_guard_skip', { runId, reason: decision.reason });
-      await clearScanCursor(db, runId, 'error');
-    } else {
-      const written = await writeSnapshot(BOARD, STORE_KEY, {
-        modelVersion: MODEL_VERSION,
-        generatedAt: new Date().toISOString(),
-        scanDurationMs: Date.now() - new Date(cursor.startedAt).getTime(),
-        universeChecked: totalTickers,
-        results: allResults,
-        freshnessBudgetMs: FRESHNESS_BUDGETS_MS[BOARD],
-        warnings,
-        degraded: decision.action === 'publish-degraded' ? true : undefined,
-        degradedReason:
-          decision.action === 'publish-degraded' ? decision.reason : undefined,
-      });
-      snapshotId = written.snapshotId;
-      await clearScanCursor(db, runId, 'done');
-    }
-
-    // Best-effort cleanup of the partial subcollection — runs whether
-    // or not we published; the partials are scratch space for this run.
-    try {
-      const { deleted } = await deletePartialBatches(db, runId);
-      log.info('partial_subcollection_cleaned', { runId, deleted });
-    } catch (err: any) {
-      log.warn('partial_cleanup_failed', { runId, err: String(err?.message ?? err) });
-    }
-    // Retention pruning only on successful publish.
-    if (snapshotId !== null) {
-      try {
-        const { deleted, kept } = await pruneOldSnapshots(BOARD, STORE_KEY, RETENTION_KEEP);
-        log.info('snapshot_retention_pruned', { universe: STORE_KEY, deleted, kept });
-      } catch (err: any) {
-        log.warn('snapshot_retention_prune_failed', { err: String(err?.message ?? err) });
-      }
-    }
-
-    log.info('scan_complete', {
-      runId,
-      snapshotId,
-      resultsCount: allResults.length,
-      totalTickers,
-      invocationCount: cursor.invocationCount,
-      scanWallClockMs: Date.now() - new Date(cursor.startedAt).getTime(),
-      publishAction: decision.action,
-    });
-
-    return {
-      statusCode: 200,
-      body: JSON.stringify({
-        ok: true,
-        runId,
-        snapshotId,
-        resultsCount: allResults.length,
-        invocationCount: cursor.invocationCount,
-        publishAction: decision.action,
-        publishReason: decision.reason,
-      }),
-    };
-  }
-
-  // Non-terminal — checkpoint and reinvoke.
-  log.info('scan_batch_continuing', {
-    runId,
-    invocationCount: cursor.invocationCount,
-    nextTickerIndex: cursor.nextTickerIndex,
-    totalTickers,
-    scoredCount: cursor.scoredCount,
-    batchesThisInvocation,
-    invocationElapsedMs: elapsedMs,
-    watchdogExpired,
-  });
-
+  // Build reinvoke URL once — used by both the W1 finalizing dispatch
+  // and the pre-existing mid-walk reinvoke. Header forwarding keeps the
+  // checkpoint chain on the same Netlify deploy (preview / branch / prod).
   const headers: Record<string, string | undefined> = {};
   if (event.headers) {
     for (const [k, v] of Object.entries(event.headers)) {
@@ -353,6 +273,63 @@ export const handler: Handler = async (event, context) => {
     headers,
     '/.netlify/functions/scan-target-board-russell2k-background',
   );
+  const reinvokeCtx: ReinvokeContext = context as unknown as ReinvokeContext;
+
+  // Phase 4p W1 — universe walk complete. Do NOT run the terminal step
+  // inline; cram it has historically run the invocation out of its
+  // 15-min platform budget mid-write. Instead transition the cursor to
+  // 'finalizing' and dispatch one more self-reinvoke. The next entry
+  // sees the finalizing cursor and runs only the terminal step with a
+  // fresh full budget.
+  if (cursor.nextTickerIndex >= totalTickers) {
+    log.info('scan_walk_complete_dispatching_finalizing', {
+      runId,
+      invocationCount: cursor.invocationCount,
+      batchesThisInvocation,
+      totalScored: cursor.scoredCount,
+      totalTickers,
+      invocationElapsedMs: elapsedMs,
+    });
+    const { cursor: finalizingCursor, dispatched } = await dispatchFinalizingReinvoke({
+      db,
+      runId,
+      cursor,
+      reinvokeUrl,
+      ctx: reinvokeCtx,
+    });
+    if (!dispatched.ok) {
+      log.error('finalizing_reinvoke_dispatch_failed', { runId, err: dispatched.error });
+    } else {
+      log.info('finalizing_reinvoke_dispatched', {
+        runId,
+        reinvokeAttempts: finalizingCursor.reinvokeAttempts,
+      });
+    }
+    return {
+      statusCode: 202,
+      body: JSON.stringify({
+        ok: true,
+        runId,
+        continuing: true,
+        phase: 'finalizing',
+        invocationCount: finalizingCursor.invocationCount,
+        nextTickerIndex: finalizingCursor.nextTickerIndex,
+        totalTickers,
+      }),
+    };
+  }
+
+  // Non-terminal mid-walk — checkpoint and reinvoke (unchanged 4h/4o behavior).
+  log.info('scan_batch_continuing', {
+    runId,
+    invocationCount: cursor.invocationCount,
+    nextTickerIndex: cursor.nextTickerIndex,
+    totalTickers,
+    scoredCount: cursor.scoredCount,
+    batchesThisInvocation,
+    invocationElapsedMs: elapsedMs,
+    watchdogExpired,
+  });
 
   // Phase 4o W2 — stamp the cursor BEFORE dispatching so /api/scan-status
   // can distinguish "watchdog never tripped, batch loop never finished"
@@ -369,7 +346,6 @@ export const handler: Handler = async (event, context) => {
   await writeScanCursor(db, runId, cursor);
   log.info('reinvoke_dispatching', { runId, reinvokeUrl, reinvokeAttempts: cursor.reinvokeAttempts });
 
-  const reinvokeCtx: ReinvokeContext = context as unknown as ReinvokeContext;
   const dispatched = await dispatchReinvoke(reinvokeUrl, runId, reinvokeCtx);
 
   if (!dispatched.ok) {
@@ -390,6 +366,142 @@ export const handler: Handler = async (event, context) => {
     }),
   };
 };
+
+// ====================================================================
+// Phase 4p W1 — terminal step, extracted so the finalizing-phase entry
+// branch can invoke it with a fresh 15-min platform budget.
+//
+// W2 idempotency contract: re-running this for the same runId after a
+// killed finalizing invocation is safe. readAllPartialBatches returns
+// the same rows; writeSnapshot is keyed by generatedAt's minute (a
+// re-run within the same minute overwrites the same doc, otherwise
+// produces a new one — both acceptable); clearScanCursor runs only at
+// the very end so a killed re-run simply redoes the assemble+write.
+// ====================================================================
+
+interface TerminalStepArgs {
+  db: ReturnType<typeof getAdminDb>;
+  log: ReturnType<typeof logger.child>;
+  runId: string;
+  cursor: ScanCursor;
+  warnings: string[];
+}
+
+async function runTerminalStep(args: TerminalStepArgs) {
+  const { db, log, runId, cursor, warnings } = args;
+  const totalTickers = cursor.totalTickers;
+
+  log.info('scan_terminal_step_start', {
+    runId,
+    invocationCount: cursor.invocationCount,
+    totalScored: cursor.scoredCount,
+    totalTickers,
+    phase: getCursorPhase(cursor),
+  });
+
+  const allResults = await readAllPartialBatches<Target>(db, runId);
+  allResults.sort((a, b) => b.composite - a.composite);
+
+  // Phase 4o W3 — degraded-publish guard. Fed the ORIGINAL row count,
+  // not the W2 size-trimmed count below — the guard should see the
+  // actual scan-result health, not a post-trim shadow.
+  const decision = assessSnapshotPublish({
+    resultCount: allResults.length,
+    universeChecked: totalTickers,
+  });
+  log.info('publish_guard_decision', {
+    runId,
+    action: decision.action,
+    reason: decision.reason,
+    resultCount: allResults.length,
+    universeChecked: totalTickers,
+  });
+
+  let snapshotId: string | null = null;
+  if (decision.action === 'skip') {
+    log.warn('publish_guard_skip', { runId, reason: decision.reason });
+    await clearScanCursor(db, runId, 'error');
+  } else {
+    // Phase 4p W2 — size safety. The russell2k target-board run scores
+    // ~2,022 rows; each Target carries a fat analystContributions array,
+    // so the assembled JSON can approach Firestore's 1 MiB per-doc
+    // ceiling. trimResultsForDocLimit no-ops below the safety threshold
+    // and truncates by descending composite when above. The truncated
+    // flag + originalResultCount propagate to consumers so they know
+    // they're reading a capped snapshot.
+    const sized = trimResultsForDocLimit(allResults);
+    const extraWarnings = [...warnings];
+    if (sized.truncated) {
+      log.warn('snapshot_truncated_for_doc_limit', {
+        runId,
+        originalCount: sized.originalCount,
+        storedCount: sized.storedCount,
+        estimatedBytes: sized.estimatedBytes,
+      });
+      extraWarnings.push(
+        `snapshot results truncated for doc-size safety: ${sized.storedCount}/${sized.originalCount} rows kept (~${sized.estimatedBytes} bytes)`,
+      );
+    }
+
+    const written = await writeSnapshot(BOARD, STORE_KEY, {
+      modelVersion: MODEL_VERSION,
+      generatedAt: new Date().toISOString(),
+      scanDurationMs: Date.now() - new Date(cursor.startedAt).getTime(),
+      universeChecked: totalTickers,
+      results: sized.results,
+      freshnessBudgetMs: FRESHNESS_BUDGETS_MS[BOARD],
+      warnings: extraWarnings,
+      degraded: decision.action === 'publish-degraded' ? true : undefined,
+      degradedReason:
+        decision.action === 'publish-degraded' ? decision.reason : undefined,
+      truncated: sized.truncated ? true : undefined,
+      originalResultCount: sized.truncated ? sized.originalCount : undefined,
+    });
+    snapshotId = written.snapshotId;
+    await clearScanCursor(db, runId, 'done');
+  }
+
+  // Best-effort cleanup of the partial subcollection — runs whether
+  // or not we published; the partials are scratch space for this run.
+  try {
+    const { deleted } = await deletePartialBatches(db, runId);
+    log.info('partial_subcollection_cleaned', { runId, deleted });
+  } catch (err: any) {
+    log.warn('partial_cleanup_failed', { runId, err: String(err?.message ?? err) });
+  }
+  // Retention pruning only on successful publish.
+  if (snapshotId !== null) {
+    try {
+      const { deleted, kept } = await pruneOldSnapshots(BOARD, STORE_KEY, RETENTION_KEEP);
+      log.info('snapshot_retention_pruned', { universe: STORE_KEY, deleted, kept });
+    } catch (err: any) {
+      log.warn('snapshot_retention_prune_failed', { err: String(err?.message ?? err) });
+    }
+  }
+
+  log.info('scan_complete', {
+    runId,
+    snapshotId,
+    resultsCount: allResults.length,
+    totalTickers,
+    invocationCount: cursor.invocationCount,
+    scanWallClockMs: Date.now() - new Date(cursor.startedAt).getTime(),
+    publishAction: decision.action,
+  });
+
+  return {
+    statusCode: 200,
+    body: JSON.stringify({
+      ok: true,
+      runId,
+      snapshotId,
+      resultsCount: allResults.length,
+      invocationCount: cursor.invocationCount,
+      publishAction: decision.action,
+      publishReason: decision.reason,
+    }),
+  };
+}
 
 function newRunId(universe: string): string {
   const now = new Date();

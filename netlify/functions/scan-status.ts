@@ -37,10 +37,44 @@ interface ScanRunSummary {
   scanAgeMs?: number;
 }
 
+/**
+ * Phase 4p W3 — accept either `scan=<board>-<universe>` (the orchestrator's
+ * preferred shorthand) or the longer `board=...&universe=...` form. Before
+ * this fix the endpoint silently dropped the `scan` param and always
+ * returned target-board russell2k — that's how the insider scan's freeze
+ * went un-diagnosed in 4o. Splitting on the first non-board hyphen is
+ * required because "target-board" itself contains a hyphen.
+ */
+function parseScanParam(scan: string): { board: string; universe: string } | null {
+  for (const b of VALID_BOARDS) {
+    const prefix = `${b}-`;
+    if (scan.startsWith(prefix)) {
+      const universe = scan.slice(prefix.length);
+      if (!universe) return null;
+      return { board: b, universe };
+    }
+  }
+  return null;
+}
+
 export const handler: Handler = async (event) => {
   const qs = event.queryStringParameters ?? {};
-  const board = qs.board ?? 'target-board';
-  const universe = qs.universe ?? 'russell2k';
+
+  let board: string;
+  let universe: string;
+  if (typeof qs.scan === 'string' && qs.scan.length > 0) {
+    const parsed = parseScanParam(qs.scan);
+    if (!parsed) {
+      return json(400, {
+        error: `invalid scan '${qs.scan}'; expected '<board>-<universe>' (e.g. 'insider-russell2k', 'target-board-sp500')`,
+      });
+    }
+    board = parsed.board;
+    universe = parsed.universe;
+  } else {
+    board = qs.board ?? 'target-board';
+    universe = qs.universe ?? 'russell2k';
+  }
   const limit = Math.min(Math.max(Number(qs.limit) || 5, 1), 20);
 
   const log = logger.child({ fn: 'scan-status', board, universe });

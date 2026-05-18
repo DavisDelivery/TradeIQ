@@ -18,6 +18,20 @@ import type { Firestore } from 'firebase-admin/firestore';
 export type ScanStatus = 'running' | 'done' | 'error';
 
 /**
+ * Phase 4p W1 — cursor phase. Distinguishes "still walking the universe"
+ * from "walk complete, terminal step pending its own dedicated 15-min
+ * invocation." The bg-worker's entry branches on phase: a `finalizing`
+ * cursor skips the batch loop entirely and runs only the terminal step
+ * (read partials → assemble → writeSnapshot → clearScanCursor) with a
+ * fresh full budget. The previous design crammed the terminal step into
+ * the tail of the last batch-processing invocation and ran out of time;
+ * see briefs/phase-4p-brief.md for the diagnostic evidence.
+ *
+ * Missing field on older cursors means 'scanning' — backwards compatible.
+ */
+export type ScanPhase = 'scanning' | 'finalizing';
+
+/**
  * Per-run scan cursor. Read by the bg-worker on entry; rewritten at
  * each batch boundary. Cleared on the terminal write so a stray
  * re-invocation observes "no resume needed" and exits cleanly.
@@ -29,6 +43,10 @@ export interface ScanCursor {
   board: string;
   /** Lifecycle state. The terminal write flips to 'done' and clears the cursor. */
   status: ScanStatus;
+  /** Phase 4p W1 — see ScanPhase. Optional for backwards compatibility
+   *  with in-flight cursors written before this phase shipped; readers
+   *  treat `undefined` as 'scanning'. */
+  phase?: ScanPhase;
   /** 0-based index of the NEXT ticker to process. */
   nextTickerIndex: number;
   /** Total tickers in the universe at scan start. Immutable across batches. */
@@ -201,6 +219,15 @@ export async function deletePartialBatches(
     deleted += slice.length;
   }
   return { deleted };
+}
+
+/**
+ * Phase 4p W1 — read the cursor's phase with the back-compat default.
+ * A cursor written before 4p has no `phase` field; treat it as 'scanning'
+ * so the existing batch-loop control flow runs unchanged.
+ */
+export function getCursorPhase(cursor: ScanCursor): ScanPhase {
+  return cursor.phase ?? 'scanning';
 }
 
 // Exposed for tests.

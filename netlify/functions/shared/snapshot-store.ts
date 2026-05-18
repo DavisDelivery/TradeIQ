@@ -14,6 +14,14 @@
 // writing. Live endpoints can paginate / filter / slice for the response, but
 // the stored snapshot is forever the unfiltered output of the analyst battery.
 // Phase 4 backtest and Phase 5 calibration depend on this.
+//
+// The lone exception is the Phase 4p W2 size-safety trim — it fires only
+// when the assembled doc would breach Firestore's 1 MiB per-document
+// ceiling, keeps the top-N by the producer's sort order, and stamps
+// `truncated: true` + `originalResultCount` so any consumer knows it is
+// reading a capped snapshot. Without it, a too-large doc throws on
+// write and the run freezes `status: running` forever — see
+// briefs/phase-4p-brief.md for the exact failure mode.
 
 import { Timestamp } from 'firebase-admin/firestore';
 import { getAdminDb } from './firebase-admin';
@@ -64,6 +72,13 @@ export interface BoardSnapshot {
     stage2: { scored: number; survived: number; thresholdScore: number | null; budgetMs: number; partial: boolean };
     stage3: { scored: number; survived: number; budgetMs: number; partial: boolean };
   };
+  /** Phase 4p W2 — true when the persisted `results` was trimmed by the
+   *  size-safety helper to fit Firestore's 1 MiB per-doc ceiling. */
+  truncated?: boolean;
+  /** Phase 4p W2 — present when `truncated`, the original assembled row
+   *  count before the safety trim. The board's served top-N is far smaller
+   *  than this in any case; this is purely for diagnostic + audit visibility. */
+  originalResultCount?: number;
 }
 
 // Per-board freshness budgets. Intraday signals (price action, breadth) get
@@ -204,6 +219,103 @@ export function assessSnapshotPublish(input: PublishGuardInput): PublishGuardDec
   }
 
   return { action: 'publish' };
+}
+
+// ====================================================================
+// Phase 4p W2 — snapshot-doc size safety
+// ====================================================================
+//
+// Firestore caps a single document at 1 MiB (1,048,576 bytes), and a
+// rejected write throws — which on the russell2k workers historically
+// translated to a frozen `status: running` cursor and no snapshot ever
+// landing. (W1 makes the terminal write get its own platform budget;
+// W2 makes sure the write itself is safe.)
+//
+// `trimResultsForDocLimit` is a pure helper: it estimates the assembled
+// JSON size of the `results` array and, only if it crosses the safety
+// ceiling, trims by keeping the leading rows in the producer's sort
+// order. The worker stamps `truncated: true` + `originalResultCount`
+// on the persisted snapshot so consumers (HistoryView, the backtest
+// reader, the live board APIs) can detect a capped snapshot.
+//
+// Default ceiling 800_000 bytes — leaves comfortable margin for the
+// snapshot's wrapper fields (modelVersion, warnings, sieve metadata,
+// the Firestore Timestamp marshalled into writtenAt, etc.).
+
+export const SNAPSHOT_DOC_SAFE_BYTES = Number(
+  process.env.SCAN_MAX_SNAPSHOT_DOC_BYTES ?? 800_000,
+);
+
+export interface TrimResultsOutcome<T> {
+  /** Possibly-trimmed results; identical reference to input when no trim was needed. */
+  results: T[];
+  /** True iff the trim actually fired. */
+  truncated: boolean;
+  /** Original input length. */
+  originalCount: number;
+  /** Persisted length. Equal to originalCount when not truncated. */
+  storedCount: number;
+  /** Best-effort serialized byte estimate for the kept slice. */
+  estimatedBytes: number;
+}
+
+/**
+ * Estimate the serialized JSON size of `results`. If it exceeds
+ * `maxBytes`, drop trailing rows (the producer is expected to have sorted
+ * results in display-priority order) until the kept slice fits.
+ *
+ * The estimate uses `JSON.stringify` per row + the joining commas +
+ * brackets — close to Firestore's real on-the-wire size; we don't try
+ * to model the protobuf overhead exactly because the 800 KB default
+ * leaves enough headroom.
+ *
+ * Pure — no Firestore, fully unit-testable. Used by both russell2k
+ * terminal steps; sp500/ndx/dow snapshots are well below the ceiling
+ * and pass through without trimming.
+ */
+export function trimResultsForDocLimit<T>(
+  results: T[],
+  maxBytes: number = SNAPSHOT_DOC_SAFE_BYTES,
+): TrimResultsOutcome<T> {
+  if (results.length === 0) {
+    return { results, truncated: false, originalCount: 0, storedCount: 0, estimatedBytes: 2 };
+  }
+
+  // Serialize the whole array once: cheap relative to the actual write
+  // and avoids per-row overhead double-counting.
+  const fullJson = JSON.stringify(results);
+  const fullBytes = Buffer.byteLength(fullJson, 'utf8');
+  if (fullBytes <= maxBytes) {
+    return {
+      results,
+      truncated: false,
+      originalCount: results.length,
+      storedCount: results.length,
+      estimatedBytes: fullBytes,
+    };
+  }
+
+  // Need to trim. Walk forward, accumulating bytes, until the next row
+  // would push us over. Two bytes reserved for the `[]` wrapper, one
+  // per comma between rows.
+  let acc = 2; // '[' + ']'
+  let kept = 0;
+  for (let i = 0; i < results.length; i++) {
+    const rowJson = JSON.stringify(results[i]);
+    const rowBytes = Buffer.byteLength(rowJson, 'utf8');
+    const sepBytes = i === 0 ? 0 : 1; // ','
+    if (acc + sepBytes + rowBytes > maxBytes) break;
+    acc += sepBytes + rowBytes;
+    kept += 1;
+  }
+
+  return {
+    results: results.slice(0, kept),
+    truncated: true,
+    originalCount: results.length,
+    storedCount: kept,
+    estimatedBytes: acc,
+  };
 }
 
 function snapshotIdFor(universe: UniverseKey, when: Date = new Date()): string {

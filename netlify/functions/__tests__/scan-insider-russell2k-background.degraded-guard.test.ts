@@ -149,6 +149,26 @@ function fakeWatchdog(expireAfterCalls: number) {
   };
 }
 
+/**
+ * Phase 4p W1 — the universe walk and the terminal step are now
+ * separate invocations. This helper drives a fresh scan to completion:
+ * fires invocation 1 (walks; if walk completes, dispatches the
+ * finalizing reinvoke and returns 202), then fires invocation 2 with
+ * the same runId so the finalizing branch runs the terminal step and
+ * returns the final 200. Returns the terminal-step response.
+ */
+async function driveScanToTerminal(): Promise<any> {
+  const walkRes = (await handler(postEvent({}), { waitUntil: vi.fn() } as any)) as any;
+  expect(walkRes.statusCode).toBe(202);
+  const walkBody = JSON.parse(walkRes.body);
+  expect(walkBody.phase).toBe('finalizing');
+  const finalRes = (await handler(
+    postEvent({ runId: walkBody.runId, resume: true }),
+    { waitUntil: vi.fn() } as any,
+  )) as any;
+  return finalRes;
+}
+
 function setUniverse(size: number) {
   const tickers = Array.from({ length: size }, (_, i) => `R${i.toString().padStart(4, '0')}`);
   mocks.resolveUniverse.mockReturnValue(tickers);
@@ -183,7 +203,7 @@ describe('russell2k insider bg-worker — Phase 4o W3 degraded-publish guard', (
       finnhubErrors: 0,
     }));
 
-    const res = (await handler(postEvent({}), { waitUntil: vi.fn() } as any)) as any;
+    const res = await driveScanToTerminal();
     expect(res.statusCode).toBe(200);
     const body = JSON.parse(res.body);
 
@@ -231,7 +251,7 @@ describe('russell2k insider bg-worker — Phase 4o W3 degraded-publish guard', (
       finnhubErrors: 0,
     }));
 
-    const res = (await handler(postEvent({}), { waitUntil: vi.fn() } as any)) as any;
+    const res = await driveScanToTerminal();
     expect(res.statusCode).toBe(200);
     const body = JSON.parse(res.body);
     expect(body.publishAction).toBe('publish-degraded');
@@ -271,7 +291,7 @@ describe('russell2k insider bg-worker — Phase 4o W3 degraded-publish guard', (
       finnhubErrors: 0,
     }));
 
-    const res = (await handler(postEvent({}), { waitUntil: vi.fn() } as any)) as any;
+    const res = await driveScanToTerminal();
     expect(res.statusCode).toBe(200);
     const body = JSON.parse(res.body);
     expect(body.publishAction).toBe('publish');
@@ -311,7 +331,7 @@ describe('russell2k insider bg-worker — Phase 4o W3 degraded-publish guard', (
       finnhubErrors: 1,
     }));
 
-    await handler(postEvent({}), { waitUntil: vi.fn() } as any);
+    await driveScanToTerminal();
     expect(mocks.writeSnapshot).toHaveBeenCalledTimes(1);
     const [, , snap] = mocks.writeSnapshot.mock.calls[0];
     // 3 batches × 50 calls = 150 calls; 3 × 5 = 15 rate-limited; 3 × 1 = 3 errors.
