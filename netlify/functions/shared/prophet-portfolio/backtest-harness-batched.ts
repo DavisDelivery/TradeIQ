@@ -30,25 +30,33 @@ import type {
 } from './backtest-harness';
 
 /**
- * Serializable resume payload. Mirrors the closure of the unbatched
- * harness, with the rebalance / mark cursors made explicit.
+ * Serializable resume payload — *bounded checkpoint only*. Mirrors the
+ * closure of the unbatched harness with the rebalance / mark cursors
+ * made explicit.
+ *
+ * Phase 4u W1 — the `equityCurve / swaps / completedHolds / warnings`
+ * arrays moved into `ProcessBatchResult.batch*` slices. The worker
+ * streams each slice to its per-run subcollection and reads them back
+ * at finalize time. Pre-4u they grew inline on the cursor and shared
+ * the same shape defect the regular engine had — see
+ * `reports/phase-4u/diagnosis.md`.
  */
 export interface PortfolioBacktestState {
   cash: number;
   positions: PortfolioPosition[];
-  /** Equity curve, accumulated daily, up to (but not including) nextMarkIdx. */
-  equityCurve: PortfolioBacktestResult['equityCurve'];
-  /** All swap events that have fired so far. */
-  swaps: SwapEvent[];
-  warnings: string[];
   totalSlippage: number;
   totalTurnoverNotional: number;
-  /** Hold-days at exit, one per completed swap-out — used for avgHoldDays. */
-  completedHolds: number[];
   /** Next index into the window's mark-dates array. */
   nextMarkIdx: number;
   /** Next index into the window's rebalance-dates array. */
   nextRebalanceIdx: number;
+  /** Phase 4u — cumulative subcollection counts for stable doc-id
+   *  allocation across batches. Mirrors the regular engine's
+   *  *RowCount fields. */
+  equityCurveRowCount: number;
+  swapRowCount: number;
+  completedHoldRowCount: number;
+  warningRowCount: number;
 }
 
 export interface ProcessBatchOptions {
@@ -77,6 +85,14 @@ export interface ProcessBatchResult {
   rebalancesProcessed: number;
   /** Number of mark days processed (rebalance days mark too, so this >= rebalancesProcessed). */
   marksProcessed: number;
+  /** Phase 4u — equityCurve points emitted during THIS batch only. */
+  batchEquityCurve: PortfolioBacktestResult['equityCurve'];
+  /** Phase 4u — swap events emitted during THIS batch only. */
+  batchSwaps: SwapEvent[];
+  /** Phase 4u — hold-days emitted during THIS batch only (one per exit). */
+  batchCompletedHolds: number[];
+  /** Phase 4u — warnings emitted during THIS batch only. */
+  batchWarnings: string[];
 }
 
 function sortedUnique(dates: string[]): string[] {
@@ -91,14 +107,15 @@ export function initialPortfolioState(config: PortfolioConfig): PortfolioBacktes
   return {
     cash: config.startCapital,
     positions: [],
-    equityCurve: [],
-    swaps: [],
-    warnings: [],
     totalSlippage: 0,
     totalTurnoverNotional: 0,
-    completedHolds: [],
     nextMarkIdx: 0,
     nextRebalanceIdx: 0,
+    // Phase 4u — bounded subcollection counters.
+    equityCurveRowCount: 0,
+    swapRowCount: 0,
+    completedHoldRowCount: 0,
+    warningRowCount: 0,
   };
 }
 
@@ -162,15 +179,17 @@ export async function processPortfolioBatch(
     throw new Error('processPortfolioBatch: window has no mark dates');
   }
 
-  // Work on a shallow-cloned state — caller still owns the original.
+  // Phase 4u — shallow-clone bounded state. The growing arrays
+  // (equityCurve/swaps/completedHolds/warnings) are now per-batch
+  // outputs, not part of state.
   const state: PortfolioBacktestState = {
     ...opts.state,
     positions: opts.state.positions.map((p) => ({ ...p })),
-    equityCurve: opts.state.equityCurve.slice(),
-    swaps: opts.state.swaps.slice(),
-    warnings: opts.state.warnings.slice(),
-    completedHolds: opts.state.completedHolds.slice(),
   };
+  const batchEquityCurve: PortfolioBacktestResult['equityCurve'] = [];
+  const batchSwaps: SwapEvent[] = [];
+  const batchCompletedHolds: number[] = [];
+  const batchWarnings: string[] = [];
 
   let rebalancesProcessed = 0;
   let marksProcessed = 0;
@@ -190,11 +209,19 @@ export async function processPortfolioBatch(
       // invocation picks up here and applies the rebalance.
       if (rebalancesProcessed >= batchSize) {
         state.nextMarkIdx = i;
+        state.equityCurveRowCount += batchEquityCurve.length;
+        state.swapRowCount += batchSwaps.length;
+        state.completedHoldRowCount += batchCompletedHolds.length;
+        state.warningRowCount += batchWarnings.length;
         return {
           state,
           done: false,
           rebalancesProcessed,
           marksProcessed,
+          batchEquityCurve,
+          batchSwaps,
+          batchCompletedHolds,
+          batchWarnings,
         };
       }
 
@@ -243,7 +270,7 @@ export async function processPortfolioBatch(
               86_400_000,
           ),
         );
-        state.completedHolds.push(holdDays);
+        batchCompletedHolds.push(holdDays);
         swapOut.push({
           ticker: e.ticker,
           shares: e.shares,
@@ -263,12 +290,12 @@ export async function processPortfolioBatch(
       for (const add of decision.in) {
         const px = await prices.closeAt(add.ticker, date);
         if (px == null || px <= 0) {
-          state.warnings.push(`${date}: missing price for ${add.ticker}, addition skipped`);
+          batchWarnings.push(`${date}: missing price for ${add.ticker}, addition skipped`);
           continue;
         }
         const grossSpend = Math.min(add.targetWeight * equityForSizing, state.cash);
         if (grossSpend <= 0) {
-          state.warnings.push(`${date}: no cash for ${add.ticker}, addition skipped`);
+          batchWarnings.push(`${date}: no cash for ${add.ticker}, addition skipped`);
           continue;
         }
         const effectivePx = px * (1 + config.slippageBps / 10_000);
@@ -298,7 +325,7 @@ export async function processPortfolioBatch(
       }
 
       if (swapOut.length > 0 || swapIn.length > 0 || decision.notes.length > 0) {
-        state.swaps.push({
+        batchSwaps.push({
           swapId: `${date}-bt`,
           timestamp: `${date}T21:00:00.000Z`,
           asOfDate: date,
@@ -322,7 +349,7 @@ export async function processPortfolioBatch(
     const spy = benchmarks?.spy ? await benchmarks.spy.closeAt('SPY', date) : null;
     const qqq = benchmarks?.qqq ? await benchmarks.qqq.closeAt('QQQ', date) : null;
     const iwf = benchmarks?.iwf ? await benchmarks.iwf.closeAt('IWF', date) : null;
-    state.equityCurve.push({
+    batchEquityCurve.push({
       date,
       portfolio: marked.equity,
       spy,
@@ -337,21 +364,37 @@ export async function processPortfolioBatch(
     // Daily-mark-only iterations are cheap; checking only after rebalances
     // keeps the inner loop tight and avoids tearing mid-mark-sweep.
     if (isRebalanceDate && isExpired() && rebalancesProcessed > 0) {
+      state.equityCurveRowCount += batchEquityCurve.length;
+      state.swapRowCount += batchSwaps.length;
+      state.completedHoldRowCount += batchCompletedHolds.length;
+      state.warningRowCount += batchWarnings.length;
       return {
         state,
         done: false,
         rebalancesProcessed,
         marksProcessed,
+        batchEquityCurve,
+        batchSwaps,
+        batchCompletedHolds,
+        batchWarnings,
       };
     }
   }
 
   // Schedule exhausted.
+  state.equityCurveRowCount += batchEquityCurve.length;
+  state.swapRowCount += batchSwaps.length;
+  state.completedHoldRowCount += batchCompletedHolds.length;
+  state.warningRowCount += batchWarnings.length;
   return {
     state,
     done: true,
     rebalancesProcessed,
     marksProcessed,
+    batchEquityCurve,
+    batchSwaps,
+    batchCompletedHolds,
+    batchWarnings,
   };
 }
 
@@ -414,20 +457,30 @@ export interface FinalizeOptions {
   state: PortfolioBacktestState;
   config: PortfolioConfig;
   window: BacktestWindow;
+  /** Phase 4u — cumulative equity curve assembled by the caller from the
+   *  per-batch subcollection. */
+  allEquityCurve: PortfolioBacktestResult['equityCurve'];
+  /** Phase 4u — cumulative swaps assembled from subcollection. */
+  allSwaps: SwapEvent[];
+  /** Phase 4u — cumulative hold-days assembled from subcollection. */
+  allCompletedHolds: number[];
+  /** Phase 4u — cumulative warnings assembled from subcollection. */
+  allWarnings: string[];
   riskFreeDailyRate?: number;
 }
 
 /**
- * Compute the terminal `PortfolioBacktestResult` from a state that has
- * exhausted the rebalance schedule. Mirrors the metrics block at the
- * bottom of the unbatched harness so the result shape is identical and
- * downstream consumers (summary doc + detail subdoc) need no changes.
+ * Compute the terminal `PortfolioBacktestResult` from the run state +
+ * the per-array subcollections the bg-function streamed per batch.
+ * Mirrors the metrics block at the bottom of the unbatched harness so
+ * the result shape is identical and downstream consumers (summary doc
+ * + detail subdoc) need no changes.
  */
 export function finalizePortfolioBacktest(
   opts: FinalizeOptions,
 ): PortfolioBacktestResult {
-  const { state, config, window } = opts;
-  const equityCurve = state.equityCurve;
+  const { state, config, window, allEquityCurve, allSwaps, allCompletedHolds, allWarnings } = opts;
+  const equityCurve = allEquityCurve;
   const portValues = equityCurve.map((p) => p.portfolio);
   const portRets = dailyReturns(portValues);
   const startVal = portValues[0] ?? config.startCapital;
@@ -461,8 +514,8 @@ export function finalizePortfolioBacktest(
       : 0;
 
   const avgHoldDays =
-    state.completedHolds.length > 0
-      ? state.completedHolds.reduce((s, x) => s + x, 0) / state.completedHolds.length
+    allCompletedHolds.length > 0
+      ? allCompletedHolds.reduce((s, x) => s + x, 0) / allCompletedHolds.length
       : 0;
 
   return {
@@ -481,13 +534,13 @@ export function finalizePortfolioBacktest(
     longestUnderwaterDays: longestUnderwaterDaysFrom(
       equityCurve.map((p) => ({ date: p.date, value: p.portfolio })),
     ),
-    swapCount: state.swaps.length,
+    swapCount: allSwaps.length,
     avgHoldDays: +avgHoldDays.toFixed(2),
     turnoverPct: +turnoverPct.toFixed(2),
     costDragPct: startVal > 0 ? +((state.totalSlippage / startVal) * 100).toFixed(4) : 0,
     rebalanceCount: sortedUnique(window.rebalanceDates).length,
-    swaps: state.swaps,
+    swaps: allSwaps,
     equityCurve,
-    warnings: state.warnings,
+    warnings: allWarnings,
   };
 }
