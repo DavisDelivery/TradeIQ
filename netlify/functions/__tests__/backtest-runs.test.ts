@@ -28,22 +28,40 @@ function makeDocSnap(id: string, data: any) {
 
 function buildFakeDb() {
   // The handlers chain: db().collection('backtestRuns').doc(id).{get|collection(...)...}
-  // and db().collection('backtestRuns').orderBy(...).limit(...).get().
+  // and db().collection('backtestRuns')[.where(...)].orderBy(field, dir).limit(...).get().
   const runsCol: any = {
     _ordered: false,
+    _orderField: 'completedAt',
+    _whereField: null as string | null,
+    _whereValue: null as unknown,
     _limit: Infinity,
-    orderBy() {
-      this._ordered = true;
-      return this;
+    where(field: string, _op: string, value: unknown) {
+      const clone = { ...this };
+      clone._whereField = field;
+      clone._whereValue = value;
+      return clone;
+    },
+    orderBy(field: string) {
+      const clone = { ...this };
+      clone._ordered = true;
+      clone._orderField = field;
+      return clone;
     },
     limit(n: number) {
-      this._limit = n;
-      return this;
+      const clone = { ...this };
+      clone._limit = n;
+      return clone;
     },
     async get() {
-      // Sort by completedAt desc for the list.
-      const all = Array.from(fakeDocs.runs.entries()).map(([id, data]) => ({ id, data }));
-      all.sort((a, b) => String(b.data.completedAt ?? '').localeCompare(String(a.data.completedAt ?? '')));
+      // Sort by the queried field (defaults to completedAt).
+      const all = Array.from(fakeDocs.runs.entries())
+        .map(([id, data]) => ({ id, data }))
+        .filter((e) => {
+          if (!this._whereField) return true;
+          return e.data[this._whereField] === this._whereValue;
+        });
+      const field = this._orderField;
+      all.sort((a, b) => String(b.data[field] ?? '').localeCompare(String(a.data[field] ?? '')));
       return makeSnap(all.slice(0, this._limit));
     },
     doc(id: string) {
@@ -209,6 +227,81 @@ describe('backtest-runs endpoints', () => {
       // zod error message.
       const res = await invoke(listHandler, makeEvent({ qs: { limit: '100' } }));
       expect(res.statusCode).toBe(500);
+    });
+
+    // Phase 4u W2 — failed-run visibility.
+    it('excludes failed runs from the default list (back-compat)', async () => {
+      fakeDocs.runs.set('ok', sampleRun({
+        runId: 'ok', status: 'complete', completedAt: '2026-05-10T10:00:00.000Z',
+        startedAt: '2026-05-10T09:00:00.000Z',
+      }));
+      fakeDocs.runs.set('boom', sampleRun({
+        runId: 'boom', status: 'failed', completedAt: null, failedAt: '2026-05-11T11:00:00.000Z',
+        startedAt: '2026-05-11T10:00:00.000Z', error: 'cursor doc too big',
+      }));
+      const res = await invoke(listHandler, makeEvent());
+      const body = JSON.parse(res.body);
+      expect(body.runs.map((r: any) => r.runId)).toEqual(['ok']);
+    });
+
+    it('includeIncomplete=1 returns failed/pending/running runs ordered by startedAt', async () => {
+      fakeDocs.runs.set('ok', sampleRun({
+        runId: 'ok', status: 'complete', completedAt: '2026-05-10T10:00:00.000Z',
+        startedAt: '2026-05-10T09:00:00.000Z',
+      }));
+      fakeDocs.runs.set('boom', sampleRun({
+        runId: 'boom', status: 'failed', completedAt: null, failedAt: '2026-05-11T11:00:00.000Z',
+        startedAt: '2026-05-11T10:00:00.000Z', error: 'cursor doc too big',
+      }));
+      fakeDocs.runs.set('go', sampleRun({
+        runId: 'go', status: 'running', completedAt: null,
+        startedAt: '2026-05-12T10:00:00.000Z',
+      }));
+      const res = await invoke(listHandler, makeEvent({ qs: { includeIncomplete: '1' } }));
+      const body = JSON.parse(res.body);
+      // Sorted by startedAt desc → go (12th), boom (11th), ok (10th).
+      expect(body.runs.map((r: any) => r.runId)).toEqual(['go', 'boom', 'ok']);
+      // The error field is surfaced for the failed run, null for the others.
+      expect(body.runs.find((r: any) => r.runId === 'boom').error).toBe('cursor doc too big');
+      expect(body.runs.find((r: any) => r.runId === 'ok').error).toBeNull();
+    });
+
+    it('status=failed filters to failed runs and surfaces the error', async () => {
+      fakeDocs.runs.set('ok', sampleRun({
+        runId: 'ok', status: 'complete', completedAt: '2026-05-10T10:00:00.000Z',
+        startedAt: '2026-05-10T09:00:00.000Z',
+      }));
+      fakeDocs.runs.set('boom1', sampleRun({
+        runId: 'boom1', status: 'failed', completedAt: null,
+        startedAt: '2026-05-11T10:00:00.000Z',
+        failedAt: '2026-05-11T11:00:00.000Z',
+        error: 'Document exceeds 1 MiB',
+      }));
+      fakeDocs.runs.set('boom2', sampleRun({
+        runId: 'boom2', status: 'failed', completedAt: null,
+        startedAt: '2026-05-12T10:00:00.000Z',
+        failedAt: '2026-05-12T11:00:00.000Z',
+        error: 'synthetic engine failure',
+      }));
+      const res = await invoke(listHandler, makeEvent({ qs: { status: 'failed' } }));
+      const body = JSON.parse(res.body);
+      expect(body.runs.map((r: any) => r.runId)).toEqual(['boom2', 'boom1']);
+      expect(body.runs.every((r: any) => r.status === 'failed')).toBe(true);
+      expect(body.runs[0].error).toBe('synthetic engine failure');
+      expect(body.runs[1].error).toBe('Document exceeds 1 MiB');
+    });
+
+    it('exposes startedAt + failedAt fields on every row', async () => {
+      fakeDocs.runs.set('boom', sampleRun({
+        runId: 'boom', status: 'failed', completedAt: null,
+        startedAt: '2026-05-19T01:44:34.890Z',
+        failedAt: '2026-05-19T02:28:44.931Z',
+        error: 'cursor over 1 MiB',
+      }));
+      const res = await invoke(listHandler, makeEvent({ qs: { status: 'failed' } }));
+      const body = JSON.parse(res.body);
+      expect(body.runs[0].startedAt).toBe('2026-05-19T01:44:34.890Z');
+      expect(body.runs[0].failedAt).toBe('2026-05-19T02:28:44.931Z');
     });
   });
 
