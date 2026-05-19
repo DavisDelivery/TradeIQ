@@ -29,6 +29,7 @@ import type { Handler } from '@netlify/functions';
 import { schedule } from '@netlify/functions';
 import { getAdminDb } from './shared/firebase-admin';
 import { logger } from './shared/logger';
+import { recoverStuckBacktestRuns } from './shared/backtest-resume/recover';
 
 const COLLECTION = 'portfolioBacktests';
 
@@ -153,8 +154,44 @@ export async function runCron(opts: {
   let chosenWindow: string;
   let strategy: 'next-undone' | 'all-done-revalidate' | 'legacy-fallback';
   let perWindow: Record<string, unknown> | undefined;
+  const db = opts.db ?? getAdminDb();
+
+  // Phase 4r-W1b W3 — sweep stuck `running` backtests BEFORE picking a
+  // window to dispatch. Two reasons to do it here rather than later:
+  //   1. A successful resume of a stuck run advances the cursor before
+  //      the pick query reads the doc, so `pickNextUndoneWindow` sees
+  //      the live state.
+  //   2. A failed (cap-exhausted) run is no longer the "latest" `running`
+  //      doc for its window — the pick can then choose a fresh run for
+  //      that window cleanly.
+  // Best-effort: a Firestore hiccup here must not block the new pick.
   try {
-    const db = opts.db ?? getAdminDb();
+    const recovery = await recoverStuckBacktestRuns({
+      db,
+      collection: 'portfolioBacktests',
+      origin,
+      functionPath: '/.netlify/functions/run-portfolio-backtest-background',
+    });
+    if (
+      recovery.resumed.length > 0 ||
+      recovery.failed.length > 0 ||
+      recovery.skipped.length > 0
+    ) {
+      log.warn('stuck_runs_swept', {
+        inspected: recovery.inspected,
+        resumed: recovery.resumed.map((r) => r.runId),
+        failed: recovery.failed.map((r) => r.runId),
+        skipped: recovery.skipped.map((r) => r.runId),
+      });
+    } else {
+      log.info('stuck_run_sweep_clean', { inspected: recovery.inspected });
+    }
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    log.error('stuck_run_recovery_failed', { err: msg });
+  }
+
+  try {
     const result = await pickNextUndoneWindow(db, activeVersion);
     chosenWindow = result.window;
     strategy = result.reason === 'undone' ? 'next-undone' : 'all-done-revalidate';

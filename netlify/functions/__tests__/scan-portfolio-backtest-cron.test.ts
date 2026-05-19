@@ -214,4 +214,67 @@ describe('runCron', () => {
     expect(body.strategy).toBe('legacy-fallback');
     expect(WINDOW_CYCLE).toContain(body.window);
   });
+
+  // Phase 4r-W1b W3 — recovery sweep runs BEFORE the window pick. The
+  // stub here returns no `cursor` on any doc, so the sweep is a no-op
+  // (no stuck runs to recover); the test asserts that the sweep is
+  // wired in without disrupting the pick. The detailed recovery
+  // semantics are covered in recover.test.ts.
+  it('runs the stuck-run recovery sweep without breaking window selection', async () => {
+    const docs = [
+      fakeDoc('rolling-2018', 'done', 'v2', '2026-05-10T22:00:00Z'),
+      fakeDoc('rolling-2019', 'done', 'v2', '2026-05-11T22:00:00Z'),
+    ];
+    const db = makeStubDb(docs);
+    const fetchSpy = vi.fn(async () =>
+      new Response('{"ok":true}', { status: 202 }),
+    );
+    const res = await runCron({
+      db,
+      fetchImpl: fetchSpy as unknown as typeof fetch,
+      origin: 'https://example.test',
+      activeVersion: 'v2',
+    });
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.body);
+    // rolling-2018 and -2019 are done; next undone is rolling-2020.
+    expect(body.window).toBe('rolling-2020');
+    expect(body.strategy).toBe('next-undone');
+  });
+
+  // Phase 4r-W1b W3 — if the recovery sweep itself throws, runCron
+  // logs and continues with the window pick. Defence in depth: a
+  // recovery hiccup must not freeze the cron.
+  it('continues to dispatch when the recovery sweep throws', async () => {
+    let recoveryCallCount = 0;
+    const collection = vi.fn(() => ({
+      orderBy: vi.fn(() => ({
+        limit: vi.fn(() => ({
+          get: vi.fn(async () => {
+            recoveryCallCount++;
+            // First call (from recoverStuckBacktestRuns) throws; second
+            // call (from pickNextUndoneWindow) succeeds with no docs so
+            // the pick falls through to the first rolling window.
+            if (recoveryCallCount === 1) throw new Error('recovery firestore down');
+            return { docs: [] };
+          }),
+        })),
+      })),
+    }));
+    const db = { collection } as unknown as Parameters<typeof pickNextUndoneWindow>[0];
+    const fetchSpy = vi.fn(async () =>
+      new Response('{"ok":true}', { status: 202 }),
+    );
+    const res = await runCron({
+      db,
+      fetchImpl: fetchSpy as unknown as typeof fetch,
+      origin: 'https://example.test',
+      activeVersion: 'v2',
+    });
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.body);
+    expect(body.strategy).toBe('next-undone');
+    // The cron still dispatched a window despite the recovery throw.
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
 });

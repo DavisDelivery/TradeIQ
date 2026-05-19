@@ -59,6 +59,16 @@ const BUDGET_MS = Number(process.env.BACKTEST_BUDGET_MS ?? 13 * 60_000);
 // sp500/monthly. Override via BACKTEST_BATCH_SIZE for tuning.
 const BATCH_SIZE = Number(process.env.BACKTEST_BATCH_SIZE ?? 8);
 
+// Phase 4r-W1b — pre-dispatch startup jitter (ms). 8 rolling-window
+// backtests fired in parallel all trip their 13-min watchdog at the
+// same instant; their self-POSTs cluster within ~10 ms of each other
+// at the gateway and hit the per-function concurrency ceiling. A small
+// random delay (≤1500 ms) before the dispatch fetch breaks up the
+// arrival burst without serialising the runs. The retry-with-backoff
+// inside dispatchReinvoke is the primary defence; jitter just reduces
+// the chance retries are needed at all.
+const REINVOKE_JITTER_MS = Number(process.env.BACKTEST_REINVOKE_JITTER_MS ?? 1_500);
+
 // Phase 4i — strategy reframed to "Active Weekly Rebalance" (v2).
 // v1 was effectively buy-and-hold (positionCount 10 / minHoldDays 30 /
 // maxSwaps 3 / candidatePool 15 → 1 swap observed across 418 weekly
@@ -331,19 +341,45 @@ export const handler: Handler = async (event, context) => {
       '/.netlify/functions/run-portfolio-backtest-background',
     );
 
+    // Phase 4r-W1b — pass a small startup jitter (≤1.5s) so 8 concurrent
+    // watchdogs do not POST to the gateway in the same instant. The
+    // dispatch itself also retries with backoff on 429/5xx (see
+    // dispatchReinvoke); jitter just reduces the chance the retry is
+    // needed in the first place.
     const reinvokeCtx: ReinvokeContext = context as unknown as ReinvokeContext;
-    const dispatched = await dispatchReinvoke(reinvokeUrl, runId, reinvokeCtx, {
-      window: label,
-    });
+    const dispatched = await dispatchReinvoke(
+      reinvokeUrl,
+      runId,
+      reinvokeCtx,
+      { window: label },
+      { jitterMs: REINVOKE_JITTER_MS },
+    );
+
+    // Phase 4r-W1b — stamp dispatch outcome on the cursor regardless of
+    // success. The previous implementation only stamped on dispatch
+    // failure AND only saw sync setup errors; gateway 429/5xx never
+    // surfaced. Now `reinvokeAttempts` / `lastReinvokeAt` /
+    // `lastReinvokeStatus` always reflect what happened, and
+    // `lastReinvokeError` is set iff the chain ultimately failed.
+    const cursorWithDispatch: BacktestCursor<PortfolioBacktestState> = {
+      ...nextCursor,
+      lastReinvokeAt: new Date().toISOString(),
+      reinvokeAttempts: (cursor.reinvokeAttempts ?? 0) + 1,
+      lastReinvokeRetries: dispatched.attempts,
+      lastReinvokeStatus: dispatched.lastStatus,
+      ...(dispatched.ok
+        ? { lastReinvokeError: undefined }
+        : { lastReinvokeError: dispatched.error ?? 'unknown dispatch failure' }),
+    };
+    await writeCursor(db, COLLECTION, runId, cursorWithDispatch);
 
     if (!dispatched.ok) {
-      // Stamp the error onto the cursor for visibility but still return
-      // 202 — the cursor is committed so a manual re-fire can recover.
-      await writeCursor(db, COLLECTION, runId, {
-        ...nextCursor,
-        lastReinvokeError: dispatched.error,
+      log.error('reinvoke_dispatch_failed', {
+        runId,
+        attempts: dispatched.attempts,
+        lastStatus: dispatched.lastStatus,
+        err: dispatched.error,
       });
-      log.error('reinvoke_dispatch_failed', { runId, err: dispatched.error });
     }
 
     log.info('batch_complete_continuing', {

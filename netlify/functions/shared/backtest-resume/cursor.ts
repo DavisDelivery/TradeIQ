@@ -55,6 +55,34 @@ export interface BacktestCursor<TState = unknown> {
   lastError?: string;
   /** Set if a self-reinvoke fetch failed; orchestrator may need to recover. */
   lastReinvokeError?: string;
+  /** Phase 4r-W1b — ISO timestamp of the most recent self-reinvoke
+   *  dispatch attempt. When `status === 'running'` and this is set,
+   *  we KNOW the watchdog tripped and we attempted to chain. If the
+   *  cursor's `lastInvocationStartedAt` does not advance past this
+   *  point, the reinvoke dispatch either failed or the next invocation
+   *  never landed — that pinpoints the stall to the reinvoke layer
+   *  rather than the watchdog or the batch loop. Mirrors the
+   *  Phase 4o W2 addition on the scan-side cursor. */
+  lastReinvokeAt?: string;
+  /** Phase 4r-W1b — running counter of self-reinvoke dispatch attempts
+   *  (one increment per call to `dispatchReinvoke`, not per retry
+   *  inside it). Compare to `invocationCount` post-mortem: if
+   *  reinvokeAttempts === N and invocationCount === N (rather than
+   *  N+1), the chain stalled at the Nth handoff. */
+  reinvokeAttempts?: number;
+  /** Phase 4r-W1b — number of retries the LAST dispatch consumed
+   *  (1..maxAttempts). > 1 means the gateway throttled at least once;
+   *  routinely > 1 across runs hints at concurrency pressure. */
+  lastReinvokeRetries?: number;
+  /** Phase 4r-W1b — HTTP status of the last dispatch's final attempt,
+   *  when one was received. Diagnostic only — the cursor moves
+   *  forward on success and stamps lastReinvokeError on failure. */
+  lastReinvokeStatus?: number;
+  /** Phase 4r-W1b W3 — number of stuck-run recovery attempts the
+   *  recovery sweep has issued for this run. Capped by
+   *  MAX_RECOVERY_ATTEMPTS in `recover.ts`; on cap exhaustion the run
+   *  is failed cleanly so a fresh run can take the window. */
+  recoveryAttempts?: number;
 }
 
 /**

@@ -60,6 +60,22 @@ interface RunSummary {
   /** For `running` docs: ms since the most recent cursor write. > 15min
    *  = the chain stalled without writing the terminal done status. */
   invocationAgeMs: number | null;
+  /** Phase 4r-W1b — running counter of self-reinvoke dispatch attempts
+   *  the worker has made on this run. Compare against `invocationCount`
+   *  in logs / cursor to localise stalls to the reinvoke layer. */
+  reinvokeAttempts: number | null;
+  /** Phase 4r-W1b — HTTP status of the last reinvoke's final attempt.
+   *  202 = healthy. 429/5xx = throttled. Combine with `reinvokeAttempts`
+   *  to see whether retries got it through. */
+  lastReinvokeStatus: number | null;
+  /** Phase 4r-W1b — error from the most recent reinvoke, when the chain
+   *  exhausted its retries. Pre-W1b this was almost never written; post
+   *  W1b it captures gateway throttling + transient network failures. */
+  lastReinvokeError: string | null;
+  /** Phase 4r-W1b W3 — number of stuck-run recovery attempts the
+   *  sweep has issued for this run. Reaching MAX_RECOVERY_ATTEMPTS
+   *  triggers a clean `failed` flip on the next sweep. */
+  recoveryAttempts: number | null;
 }
 
 interface WindowState {
@@ -85,7 +101,16 @@ function summarize(doc: FirebaseFirestore.DocumentSnapshot, now: number): RunSum
   const data = d ?? {};
   const startedAt = toIsoOrNull(data.startedAt);
   const completedAt = toIsoOrNull(data.completedAt);
-  const cursorRaw = data.cursor as { lastInvocationStartedAt?: string } | null | undefined;
+  const cursorRaw = data.cursor as
+    | {
+        lastInvocationStartedAt?: string;
+        reinvokeAttempts?: number;
+        lastReinvokeStatus?: number;
+        lastReinvokeError?: string;
+        recoveryAttempts?: number;
+      }
+    | null
+    | undefined;
   const lastInvAt = cursorRaw?.lastInvocationStartedAt
     ? Date.parse(cursorRaw.lastInvocationStartedAt)
     : NaN;
@@ -101,6 +126,20 @@ function summarize(doc: FirebaseFirestore.DocumentSnapshot, now: number): RunSum
       typeof data.excessReturnPct === 'number' ? data.excessReturnPct : null,
     ageMs: Number.isFinite(startedMs) ? now - startedMs : null,
     invocationAgeMs: Number.isFinite(lastInvAt) ? now - lastInvAt : null,
+    reinvokeAttempts:
+      typeof cursorRaw?.reinvokeAttempts === 'number' ? cursorRaw.reinvokeAttempts : null,
+    lastReinvokeStatus:
+      typeof cursorRaw?.lastReinvokeStatus === 'number'
+        ? cursorRaw.lastReinvokeStatus
+        : null,
+    lastReinvokeError:
+      typeof cursorRaw?.lastReinvokeError === 'string'
+        ? cursorRaw.lastReinvokeError
+        : null,
+    recoveryAttempts:
+      typeof cursorRaw?.recoveryAttempts === 'number'
+        ? cursorRaw.recoveryAttempts
+        : null,
   };
 }
 
