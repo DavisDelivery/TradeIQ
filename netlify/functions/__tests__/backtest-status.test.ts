@@ -165,4 +165,63 @@ describe('/api/backtest-status', () => {
     expect(body.windows).toHaveLength(1);
     expect(body.windows[0].window).toBe('rolling-2018');
   });
+
+  // Phase 4r-W1b — surfaces the new reinvoke diagnostics on the
+  // RunSummary so operators can see throttling / recovery without
+  // reading raw Firestore.
+  it('surfaces reinvokeAttempts / lastReinvokeStatus / recoveryAttempts from the cursor', async () => {
+    const recent = new Date(Date.now() - 60_000).toISOString();
+    docsForReturn = [
+      doc(
+        'pb-rolling-2020-diag',
+        'rolling-2020',
+        'running',
+        'v2',
+        recent,
+        {
+          cursor: {
+            lastInvocationStartedAt: recent,
+            reinvokeAttempts: 4,
+            lastReinvokeStatus: 429,
+            lastReinvokeError: 'HTTP 429',
+            recoveryAttempts: 1,
+          },
+        },
+      ),
+    ];
+    const res = (await handler(get({ window: 'rolling-2020' }), {} as never)) as {
+      statusCode: number;
+      body: string;
+    };
+    const body = JSON.parse(res.body);
+    const latest = body.windows[0].latest;
+    expect(latest.reinvokeAttempts).toBe(4);
+    expect(latest.lastReinvokeStatus).toBe(429);
+    expect(latest.lastReinvokeError).toBe('HTTP 429');
+    expect(latest.recoveryAttempts).toBe(1);
+  });
+
+  it('reports the new diagnostic fields as null when the cursor lacks them (back-compat)', async () => {
+    const recent = new Date(Date.now() - 60_000).toISOString();
+    docsForReturn = [
+      doc(
+        'pb-rolling-2020-old',
+        'rolling-2020',
+        'running',
+        'v2',
+        recent,
+        { cursor: { lastInvocationStartedAt: recent } },
+      ),
+    ];
+    const res = (await handler(get({ window: 'rolling-2020' }), {} as never)) as {
+      statusCode: number;
+      body: string;
+    };
+    const body = JSON.parse(res.body);
+    const latest = body.windows[0].latest;
+    expect(latest.reinvokeAttempts).toBeNull();
+    expect(latest.lastReinvokeStatus).toBeNull();
+    expect(latest.lastReinvokeError).toBeNull();
+    expect(latest.recoveryAttempts).toBeNull();
+  });
 });
