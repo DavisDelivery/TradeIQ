@@ -40,6 +40,7 @@ import { validateConfig } from './shared/backtest/engine';
 import type { BacktestConfig } from './shared/backtest/types';
 import { getAdminDb } from './shared/firebase-admin';
 import { logger } from './shared/logger';
+import { recoverStuckBacktestRuns } from './shared/backtest-resume/recover';
 
 const headers = { 'Content-Type': 'application/json' };
 
@@ -167,6 +168,45 @@ export const handler: Handler = async (event) => {
     };
   }
 
+  // --- Phase 4v — sweep stuck non-portfolio runs before deciding what
+  // to do with this trigger. The portfolio side already does this in
+  // `scan-portfolio-backtest-cron.ts:169`; the non-portfolio side had
+  // no recovery loop, so two stuck Phase 4t composite runs sat at
+  // `status: running` for 4+ hours after the W1b reinvoke chain
+  // dropped (see reports/phase-4v-backtest-concurrency/diagnosis.md).
+  //
+  // Best-effort: a Firestore hiccup must not block the new trigger.
+  // Two reasons to run it here, not later:
+  //   1. A resumed stuck run advances its cursor before the single-
+  //      flight scan reads the doc, so single-flight sees fresh state.
+  //   2. A failed (cap-exhausted) run is no longer `running`, so it
+  //      stops blocking new triggers on the 30-min single-flight
+  //      window.
+  const recoveryOrigin = inferOrigin(event as any);
+  try {
+    const recovery = await recoverStuckBacktestRuns({
+      db: getAdminDb(),
+      collection: 'backtestRuns',
+      origin: recoveryOrigin,
+      functionPath: '/.netlify/functions/run-backtest-background',
+    });
+    if (
+      recovery.resumed.length > 0 ||
+      recovery.failed.length > 0 ||
+      recovery.skipped.length > 0
+    ) {
+      log.warn('stuck_runs_swept', {
+        inspected: recovery.inspected,
+        resumed: recovery.resumed.map((r) => r.runId),
+        failed: recovery.failed.map((r) => r.runId),
+        skipped: recovery.skipped.map((r) => r.runId),
+      });
+    }
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    log.warn('stuck_run_recovery_failed', { err: msg });
+  }
+
   // --- Single-flight (skipped when caller opts into parallel).
   // The default guards against accidental double-clicks. Phase 5a's
   // seed-run batch (5 configs, briefs/phase-5a-seed-runs.md) needs
@@ -213,8 +253,7 @@ export const handler: Handler = async (event) => {
     };
   }
 
-  const origin = inferOrigin(event as any);
-  const backgroundUrl = `${origin}/.netlify/functions/run-backtest-background`;
+  const backgroundUrl = `${recoveryOrigin}/.netlify/functions/run-backtest-background`;
 
   // bg-dispatch fix — mirror of PR #30 (portfolio-backtest-trigger).
   // Live-confirmed stuck run: bt_20260515115436_ixxt1o sat at

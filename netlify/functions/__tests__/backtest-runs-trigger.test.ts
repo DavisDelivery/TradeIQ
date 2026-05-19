@@ -16,6 +16,14 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
 const mockPending = vi.fn();
 const mockGenerateRunId = vi.fn();
+const mockRecoverStuckBacktestRuns = vi.fn<(...args: any[]) => Promise<any>>(
+  async () => ({
+    inspected: 0,
+    resumed: [],
+    failed: [],
+    skipped: [],
+  }),
+);
 let inFlightRunId: string | null = null;
 
 vi.mock('../shared/backtest/persistence', async () => {
@@ -26,6 +34,15 @@ vi.mock('../shared/backtest/persistence', async () => {
     generateRunId: () => mockGenerateRunId(),
   };
 });
+
+// Phase 4v — recovery sweep mocked at module level so we can assert
+// the trigger calls it (with the regular-engine collection name) on
+// every fire. Test-suite cannot rely on the real Firestore mock under
+// recover.ts's `orderBy().limit().get()` chain.
+vi.mock('../shared/backtest-resume/recover', () => ({
+  recoverStuckBacktestRuns: (...args: any[]) =>
+    mockRecoverStuckBacktestRuns(...args),
+}));
 
 vi.mock('../shared/firebase-admin', () => ({
   getAdminDb: () => ({
@@ -109,6 +126,13 @@ describe('backtest-runs-trigger', () => {
     mockPending.mockResolvedValue(undefined);
     mockGenerateRunId.mockReset();
     mockGenerateRunId.mockReturnValue('bt_test_001');
+    mockRecoverStuckBacktestRuns.mockReset();
+    mockRecoverStuckBacktestRuns.mockResolvedValue({
+      inspected: 0,
+      resumed: [],
+      failed: [],
+      skipped: [],
+    });
     // global fetch returns a resolved 202 — the trigger fire-and-forgets,
     // so the resolution is observed asynchronously after the handler returns.
     fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => ({
@@ -348,5 +372,65 @@ describe('backtest-runs-trigger', () => {
     expect(body.ok).toBe(true);
     expect(body.dispatchOk).toBe(false);
     expect(body.runId).toBe('bt_test_001');
+  });
+
+  // ---- Phase 4v stuck-run recovery wiring ----
+  //
+  // Two Phase 4t composite runs (sp500 + russell2k) stalled at
+  // status='running' after PR #48. Diagnosis:
+  // reports/phase-4v-backtest-concurrency/diagnosis.md. The portfolio
+  // path already had `recoverStuckBacktestRuns` wired in scan-portfolio-
+  // backtest-cron.ts; the non-portfolio trigger had no equivalent. This
+  // test pins the wiring so the gap doesn't reopen.
+
+  it('calls recoverStuckBacktestRuns against the regular collection before the single-flight check', async () => {
+    const res = await invoke(handler, makeEvent({ body: validConfig }));
+    expect(res.statusCode).toBe(202);
+    expect(mockRecoverStuckBacktestRuns).toHaveBeenCalledTimes(1);
+    const callArgs = mockRecoverStuckBacktestRuns.mock.calls[0][0];
+    expect(callArgs.collection).toBe('backtestRuns');
+    expect(callArgs.functionPath).toBe('/.netlify/functions/run-backtest-background');
+    expect(typeof callArgs.origin).toBe('string');
+    expect(callArgs.origin).toMatch(/^https?:\/\//);
+  });
+
+  it('runs the recovery sweep even when single-flight is bypassed (allowParallel:true)', async () => {
+    // allowParallel:true takes the bypass branch — recovery must still
+    // run because a stuck run from a prior parallel fire is exactly the
+    // case Chad hit on 2026-05-19.
+    inFlightRunId = 'bt_inflight_existing';
+    const res = await invoke(
+      handler,
+      makeEvent({ body: { ...validConfig, allowParallel: true } }),
+    );
+    expect(res.statusCode).toBe(202);
+    expect(mockRecoverStuckBacktestRuns).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not block the trigger when recoverStuckBacktestRuns throws', async () => {
+    // Recovery is best-effort. A Firestore hiccup here must not block
+    // a fresh trigger — mirrors the portfolio cron's contract.
+    mockRecoverStuckBacktestRuns.mockRejectedValue(new Error('firestore down'));
+    const res = await invoke(handler, makeEvent({ body: validConfig }));
+    expect(res.statusCode).toBe(202);
+    expect(JSON.parse(res.body).runId).toBe('bt_test_001');
+    expect(mockPending).toHaveBeenCalledTimes(1);
+  });
+
+  it('runs recovery BEFORE the single-flight check (so a resumed run advances first)', async () => {
+    // The order matters: recovery's resume may advance a stuck run's
+    // cursor or fail it, which changes what `findInFlightRun` sees.
+    // Mirrors the portfolio cron's docstring at
+    // scan-portfolio-backtest-cron.ts:160-167.
+    const callOrder: string[] = [];
+    mockRecoverStuckBacktestRuns.mockImplementation(async () => {
+      callOrder.push('recover');
+      return { inspected: 0, resumed: [], failed: [], skipped: [] };
+    });
+    mockPending.mockImplementation(async () => {
+      callOrder.push('pending');
+    });
+    await invoke(handler, makeEvent({ body: validConfig }));
+    expect(callOrder).toEqual(['recover', 'pending']);
   });
 });
