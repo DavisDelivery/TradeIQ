@@ -31,6 +31,10 @@ export const queryKeys = {
   analystsStatus: () => ['tradeiq', 'analystsStatus'],
   research: (ticker) => ['tradeiq', 'research', ticker],
   chartAnalysis: (ticker) => ['tradeiq', 'chartAnalysis', ticker],
+  // Phase 4q — per-ticker analyst rationale (live recompute, session-
+  // memoized: opening the same stock twice returns the cached payload
+  // without re-fetching).
+  targetRationale: (ticker) => ['tradeiq', 'targetRationale', ticker],
   snapshotHistory: (board) => ['tradeiq', 'snapshotHistory', board],
   optionsFlow: () => ['tradeiq', 'optionsFlow'],
   backtest: (lookback, tickers) => ['tradeiq', 'backtest', lookback, tickers],

@@ -1,6 +1,7 @@
-import { describe, it, expect } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import React from 'react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import {
   AnalystContributions,
   StatusBadge,
@@ -17,8 +18,13 @@ import {
 //   - REMOVED  (gray)    — analyst permanently removed from BASE_WEIGHTS
 //                          (currently macro-regime, patent-analyst per
 //                          Phase 4f-finish audit § 2)
+//
+// Phase 4q — adds inline accordion. Tests cover row expansion, no-data
+// row rendering ("No actionable data — <reason>"), and signals
+// rendering via the W1 endpoint payload.
 
 const sampleTarget = {
+  ticker: 'NVDA',
   scoredAnalysts: [
     'technical-analyst',
     'sector-rotation',
@@ -42,6 +48,74 @@ const sampleTarget = {
     { analyst: 'political-analyst',   score: 68, direction: 'long',    weight: 0.11 },
   ],
 };
+
+// Phase 4q — every test mounts AnalystContributions, which calls
+// useTargetRationale() → fetch. Tests get a wrapper QueryClientProvider
+// and a global fetch mock so the hook resolves deterministically.
+
+function makeWrapper() {
+  const qc = new QueryClient({
+    defaultOptions: { queries: { retry: false, gcTime: Infinity, staleTime: Infinity } },
+  });
+  const wrapper = ({ children }) => (
+    <QueryClientProvider client={qc}>{children}</QueryClientProvider>
+  );
+  return { qc, wrapper };
+}
+
+function rationalePayload(overrides = {}) {
+  return {
+    ok: true,
+    ticker: 'NVDA',
+    composite: 64,
+    tier: 'B',
+    direction: 'long',
+    scoredAt: '2026-05-19T12:00:00.000Z',
+    modelVersion: 'v1',
+    analysts: [
+      {
+        analyst: 'technical-analyst',
+        score: 78,
+        direction: 'long',
+        weight: 0.17,
+        confidence: 0.65,
+        rationale: 'uptrend intact, +4.2% 20d',
+        signals: { ema20: 105, ema50: 100, roc20Pct: 4.2, volRatio: 1.4 },
+      },
+      {
+        analyst: 'news-sentiment',
+        score: 50,
+        direction: 'neutral',
+        weight: 0,
+        confidence: 0,
+        rationale: 'no recent news',
+        signals: { newsCount: 0, _noData: true, _reason: 'no_data' },
+      },
+      {
+        analyst: 'earnings-analyst',
+        score: 50,
+        direction: 'neutral',
+        weight: 0,
+        confidence: 0,
+        rationale: 'no earnings catalyst',
+        signals: { _noData: true, _reason: 'no_actionable_data', beats4q: 0 },
+      },
+    ],
+    ...overrides,
+  };
+}
+
+let fetchSpy;
+beforeEach(() => {
+  fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => ({
+    ok: true,
+    status: 200,
+    json: async () => rationalePayload(),
+  }));
+});
+afterEach(() => {
+  fetchSpy?.mockRestore();
+});
 
 describe('provenanceFor', () => {
   it('classifies permanently-removed analysts as removed', () => {
@@ -122,52 +196,212 @@ describe('StatusBadge', () => {
 
 describe('AnalystContributions', () => {
   it('renders nothing when target is null', () => {
-    const { container } = render(<AnalystContributions target={null} />);
+    const { wrapper } = makeWrapper();
+    const { container } = render(<AnalystContributions target={null} />, { wrapper });
     expect(container).toBeEmptyDOMElement();
   });
 
   it('renders one row per analyst contribution', () => {
-    render(<AnalystContributions target={sampleTarget} />);
+    const { wrapper } = makeWrapper();
+    render(<AnalystContributions target={sampleTarget} />, { wrapper });
     expect(screen.getAllByText('LIVE').length).toBe(sampleTarget.scoredAnalysts.length);
     expect(screen.getAllByText('NO DATA').length).toBe(1);   // news-sentiment
     expect(screen.getAllByText('REMOVED').length).toBe(2);   // macro + patent
   });
 
   it('replaces removed analyst score with an em-dash', () => {
-    render(<AnalystContributions target={sampleTarget} />);
+    const { wrapper } = makeWrapper();
+    render(<AnalystContributions target={sampleTarget} />, { wrapper });
     // Each removed analyst's score cell renders "—" instead of "50".
-    // There are 2 removed rows + 1 weight column on each line ("—"
-    // also appears for missing weights). Count by looking for at
-    // least 2 em-dashes in the rendered output.
     const dashes = screen.getAllByText('—');
     expect(dashes.length).toBeGreaterThanOrEqual(2);
   });
 
   it('honors target.scoredAnalysts to mark LIVE rows', () => {
-    render(<AnalystContributions target={sampleTarget} />);
-    // technical-analyst is in scoredAnalysts → must be LIVE
-    // (smoke test — re-verifies provenanceFor wiring through render)
+    const { wrapper } = makeWrapper();
+    render(<AnalystContributions target={sampleTarget} />, { wrapper });
     const liveBadges = screen.getAllByText('LIVE');
     expect(liveBadges.length).toBe(7);
   });
 
   it('renders empty when analystContributions is empty array', () => {
+    const { wrapper } = makeWrapper();
     const empty = { ...sampleTarget, analystContributions: [] };
-    render(<AnalystContributions target={empty} />);
+    render(<AnalystContributions target={empty} />, { wrapper });
     expect(screen.queryByText('LIVE')).not.toBeInTheDocument();
     expect(screen.queryByText('NO DATA')).not.toBeInTheDocument();
     expect(screen.queryByText('REMOVED')).not.toBeInTheDocument();
   });
 
   it('renders unknown analyst names as-is (no crash on label lookup)', () => {
+    const { wrapper } = makeWrapper();
     const mystery = {
+      ticker: 'MYST',
       scoredAnalysts: ['quantum-vibes'],
       noDataAnalysts: [],
       analystContributions: [
         { analyst: 'quantum-vibes', score: 77, direction: 'long', weight: 1 },
       ],
     };
-    render(<AnalystContributions target={mystery} />);
+    render(<AnalystContributions target={mystery} />, { wrapper });
     expect(screen.getByText('quantum-vibes')).toBeInTheDocument();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase 4q — accordion + signals + no-data rendering.
+// ---------------------------------------------------------------------------
+
+describe('AnalystContributions — Phase 4q accordion', () => {
+  it('fetches /api/target-rationale for the target ticker on mount', async () => {
+    const { wrapper } = makeWrapper();
+    render(<AnalystContributions target={sampleTarget} />, { wrapper });
+    await waitFor(() => {
+      expect(fetchSpy).toHaveBeenCalled();
+    });
+    const url = fetchSpy.mock.calls[0][0];
+    expect(url).toContain('/api/target-rationale');
+    expect(url).toContain('ticker=NVDA');
+  });
+
+  it('does NOT fetch when target has no ticker (enabled gate)', async () => {
+    const { wrapper } = makeWrapper();
+    const noTicker = { ...sampleTarget, ticker: undefined };
+    render(<AnalystContributions target={noTicker} />, { wrapper });
+    // Allow microtasks to run
+    await new Promise((r) => setTimeout(r, 10));
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('clicking a LIVE row expands rationale + signals', async () => {
+    const { wrapper } = makeWrapper();
+    render(<AnalystContributions target={sampleTarget} />, { wrapper });
+
+    // Wait for the rationale fetch to land so the row body has data.
+    await waitFor(() => {
+      expect(fetchSpy).toHaveBeenCalled();
+    });
+
+    // Find the technical-analyst row's button (its label is "Technical")
+    const techRow = screen.getByTestId('analyst-row-technical-analyst');
+    const button = techRow.querySelector('button');
+    expect(button).toBeTruthy();
+    expect(button.getAttribute('aria-expanded')).toBe('false');
+
+    fireEvent.click(button);
+    expect(button.getAttribute('aria-expanded')).toBe('true');
+
+    // Rationale text shows.
+    await waitFor(() => {
+      expect(screen.getByText(/uptrend intact/i)).toBeInTheDocument();
+    });
+
+    // Signals key/value rendering: humanized key + formatted value.
+    // ema20 → "Ema20", value 105 (integer) → "105".
+    expect(screen.getByText('Ema20')).toBeInTheDocument();
+    expect(screen.getByText('105')).toBeInTheDocument();
+    // roc20Pct → "Roc20 Pct", 4.2 (float) → "4.20".
+    expect(screen.getByText('Roc20 Pct')).toBeInTheDocument();
+    expect(screen.getByText('4.20')).toBeInTheDocument();
+  });
+
+  it('clicking a NO DATA row expands a greyed/italic "No actionable data" line', async () => {
+    const { wrapper } = makeWrapper();
+    render(<AnalystContributions target={sampleTarget} />, { wrapper });
+
+    await waitFor(() => expect(fetchSpy).toHaveBeenCalled());
+
+    // news-sentiment is the no-data row in sampleTarget; the endpoint
+    // payload marks it _noData: true with _reason: 'no_data'.
+    const newsRow = screen.getByTestId('analyst-row-news-sentiment');
+    const button = newsRow.querySelector('button');
+    fireEvent.click(button);
+
+    // The expansion shows the explicit "No actionable data — no_data"
+    // message — NOT the fallback rationale, and NOT a key/value table.
+    await waitFor(() => {
+      expect(newsRow.textContent).toMatch(/No actionable data\s+—\s+no_data/);
+    });
+
+    // The expanded body is rendered with reduced opacity (the greyed
+    // state) so it's visually distinct from a real neutral score.
+    const body = newsRow.querySelector('[id^="analyst-detail-"]');
+    expect(body).toBeTruthy();
+    expect(body.className).toMatch(/opacity-/);
+
+    // And the message is italicized.
+    const italic = body.querySelector('.italic');
+    expect(italic).toBeTruthy();
+    expect(italic.textContent).toMatch(/No actionable data/);
+  });
+
+  it('respects signals._reason in the no-data line (no_actionable_data variant)', async () => {
+    // earnings-analyst hits the "no actionable data" branch with
+    // _reason: 'no_actionable_data'. Earnings is in scoredAnalysts
+    // here (live status), but the detail.signals._noData flag should
+    // still drive the no-data rendering — that's the whole point of
+    // the unmistakable no-data state.
+    const earningsNoDataTarget = {
+      ...sampleTarget,
+      noDataAnalysts: ['earnings-analyst'],
+      scoredAnalysts: sampleTarget.scoredAnalysts.filter((a) => a !== 'earnings-analyst'),
+    };
+    const { wrapper } = makeWrapper();
+    render(<AnalystContributions target={earningsNoDataTarget} />, { wrapper });
+
+    await waitFor(() => expect(fetchSpy).toHaveBeenCalled());
+
+    const earnRow = screen.getByTestId('analyst-row-earnings-analyst');
+    const button = earnRow.querySelector('button');
+    fireEvent.click(button);
+
+    await waitFor(() => {
+      expect(earnRow.textContent).toMatch(/No actionable data\s+—\s+no_actionable_data/);
+    });
+  });
+
+  it('REMOVED rows are not expandable (no chevron click target)', async () => {
+    const { wrapper } = makeWrapper();
+    render(<AnalystContributions target={sampleTarget} />, { wrapper });
+    await waitFor(() => expect(fetchSpy).toHaveBeenCalled());
+
+    const macroRow = screen.getByTestId('analyst-row-macro-regime');
+    const button = macroRow.querySelector('button');
+    // Button is disabled — clicking has no effect.
+    expect(button.disabled).toBe(true);
+    fireEvent.click(button);
+    // No expanded body appears.
+    expect(macroRow.querySelector('[id^="analyst-detail-"]')).toBeNull();
+  });
+
+  it('signals key/value rendering hides _-prefixed marker keys', () => {
+    const visible = _internals.visibleSignalEntries({
+      ema20: 100,
+      _noData: true,
+      _reason: 'no_data',
+      bullishPattern: 'breakout',
+    });
+    expect(visible.map(([k]) => k)).toEqual(['ema20', 'bullishPattern']);
+  });
+
+  it('humanizeKey produces readable labels from camelCase + snake_case', () => {
+    expect(_internals.humanizeKey('ema20')).toBe('Ema20');
+    expect(_internals.humanizeKey('roc20Pct')).toBe('Roc20 Pct');
+    expect(_internals.humanizeKey('days_until_earnings')).toBe('Days Until Earnings');
+    expect(_internals.humanizeKey('bullishPattern')).toBe('Bullish Pattern');
+  });
+
+  it('formatSignalValue formats numbers / strings / booleans / arrays sensibly', () => {
+    expect(_internals.formatSignalValue(null)).toBe('—');
+    expect(_internals.formatSignalValue(undefined)).toBe('—');
+    expect(_internals.formatSignalValue(true)).toBe('yes');
+    expect(_internals.formatSignalValue(false)).toBe('no');
+    expect(_internals.formatSignalValue(3)).toBe('3');
+    expect(_internals.formatSignalValue(3.14159)).toBe('3.14');
+    expect(_internals.formatSignalValue('uptrend')).toBe('uptrend');
+    expect(_internals.formatSignalValue([])).toBe('[]');
+    expect(_internals.formatSignalValue(['a', 'b', 'c'])).toBe('a, b, c');
+    expect(_internals.formatSignalValue(['a', 'b', 'c', 'd', 'e', 'f'])).toBe('a, b, c, d, e (+1)');
+    expect(_internals.formatSignalValue({ x: 1 })).toBe('{"x":1}');
   });
 });
