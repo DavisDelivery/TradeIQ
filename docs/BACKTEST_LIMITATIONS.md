@@ -100,15 +100,15 @@ Phase 4a.
 
 Phase 4a originally supported the **prophet** board only.
 Phase 4m+4n (PR #41) added PIT-correct **williams** and **lynch**
-scorers in `score-at-date.ts`, so those three boards are now safe to
-backtest server-side and the `backtest-runs-trigger` endpoint accepts
-them. **catalyst**, **insider**, and **target** boards still return
-`null` from the per-ticker scorer (the engine emits one warning), and
-the trigger rejects them with 400 to prevent silently biased results.
-The metric machinery is board-agnostic; following the prophet/williams/
-lynch templates plus the PIT primitives already plumbed (insider,
-political, contracts, patents, fundamentals, earnings_intel), each
-remaining board is a self-contained commit.
+scorers in `score-at-date.ts`. **Phase 4t W1** added the ten-analyst
+composite (**target**) — see `reports/phase-4t/pit-audit.md` for the
+per-factor PIT classification (5 PIT-clean, 3 PIT-with-caveat —
+fundamentals + earnings-history restatement, news-coverage density;
+2 excluded by weight=0 — patents and macro-regime, per the Phase 4f
+no_upstream audit). The `backtest-runs-trigger` endpoint accepts
+prophet, williams, lynch, and target. **catalyst** and **insider**
+boards still return `null` from the per-ticker scorer and the trigger
+rejects them with 400 to prevent silently biased results.
 
 ## 11. No meta-ranker / model in this phase
 

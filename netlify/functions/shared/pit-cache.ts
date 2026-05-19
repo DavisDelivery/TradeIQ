@@ -31,7 +31,10 @@ export type PitDataClass =
   | 'macro'
   | 'bars'
   | 'earnings_intel'
-  | 'earnings_history';
+  | 'earnings_history'
+  // Phase 4t — upcoming-earnings calendar window (forward from asOfDate);
+  // PIT-clean because the calendar API takes asOfDate as the anchor.
+  | 'upcoming_earnings';
 
 export type PitProvider = 'polygon' | 'finnhub' | 'quiver' | 'fred' | 'derived';
 
