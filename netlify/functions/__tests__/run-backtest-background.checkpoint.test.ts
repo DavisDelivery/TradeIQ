@@ -39,17 +39,33 @@ vi.mock('../shared/firebase-admin', () => ({
 }));
 
 const mockPersistRunRunning = vi.fn(async (..._args: any[]) => {});
-const mockPersistRunResult = vi.fn(async (..._args: any[]) => {});
+const mockPersistRunSummary = vi.fn(async (..._args: any[]) => {});
 const mockPersistRunFailure = vi.fn(async (..._args: any[]) => {});
 const mockAppendMl = vi.fn(async (..._args: any[]) => {});
+const mockAppendDe = vi.fn(async (..._args: any[]) => {});
+const mockAppendTr = vi.fn(async (..._args: any[]) => {});
+const mockAppendAt = vi.fn(async (..._args: any[]) => {});
+const mockAppendWa = vi.fn(async (..._args: any[]) => {});
 const mockReadAllMl = vi.fn(async (..._args: any[]) => [] as any[]);
+const mockReadAllDe = vi.fn(async (..._args: any[]) => [] as any[]);
+const mockReadAllTr = vi.fn(async (..._args: any[]) => [] as any[]);
+const mockReadAllAt = vi.fn(async (..._args: any[]) => [] as any[]);
+const mockReadAllWa = vi.fn(async (..._args: any[]) => [] as string[]);
 
 vi.mock('../shared/backtest/persistence', () => ({
   persistRunRunning: (...args: any[]) => mockPersistRunRunning(...args),
-  persistRunResult: (...args: any[]) => mockPersistRunResult(...args),
+  persistRunSummary: (...args: any[]) => mockPersistRunSummary(...args),
   persistRunFailure: (...args: any[]) => mockPersistRunFailure(...args),
   appendMLTrainingRows: (...args: any[]) => mockAppendMl(...args),
+  appendDailyEquityRows: (...args: any[]) => mockAppendDe(...args),
+  appendTradeRows: (...args: any[]) => mockAppendTr(...args),
+  appendAttributionRows: (...args: any[]) => mockAppendAt(...args),
+  appendWarningRows: (...args: any[]) => mockAppendWa(...args),
   readAllMLTrainingRows: (...args: any[]) => mockReadAllMl(...args),
+  readAllDailyEquityRows: (...args: any[]) => mockReadAllDe(...args),
+  readAllTradeRows: (...args: any[]) => mockReadAllTr(...args),
+  readAllAttributionRows: (...args: any[]) => mockReadAllAt(...args),
+  readAllWarningRows: (...args: any[]) => mockReadAllWa(...args),
 }));
 
 vi.mock('../shared/backtest/engine', () => ({
@@ -69,20 +85,21 @@ const mockPrepRun = vi.fn(async (..._args: any[]) => ({
 }));
 const mockInitialRegularState = vi.fn(
   (...args: any[]) => {
-    const [config, total, firstDate] = args;
+    const [config, total] = args;
+    // Phase 4u — state is bounded; no inline arrays.
     return {
       nextRebalanceIdx: 0,
       totalRebalances: total,
       portfolio: [],
       nav: config.initialCapital ?? 100_000,
-      dailyEquity: [{ date: firstDate, value: config.initialCapital ?? 100_000 }],
-      trades: [],
-      attribution: [],
-      warnings: [],
       tickerFailureSample: [],
       tickerFailureTotal: 0,
       tickerAttemptTotal: 0,
       mlTrainingRowCount: 0,
+      dailyEquityRowCount: 0,
+      tradeRowCount: 0,
+      attributionRowCount: 0,
+      warningRowCount: 0,
       survivorshipWarned: false,
     };
   },
@@ -148,16 +165,24 @@ function setupAdvancingEngine() {
       runId: opts.runId,
       ticker: `T${i}`,
     }));
+    const batchTrades = Array.from({ length: rebalancesProcessed * 10 }).map(() => ({}));
     return {
       state: {
         ...opts.state,
         nextRebalanceIdx: next,
-        trades: opts.state.trades.concat(Array.from({ length: rebalancesProcessed * 10 }).map(() => ({}))),
         mlTrainingRowCount: opts.state.mlTrainingRowCount + batchMlRows.length,
+        tradeRowCount: (opts.state.tradeRowCount ?? 0) + batchTrades.length,
+        dailyEquityRowCount: opts.state.dailyEquityRowCount ?? 0,
+        attributionRowCount: opts.state.attributionRowCount ?? 0,
+        warningRowCount: opts.state.warningRowCount ?? 0,
       },
       done: next >= TOTAL_REBALANCES,
       rebalancesProcessed,
       batchMlRows,
+      batchDailyEquity: [],
+      batchTrades,
+      batchAttribution: [],
+      batchWarnings: [],
     };
   });
   mockFinalize.mockImplementation((opts: any) => ({
@@ -179,7 +204,7 @@ beforeEach(() => {
   storedDoc = null;
   writeOps.length = 0;
   mockPersistRunRunning.mockClear();
-  mockPersistRunResult.mockClear();
+  mockPersistRunSummary.mockClear();
   mockPersistRunFailure.mockClear();
   mockAppendMl.mockClear();
   mockReadAllMl.mockClear();
@@ -276,7 +301,7 @@ describe('regular bg-function checkpoint chain — 3 batches × 8 rebalances', (
     const finalizeArgs = mockFinalize.mock.calls[0][0] as any;
     expect(finalizeArgs.allMlRows.length).toBe(1200);
 
-    expect(mockPersistRunResult).toHaveBeenCalledTimes(1);
+    expect(mockPersistRunSummary).toHaveBeenCalledTimes(1);
 
     // Cursor cleared.
     const stored = storedDoc as any;
@@ -301,7 +326,7 @@ describe('regular bg-function checkpoint chain — 3 batches × 8 rebalances', (
     }
     expect(statuses).toEqual([202, 202, 200]);
     expect((storedDoc as any).cursor).toBeNull();
-    expect(mockPersistRunResult).toHaveBeenCalledTimes(1);
+    expect(mockPersistRunSummary).toHaveBeenCalledTimes(1);
     // Across the chain we should have called appendMLTrainingRows 3 times.
     expect(mockAppendMl).toHaveBeenCalledTimes(3);
     // Each call at the proper startIdx.

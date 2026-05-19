@@ -48,17 +48,33 @@ vi.mock('../shared/firebase-admin', () => ({
 }));
 
 const mockPersistRunRunning = vi.fn(async (..._args: any[]) => {});
-const mockPersistRunResult = vi.fn(async (..._args: any[]) => {});
+const mockPersistRunSummary = vi.fn(async (..._args: any[]) => {});
 const mockPersistRunFailure = vi.fn(async (..._args: any[]) => {});
 const mockAppendMl = vi.fn(async (..._args: any[]) => {});
+const mockAppendDe = vi.fn(async (..._args: any[]) => {});
+const mockAppendTr = vi.fn(async (..._args: any[]) => {});
+const mockAppendAt = vi.fn(async (..._args: any[]) => {});
+const mockAppendWa = vi.fn(async (..._args: any[]) => {});
 const mockReadAllMl = vi.fn(async (..._args: any[]) => [] as any[]);
+const mockReadAllDe = vi.fn(async (..._args: any[]) => [] as any[]);
+const mockReadAllTr = vi.fn(async (..._args: any[]) => [] as any[]);
+const mockReadAllAt = vi.fn(async (..._args: any[]) => [] as any[]);
+const mockReadAllWa = vi.fn(async (..._args: any[]) => [] as string[]);
 
 vi.mock('../shared/backtest/persistence', () => ({
   persistRunRunning: (...args: any[]) => mockPersistRunRunning(...args),
-  persistRunResult: (...args: any[]) => mockPersistRunResult(...args),
+  persistRunSummary: (...args: any[]) => mockPersistRunSummary(...args),
   persistRunFailure: (...args: any[]) => mockPersistRunFailure(...args),
   appendMLTrainingRows: (...args: any[]) => mockAppendMl(...args),
+  appendDailyEquityRows: (...args: any[]) => mockAppendDe(...args),
+  appendTradeRows: (...args: any[]) => mockAppendTr(...args),
+  appendAttributionRows: (...args: any[]) => mockAppendAt(...args),
+  appendWarningRows: (...args: any[]) => mockAppendWa(...args),
   readAllMLTrainingRows: (...args: any[]) => mockReadAllMl(...args),
+  readAllDailyEquityRows: (...args: any[]) => mockReadAllDe(...args),
+  readAllTradeRows: (...args: any[]) => mockReadAllTr(...args),
+  readAllAttributionRows: (...args: any[]) => mockReadAllAt(...args),
+  readAllWarningRows: (...args: any[]) => mockReadAllWa(...args),
 }));
 
 const mockValidateConfig = vi.fn((..._args: any[]) => {});
@@ -77,20 +93,21 @@ const mockPrepRun = vi.fn(async (..._args: any[]) => ({
 }));
 const mockInitialRegularState = vi.fn(
   (...args: any[]) => {
-    const [config, total, firstDate] = args;
+    const [config, total, _firstDate] = args;
+    // Phase 4u — state is bounded: no inline arrays.
     return {
       nextRebalanceIdx: 0,
       totalRebalances: total,
       portfolio: [],
       nav: config.initialCapital ?? 100_000,
-      dailyEquity: [{ date: firstDate, value: config.initialCapital ?? 100_000 }],
-      trades: [],
-      attribution: [],
-      warnings: [],
       tickerFailureSample: [],
       tickerFailureTotal: 0,
       tickerAttemptTotal: 0,
       mlTrainingRowCount: 0,
+      dailyEquityRowCount: 0,
+      tradeRowCount: 0,
+      attributionRowCount: 0,
+      warningRowCount: 0,
       survivorshipWarned: false,
     };
   },
@@ -150,11 +167,23 @@ beforeEach(() => {
   storedDoc = null;
   writeOps.length = 0;
   mockPersistRunRunning.mockClear();
-  mockPersistRunResult.mockClear();
+  mockPersistRunSummary.mockClear();
   mockPersistRunFailure.mockClear();
   mockAppendMl.mockClear();
+  mockAppendDe.mockClear();
+  mockAppendTr.mockClear();
+  mockAppendAt.mockClear();
+  mockAppendWa.mockClear();
   mockReadAllMl.mockClear();
+  mockReadAllDe.mockClear();
+  mockReadAllTr.mockClear();
+  mockReadAllAt.mockClear();
+  mockReadAllWa.mockClear();
   mockReadAllMl.mockImplementation(async () => []);
+  mockReadAllDe.mockImplementation(async () => []);
+  mockReadAllTr.mockImplementation(async () => []);
+  mockReadAllAt.mockImplementation(async () => []);
+  mockReadAllWa.mockImplementation(async () => []);
   mockValidateConfig.mockClear();
   mockProcessBatch.mockReset();
   mockFinalize.mockReset();
@@ -174,19 +203,23 @@ function makeTerminalBatchResult() {
       totalRebalances: 4,
       portfolio: [],
       nav: 10_500,
-      dailyEquity: [{ date: '2024-01-02', value: 10_000 }, { date: '2024-04-01', value: 10_500 }],
-      trades: [{}, {}],
-      attribution: [{}, {}],
-      warnings: [],
       tickerFailureSample: [],
       tickerFailureTotal: 0,
       tickerAttemptTotal: 100,
       mlTrainingRowCount: 40,
+      dailyEquityRowCount: 2,
+      tradeRowCount: 2,
+      attributionRowCount: 2,
+      warningRowCount: 0,
       survivorshipWarned: true,
     },
     done: true,
     rebalancesProcessed: 4,
     batchMlRows: [{ runId: 'bt_x' } as any],
+    batchDailyEquity: [{ date: '2024-01-02', value: 10_000 }, { date: '2024-04-01', value: 10_500 }],
+    batchTrades: [{}, {}],
+    batchAttribution: [{}, {}],
+    batchWarnings: [],
   });
   mockFinalize.mockReturnValue({
     runId: 'bt_x',
@@ -210,19 +243,23 @@ function makePartialBatchResult() {
       totalRebalances: 84,
       portfolio: [],
       nav: 95_000,
-      dailyEquity: [{ date: '2018-01-02', value: 100_000 }],
-      trades: [{}, {}],
-      attribution: [],
-      warnings: [],
       tickerFailureSample: [],
       tickerFailureTotal: 0,
       tickerAttemptTotal: 400,
       mlTrainingRowCount: 400,
+      dailyEquityRowCount: 1,
+      tradeRowCount: 2,
+      attributionRowCount: 0,
+      warningRowCount: 0,
       survivorshipWarned: true,
     },
     done: false,
     rebalancesProcessed: 8,
     batchMlRows: Array.from({ length: 400 }, () => ({ runId: 'bt_x' } as any)),
+    batchDailyEquity: [{ date: '2018-01-02', value: 100_000 }],
+    batchTrades: [{}, {}],
+    batchAttribution: [],
+    batchWarnings: [],
   });
 }
 
@@ -277,7 +314,7 @@ describe('run-backtest-background — fresh start, terminal in one batch', () =>
     // Terminal path: readAllMl → finalize → persistRunResult → clearCursor.
     expect(mockReadAllMl).toHaveBeenCalledWith('bt_x');
     expect(mockFinalize).toHaveBeenCalledTimes(1);
-    expect(mockPersistRunResult).toHaveBeenCalledTimes(1);
+    expect(mockPersistRunSummary).toHaveBeenCalledTimes(1);
 
     // Cursor cleared on terminal.
     const clearWrite = writeOps.find((w) => w.payload?.cursor === null);
@@ -316,7 +353,7 @@ describe('run-backtest-background — checkpoint + reinvoke', () => {
     expect(fetchSpy).toHaveBeenCalledTimes(1);
 
     // Terminal-only writes did NOT happen.
-    expect(mockPersistRunResult).not.toHaveBeenCalled();
+    expect(mockPersistRunSummary).not.toHaveBeenCalled();
     expect(mockReadAllMl).not.toHaveBeenCalled();
   });
 
@@ -336,14 +373,14 @@ describe('run-backtest-background — checkpoint + reinvoke', () => {
           totalRebalances: 84,
           portfolio: [],
           nav: 110_000,
-          dailyEquity: [],
-          trades: Array(32).fill({}),
-          attribution: [],
-          warnings: [],
           tickerFailureSample: [],
           tickerFailureTotal: 0,
           tickerAttemptTotal: 0,
           mlTrainingRowCount: 800,
+          dailyEquityRowCount: 100,
+          tradeRowCount: 32,
+          attributionRowCount: 40,
+          warningRowCount: 0,
           survivorshipWarned: true,
         },
         cumulativeMetrics: { tradeCount: 32, mlTrainingCount: 800 },

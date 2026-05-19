@@ -181,7 +181,14 @@ describe('engine-batched — equivalence with unbatched runBacktest', () => {
 
     const rebalanceDates = walkForwardArray(CONFIG);
     let state = initialRegularState(CONFIG, rebalanceDates.length, rebalanceDates[0]);
+    // Phase 4u — caller assembles cumulative arrays from per-batch slices
+    // (the worker streams these to subcollections; this test does the
+    // same in memory).
     const allMlRows: MLTrainingRow[] = [];
+    const allDailyEquity: typeof unbatched.dailyEquity = [];
+    const allTrades: typeof unbatched.trades = [];
+    const allAttribution: typeof unbatched.perAnalystAttribution = [];
+    const allWarnings: string[] = [];
 
     let done = false;
     let safety = 0;
@@ -195,6 +202,10 @@ describe('engine-batched — equivalence with unbatched runBacktest', () => {
       state = res.state;
       done = res.done;
       allMlRows.push(...res.batchMlRows);
+      allDailyEquity.push(...res.batchDailyEquity);
+      allTrades.push(...res.batchTrades);
+      allAttribution.push(...res.batchAttribution);
+      allWarnings.push(...res.batchWarnings);
       if (safety++ > 100) throw new Error('runaway loop');
     }
 
@@ -204,6 +215,10 @@ describe('engine-batched — equivalence with unbatched runBacktest', () => {
       runId: unbatched.runId,
       state,
       allMlRows,
+      allDailyEquity,
+      allTrades,
+      allAttribution,
+      allWarnings,
       benchBars: prep.benchBars,
       benchTicker: prep.benchTicker,
       rebalanceDates: prep.rebalanceDates,
@@ -277,6 +292,10 @@ describe('engine-batched — equivalence with unbatched runBacktest', () => {
       runId: unbatched.runId,
       state: res.state,
       allMlRows: res.batchMlRows,
+      allDailyEquity: res.batchDailyEquity,
+      allTrades: res.batchTrades,
+      allAttribution: res.batchAttribution,
+      allWarnings: res.batchWarnings,
       benchBars: prep.benchBars,
       benchTicker: prep.benchTicker,
       rebalanceDates: prep.rebalanceDates,
@@ -419,12 +438,127 @@ describe('engine-batched — checkpoint mechanics', () => {
     expect(state).toEqual(stateBefore);
   });
 
-  it('initialRegularState seeds the equity curve with the first rebalance date + initial capital', () => {
+  // Phase 4u — the bounded-cursor contract. Pre-4u the cursor grew
+  // with `dailyEquity / trades / attribution / warnings` accumulated
+  // inline on `state`. The 2026-05-19 Williams baseline failure
+  // (1,086,304 B) was the production sighting. These two tests pin
+  // the shape so it cannot regress.
+  it('state NEVER carries dailyEquity / trades / attribution / warnings arrays — bounded checkpoint', async () => {
+    const rebalanceDates = walkForwardArray(CONFIG);
+    let state = initialRegularState(CONFIG, rebalanceDates.length, rebalanceDates[0]);
+    expect((state as unknown as Record<string, unknown>).dailyEquity).toBeUndefined();
+    expect((state as unknown as Record<string, unknown>).trades).toBeUndefined();
+    expect((state as unknown as Record<string, unknown>).attribution).toBeUndefined();
+    expect((state as unknown as Record<string, unknown>).warnings).toBeUndefined();
+
+    let done = false;
+    let safety = 0;
+    while (!done) {
+      const res = await processRegularBatch({
+        config: CONFIG,
+        runId: 'bt_4u_bounded',
+        state,
+        batchSize: 1,
+      });
+      state = res.state;
+      done = res.done;
+      // None of the four growing fields may resurface on state.
+      expect((state as unknown as Record<string, unknown>).dailyEquity).toBeUndefined();
+      expect((state as unknown as Record<string, unknown>).trades).toBeUndefined();
+      expect((state as unknown as Record<string, unknown>).attribution).toBeUndefined();
+      expect((state as unknown as Record<string, unknown>).warnings).toBeUndefined();
+      // The per-batch outputs land on the result, not on state.
+      expect(Array.isArray(res.batchDailyEquity)).toBe(true);
+      expect(Array.isArray(res.batchTrades)).toBe(true);
+      expect(Array.isArray(res.batchAttribution)).toBe(true);
+      expect(Array.isArray(res.batchWarnings)).toBe(true);
+      if (safety++ > 50) throw new Error('runaway loop');
+    }
+  });
+
+  it('serialised state size stays under a tight cap across every batch (no unbounded growth)', async () => {
+    const rebalanceDates = walkForwardArray(CONFIG);
+    let state = initialRegularState(CONFIG, rebalanceDates.length, rebalanceDates[0]);
+    const sizes: number[] = [];
+    let done = false;
+    let safety = 0;
+    while (!done) {
+      const res = await processRegularBatch({
+        config: CONFIG,
+        runId: 'bt_4u_size',
+        state,
+        batchSize: 1,
+      });
+      state = res.state;
+      done = res.done;
+      sizes.push(JSON.stringify(state).length);
+      if (safety++ > 50) throw new Error('runaway loop');
+    }
+    // Same number of snapshots as rebalances.
+    expect(sizes.length).toBe(rebalanceDates.length);
+    // Tight cap — the dow universe + monthly cadence + topN=5 has the
+    // smallest fixed shape; ~3-4 KB observed in practice. 10 KB is
+    // three orders of magnitude under the 1 MiB Firestore ceiling
+    // and well above the worst-case ten-analyst russell2k composite
+    // projection (~6-7 KB cursor) called out in the 4u diagnosis.
+    const maxSize = Math.max(...sizes);
+    expect(maxSize).toBeLessThan(10_000);
+  });
+
+  it('initialRegularState seeds nav from config.initialCapital and parks the resume cursor at 0', () => {
+    // Phase 4u — the t0 dailyEquity seed point is no longer kept on
+    // state (it moved to the dailyEquity subcollection, emitted by
+    // processRegularBatch on the first batch). initialRegularState
+    // now returns a fully bounded state.
     const s = initialRegularState(CONFIG, 6, '2023-01-03');
-    expect(s.dailyEquity).toEqual([{ date: '2023-01-03', value: 100_000 }]);
     expect(s.nav).toBe(100_000);
     expect(s.nextRebalanceIdx).toBe(0);
     expect(s.totalRebalances).toBe(6);
+    expect(s.dailyEquityRowCount).toBe(0);
+    expect(s.tradeRowCount).toBe(0);
+    expect(s.attributionRowCount).toBe(0);
+    expect(s.warningRowCount).toBe(0);
+    expect(s.mlTrainingRowCount).toBe(0);
+  });
+
+  it('first batch emits a t0 dailyEquity seed point in batchDailyEquity', async () => {
+    const rebalanceDates = walkForwardArray(CONFIG);
+    const state = initialRegularState(CONFIG, rebalanceDates.length, rebalanceDates[0]);
+    const res = await processRegularBatch({
+      config: CONFIG,
+      runId: 'bt_seed_test',
+      state,
+      batchSize: 1,
+    });
+    // First entry is the seed.
+    expect(res.batchDailyEquity[0]).toEqual({
+      date: rebalanceDates[0],
+      value: CONFIG.initialCapital,
+    });
+  });
+
+  it('second batch does NOT re-emit the t0 seed', async () => {
+    const rebalanceDates = walkForwardArray(CONFIG);
+    let state = initialRegularState(CONFIG, rebalanceDates.length, rebalanceDates[0]);
+    const first = await processRegularBatch({
+      config: CONFIG,
+      runId: 'bt_seed_resume',
+      state,
+      batchSize: 1,
+    });
+    state = first.state;
+    const second = await processRegularBatch({
+      config: CONFIG,
+      runId: 'bt_seed_resume',
+      state,
+      batchSize: 1,
+    });
+    // The seed entry only appears once across both batches.
+    const allDailyEquity = [...first.batchDailyEquity, ...second.batchDailyEquity];
+    const seedHits = allDailyEquity.filter(
+      (p) => p.date === rebalanceDates[0] && p.value === CONFIG.initialCapital,
+    );
+    expect(seedHits.length).toBe(1);
   });
 });
 
