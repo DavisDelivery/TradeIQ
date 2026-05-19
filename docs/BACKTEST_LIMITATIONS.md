@@ -96,15 +96,19 @@ Long-only by design. Adding a short side requires borrow cost modeling,
 hard-to-borrow detection, and Reg SHO restrictions — out of scope for
 Phase 4a.
 
-## 10. Single-board scoring path
+## 10. Multi-board scoring path
 
-Phase 4a's `scoreTickerAtDate` supports the **prophet** board only.
-Catalyst, insider, target, williams, and lynch boards return `null` from
-the per-ticker scorer and the engine emits one warning. The metric
-machinery is board-agnostic; only the per-ticker scoring needs
-extending. Following the prophet template plus the PIT primitives
-already plumbed (insider, political, contracts, patents, fundamentals,
-earnings_intel), each additional board is a self-contained commit.
+Phase 4a originally supported the **prophet** board only.
+Phase 4m+4n (PR #41) added PIT-correct **williams** and **lynch**
+scorers in `score-at-date.ts`, so those three boards are now safe to
+backtest server-side and the `backtest-runs-trigger` endpoint accepts
+them. **catalyst**, **insider**, and **target** boards still return
+`null` from the per-ticker scorer (the engine emits one warning), and
+the trigger rejects them with 400 to prevent silently biased results.
+The metric machinery is board-agnostic; following the prophet/williams/
+lynch templates plus the PIT primitives already plumbed (insider,
+political, contracts, patents, fundamentals, earnings_intel), each
+remaining board is a self-contained commit.
 
 ## 11. No meta-ranker / model in this phase
 
