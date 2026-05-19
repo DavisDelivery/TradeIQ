@@ -140,12 +140,18 @@ export const handler: Handler = async (event) => {
 
   // --- Supported-board enforcement
   // Phase 4a originally accepted only `prophet`. Phase 4m+4n (PR #41)
-  // added PIT-correct williams + lynch scorers in score-at-date.ts, so
-  // those are now safe to backtest server-side. catalyst / insider /
-  // target remain stubs (score-at-date returns null) — accepting them
-  // silently would produce systematically biased results.
-  // docs/BACKTEST_LIMITATIONS.md is the long-form source.
-  const SUPPORTED_BOARDS: ReadonlyArray<string> = ['prophet', 'williams', 'lynch'];
+  // added PIT-correct williams + lynch scorers. Phase 4t W1 (this PR)
+  // adds the ten-analyst composite (`target`) — see
+  // `reports/phase-4t/pit-audit.md` for the per-factor PIT integrity
+  // classification. catalyst + insider boards remain stubs; their
+  // score-at-date paths return null and the trigger rejects them so a
+  // silently-biased run can't be fired.
+  const SUPPORTED_BOARDS: ReadonlyArray<string> = [
+    'prophet',
+    'williams',
+    'lynch',
+    'target',
+  ];
   if (!SUPPORTED_BOARDS.includes(config.board)) {
     log.warn('board_not_supported', { board: config.board });
     return {

@@ -157,8 +157,8 @@ describe('backtest-runs-trigger', () => {
     expect(mockPending).not.toHaveBeenCalled();
   });
 
-  it('returns 400 when board lacks PIT scoring (catalyst/insider/target)', async () => {
-    for (const board of ['catalyst', 'insider', 'target']) {
+  it('returns 400 when board lacks PIT scoring (catalyst/insider)', async () => {
+    for (const board of ['catalyst', 'insider']) {
       const res = await invoke(
         handler,
         makeEvent({ body: { ...validConfig, board } }),
@@ -169,8 +169,8 @@ describe('backtest-runs-trigger', () => {
     expect(mockPending).not.toHaveBeenCalled();
   });
 
-  it('accepts williams and lynch boards (PIT scoring landed in Phase 4m+4n)', async () => {
-    for (const board of ['williams', 'lynch']) {
+  it('accepts williams, lynch, and target boards (PIT scoring landed in Phase 4m+4n+4t)', async () => {
+    for (const board of ['williams', 'lynch', 'target']) {
       mockPending.mockClear();
       mockGenerateRunId.mockReturnValue(`bt_${board}_001`);
       const res = await invoke(

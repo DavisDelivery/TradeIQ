@@ -22,6 +22,8 @@ import {
   getDailyBars,
   getFundamentals,
   getEarningsHistory,
+  getNews,
+  getUpcomingEarnings,
   type Bar,
 } from '../data-provider';
 import { getEarningsIntel } from '../earnings-intel';
@@ -61,6 +63,28 @@ import {
   deriveLynchSignalFromAnalyst,
   type LynchSignal,
 } from '../../styles/lynch-signal';
+// Phase 4t — ten-analyst composite (the "target" board). The analyst
+// modules are pure: each takes already-fetched data and returns an
+// AnalystOutput, so we can drive them from a PIT-correct fetch wave
+// just like the live scan does — but with every fetch threading
+// asOfDate. See reports/phase-4t/pit-audit.md for the per-factor
+// classification.
+import { runTechnical } from '../../analysts/technical';
+import { runSectorRotation } from '../../analysts/sector-rotation';
+import {
+  runFundamental,
+  runFlow,
+  runEarnings,
+  runNewsSentiment,
+} from '../../analysts/core';
+import { runInsider } from '../../analysts/insider';
+import { runPatents } from '../../analysts/patents';
+import { runPolitical } from '../../analysts/political';
+import { composeTarget } from '../analyst-runner';
+import type {
+  AnalystOutput,
+  Direction,
+} from '../types';
 import type { BacktestBoard, ScoredCandidate } from './types';
 
 /**
@@ -464,17 +488,298 @@ async function scoreLynchAtDate(
   };
 }
 
+// ---------------------------------------------------------------------------
+// Target-board (ten-analyst composite) PIT scoring — Phase 4t W1
+// ---------------------------------------------------------------------------
+//
+// The "target" board is TradeIQ's core multi-factor model: ten analysts
+// (Technical, Sector, Fundamental, Flow, News, Earnings, Macro,
+// Insider, Patents, Political) blended into a single 0-100 directional
+// composite by `composeTarget` in `shared/analyst-runner.ts`. Phase 4s
+// fixed the composite math (directional, conflict-aware); Phase 4t is
+// the FIRST honest backtest of the result.
+//
+// This scorer mirrors `runAnalystsForTicker` but threads `asOfDate`
+// through every fetch and pulls bars / SPY / sector ETFs from the
+// already-built `MarketContextAtDate`. The per-analyst PIT integrity is
+// audited in `reports/phase-4t/pit-audit.md`:
+//
+//   - PIT-clean (5):       technical, sector-rotation, flow, insider,
+//                          political-contracts (action-date)
+//   - PIT-with-caveat (3): political (STOCK Act shift), fundamental
+//                          (restatement risk), earnings-history
+//                          (EPS-actual restatement)
+//   - PIT-with-caveat (1): news-sentiment (coverage density caveat
+//                          in early years; cutoff itself is hard)
+//   - Excluded by weight=0 (2): patent-analyst (Phase 4f no_upstream),
+//                               macro-regime (Phase 4f no_upstream)
+//
+// The two weight-0 analysts are still SCORED (so a future weight bump
+// doesn't silently surface a missing path), but their composite
+// contribution is zero. `composeTarget` rescales the surviving
+// weight-positive analysts to sum to 1.
+
+const TARGET_MIN_BARS = 50; // matches runAnalystsForTicker
+
+async function scoreTargetAtDate(
+  ticker: string,
+  asOfDate: string,
+  ctx: MarketContextAtDate,
+): Promise<ScoredCandidate | null> {
+  const entry = UNIVERSE.find((u) => u.ticker === ticker);
+  if (!entry) return null;
+
+  const to = asOfDate;
+  const from = addDays(asOfDate, -CONTEXT_WINDOW_DAYS);
+
+  // Bars (PIT-clean — same cache key shape as the prophet path so the
+  // two boards share the bar cache).
+  const barsKey: PitCacheKey = {
+    provider: 'polygon',
+    dataClass: 'bars',
+    ticker,
+    asOfDate,
+    extra: `from=${from}`,
+  };
+  const bars = await pitCacheWrap(barsKey, () =>
+    getDailyBars(ticker, from, to),
+  );
+  if (!bars || bars.length < TARGET_MIN_BARS) return null;
+
+  // Every other PIT-aware fetch in parallel, each wrapped in the cache.
+  // News: 15 items is what the live runner uses; `getNews` filters by
+  // published_utc.lte. Upcoming earnings: 45-day forward window from
+  // asOfDate. Earnings history: 4 quarters back, period-filtered.
+  // Insider/political/contracts/patents: live scan defaults (90/180-
+  // day lookbacks). Political uses the STOCK-Act-shifted backtest
+  // helper, not the raw getPoliticalActivity.
+  const [
+    fundamentals,
+    news,
+    upcoming,
+    history,
+    insiderActivity,
+    patentActivity,
+    politicalActivity,
+    contractActivity,
+  ] = await Promise.all([
+    pitCacheWrap<unknown>(
+      { provider: 'polygon', dataClass: 'fundamentals', ticker, asOfDate, extra: 'target' },
+      () => getFundamentals(ticker, { asOfDate }).catch(() => null),
+    ).then((v) => v as Awaited<ReturnType<typeof getFundamentals>> | null),
+    pitCacheWrap<unknown>(
+      { provider: 'polygon', dataClass: 'news', ticker, asOfDate, extra: 'lim=15' },
+      () => getNews(ticker, { asOfDate, limit: 15 }).catch(() => []),
+    ).then((v) => v as Awaited<ReturnType<typeof getNews>>),
+    pitCacheWrap<unknown>(
+      { provider: 'polygon', dataClass: 'upcoming_earnings', ticker, asOfDate, extra: 'ahead=45' },
+      () => getUpcomingEarnings(ticker, 45, { asOfDate }).catch(() => null),
+    ).then((v) => v as Awaited<ReturnType<typeof getUpcomingEarnings>> | null),
+    pitCacheWrap<unknown>(
+      { provider: 'finnhub', dataClass: 'earnings_history', ticker, asOfDate, extra: 'lb=4:target' },
+      () => getEarningsHistory(ticker, 4, { asOfDate }).catch(() => []),
+    ).then((v) => v as Awaited<ReturnType<typeof getEarningsHistory>>),
+    pitCacheWrap<unknown>(
+      { provider: 'finnhub', dataClass: 'insider', ticker, asOfDate, extra: 'lb=90' },
+      () => getInsiderActivity(ticker, 90, { asOfDate }).catch(() => null),
+    ).then((v) => v as Awaited<ReturnType<typeof getInsiderActivity>> | null),
+    pitCacheWrap<unknown>(
+      { provider: 'quiver', dataClass: 'patents', ticker, asOfDate, extra: `lb=180:${entry.name}` },
+      () => getPatentActivity(ticker, entry.name, 180, { asOfDate }).catch(() => null),
+    ).then((v) => v as Awaited<ReturnType<typeof getPatentActivity>> | null),
+    pitCacheWrap<unknown>(
+      { provider: 'quiver', dataClass: 'political', ticker, asOfDate, extra: 'lb=180:stockact-shifted' },
+      () => getPoliticalActivityForBacktest(ticker, 180, asOfDate).catch(() => null),
+    ).then((v) => v as Awaited<ReturnType<typeof getPoliticalActivity>> | null),
+    pitCacheWrap<unknown>(
+      { provider: 'quiver', dataClass: 'contracts', ticker, asOfDate, extra: 'lb=180' },
+      () => getGovContractActivity(ticker, 180, { asOfDate }).catch(() => null),
+    ).then((v) => v as Awaited<ReturnType<typeof getGovContractActivity>> | null),
+  ]);
+
+  // Shared bars from the rebalance context (PIT-clipped at build time).
+  const sectorBars = ctx.sectorEtfCache[entry.sector] ?? [];
+  const spyBars = ctx.spyBars;
+
+  // Run the analysts — same wiring as runAnalystsForTicker, including
+  // the no-data fallbacks for insider/patents/political that emit
+  // _noData so composeTarget can rescale the surviving weights.
+  const tech = runTechnical(bars);
+  const sec = runSectorRotation(bars, sectorBars, spyBars, entry.sector);
+  const fun = runFundamental(fundamentals);
+  const flow = runFlow(bars);
+  const earn = runEarnings(upcoming, history);
+  const news_ = runNewsSentiment(news);
+
+  const ins: AnalystOutput = insiderActivity
+    ? runInsider(insiderActivity)
+    : {
+        score: 50,
+        direction: 'neutral' as Direction,
+        confidence: 0,
+        rationale: 'insider data unavailable',
+        signals: { _noData: true, _reason: 'no_data' },
+      };
+  const pat: AnalystOutput = patentActivity
+    ? runPatents(patentActivity)
+    : {
+        score: 50,
+        direction: 'neutral' as Direction,
+        confidence: 0,
+        rationale: 'patent data unavailable',
+        signals: { _noData: true, _reason: 'no_data' },
+      };
+  let pol: AnalystOutput;
+  if (politicalActivity == null && contractActivity == null) {
+    pol = {
+      score: 50,
+      direction: 'neutral' as Direction,
+      confidence: 0,
+      rationale: 'political + contract data unavailable',
+      signals: { _noData: true, _reason: 'no_data' },
+    };
+  } else {
+    pol = runPolitical(politicalActivity, contractActivity);
+  }
+
+  // Macro-regime: scored from the context's macroBias for completeness.
+  // ANALYST_WEIGHTS pins macro-regime to 0 (Phase 4f no_upstream), so
+  // this contributes zero to the composite even when computed. We score
+  // it anyway so a future weight bump finds a wired-in path, not a stub.
+  const macroBias = ctx.macroBias;
+  const macroScore = Math.round(50 + macroBias * 20);
+  const macroDir: Direction =
+    macroBias > 0.2 ? 'long' : macroBias < -0.2 ? 'short' : 'neutral';
+  const macro: AnalystOutput = {
+    score: macroScore,
+    direction: macroDir,
+    confidence: Math.abs(macroBias),
+    rationale:
+      macroDir === 'long'
+        ? 'risk-on tailwind'
+        : macroDir === 'short'
+          ? 'risk-off headwind'
+          : 'neutral macro',
+    signals: { bias: macroBias },
+  };
+
+  const allAnalysts: Record<string, AnalystOutput> = {
+    'technical-analyst': tech,
+    'sector-rotation': sec,
+    'fundamental-analyst': fun,
+    'flow-analyst': flow,
+    'news-sentiment': news_,
+    'earnings-analyst': earn,
+    'macro-regime': macro,
+    'insider-analyst': ins,
+    'patent-analyst': pat,
+    'political-analyst': pol,
+  };
+
+  // composeTarget owns the weight table + the directional, conflict-
+  // aware composite math (Phase 4s). We pass the live ANALYST_WEIGHTS
+  // shape verbatim so 4t measures the composite EXACTLY as production
+  // computes it — no tuning.
+  const composed = composeTarget(allAnalysts, TARGET_ANALYST_WEIGHTS);
+
+  // Map each analyst's individual score onto a `layers` map so the
+  // backtest engine's per-rebalance attribution carries them. W3
+  // leave-one-out / per-factor IC reads this map.
+  const layerScores: Record<string, number> = {
+    technical: tech.score,
+    'sector-rotation': sec.score,
+    fundamental: fun.score,
+    flow: flow.score,
+    news: news_.score,
+    earnings: earn.score,
+    macro: macro.score,
+    insider: ins.score,
+    patents: pat.score,
+    political: pol.score,
+  };
+
+  const latestBar = bars[bars.length - 1];
+  return {
+    ticker,
+    composite: composed.composite,
+    layers: layerScores,
+    sector: entry.sector,
+    metadata: {
+      price: latestBar.c,
+      direction: composed.direction,
+      conviction: confidenceFromConflict(composed.conflictLevel),
+      regime: ctx.regime?.regime ?? null,
+      conflictLevel: composed.conflictLevel,
+      tier: composed.tier,
+      signedNet: composed.signedNet,
+      scoredAnalysts: composed.scoredAnalysts,
+      noDataAnalysts: composed.noDataAnalysts,
+      // 4t PIT caveat surfacing — mirrors the Lynch metadata pattern.
+      // The verdict report surfaces this on every target backtest
+      // result so the restatement / news-coverage caveats are not
+      // buried.
+      pitCaveat:
+        'restatement-risk: Polygon may serve restated fundamentals + EPS-actual; ' +
+        'news-coverage density lower in 2018',
+    },
+  };
+}
+
+// Phase 4t — must mirror `ANALYST_WEIGHTS` in shared/analyst-runner.ts
+// EXACTLY. If those weights ever shift, this constant must shift with
+// them; tests assert equality so a drift surfaces immediately. We
+// duplicate the values here rather than import the const because
+// analyst-runner pulls in the live data-provider modules at import
+// time (network), and score-at-date.ts is on the hot test path. The
+// `compose-weights-import` test pins the values.
+const TARGET_ANALYST_WEIGHTS: Record<string, number> = {
+  'technical-analyst': 0.15,
+  'sector-rotation': 0.08,
+  'fundamental-analyst': 0.13,
+  'flow-analyst': 0.10,
+  'news-sentiment': 0.10,
+  'earnings-analyst': 0.07,
+  'macro-regime': 0,
+  'insider-analyst': 0.14,
+  'patent-analyst': 0,
+  'political-analyst': 0.10,
+};
+
+// Approximate conviction from conflict level. The composite Tier is
+// also exposed in metadata; this is a single 0-1 scalar for backtest
+// consumers that want a numeric confidence (the engine's existing
+// `metadata.conviction` slot).
+function confidenceFromConflict(
+  level: 'severe' | 'moderate' | 'mild' | 'none',
+): number {
+  switch (level) {
+    case 'severe':
+      return 0.25;
+    case 'moderate':
+      return 0.5;
+    case 'mild':
+      return 0.75;
+    case 'none':
+      return 1.0;
+  }
+}
+
+// Exposed for tests that want to assert the weight table mirrors the
+// live ANALYST_WEIGHTS verbatim.
+export const _internalsTarget = { TARGET_ANALYST_WEIGHTS };
+
 /**
  * Public entry point. Dispatches to per-board scoring.
  *
- * As of Phase 4n: prophet, williams, and lynch boards have PIT scoring
- * paths. Catalyst, insider, and target remain stubs returning null.
+ * As of Phase 4t: prophet, williams, lynch, AND target boards have PIT
+ * scoring paths. Catalyst and insider remain stubs returning null
+ * (their PIT story has not been audited).
  *
  * The market context is shared across one rebalance — callers should
  * pre-build it once via buildMarketContextAtDate and pass it here.
  * Williams and Lynch don't currently use `ctx` (no sector-relative or
- * macro inputs); we still accept it for signature uniformity with the
- * engine, and for forward compatibility if those layers are added.
+ * macro inputs); target uses spyBars, sector ETFs, regime, and
+ * macroBias.
  */
 export async function scoreTickerAtDate(
   ticker: string,
@@ -492,6 +797,7 @@ export async function scoreTickerAtDate(
   if (board === 'prophet') return scoreProphetAtDate(ticker, asOfDate, ctx);
   if (board === 'williams') return scoreWilliamsAtDate(ticker, asOfDate, opts);
   if (board === 'lynch') return scoreLynchAtDate(ticker, asOfDate, opts);
-  // catalyst / insider / target remain stubs — no PIT path yet.
+  if (board === 'target') return scoreTargetAtDate(ticker, asOfDate, ctx);
+  // catalyst / insider remain stubs — no PIT path yet.
   return null;
 }

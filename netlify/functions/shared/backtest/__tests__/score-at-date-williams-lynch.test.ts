@@ -211,14 +211,14 @@ describe('scoreTickerAtDate — discreteSignalOnly filter', () => {
 });
 
 describe('scoreTickerAtDate — dispatch', () => {
-  it('returns null for boards without a PIT scoring path (catalyst/insider/target)', async () => {
+  it('returns null for boards without a PIT scoring path (catalyst/insider)', async () => {
+    // Phase 4t W1 added the target board PIT path; catalyst + insider
+    // remain stubs whose PIT story has not been audited.
     const ctx = await buildMarketContextAtDate('2024-12-15');
     const r1 = await scoreTickerAtDate('AAPL', '2024-12-15', 'catalyst', ctx);
     const r2 = await scoreTickerAtDate('AAPL', '2024-12-15', 'insider', ctx);
-    const r3 = await scoreTickerAtDate('AAPL', '2024-12-15', 'target', ctx);
     expect(r1).toBeNull();
     expect(r2).toBeNull();
-    expect(r3).toBeNull();
   });
 
   it('throws when ctx.asOfDate disagrees with asOfDate', async () => {
