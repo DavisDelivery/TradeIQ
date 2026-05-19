@@ -157,14 +157,29 @@ describe('backtest-runs-trigger', () => {
     expect(mockPending).not.toHaveBeenCalled();
   });
 
-  it('returns 400 when board is not prophet', async () => {
-    const res = await invoke(
-      handler,
-      makeEvent({ body: { ...validConfig, board: 'catalyst' } }),
-    );
-    expect(res.statusCode).toBe(400);
-    expect(JSON.parse(res.body).error).toMatch(/only the prophet board/i);
+  it('returns 400 when board lacks PIT scoring (catalyst/insider/target)', async () => {
+    for (const board of ['catalyst', 'insider', 'target']) {
+      const res = await invoke(
+        handler,
+        makeEvent({ body: { ...validConfig, board } }),
+      );
+      expect(res.statusCode).toBe(400);
+      expect(JSON.parse(res.body).error).toMatch(/not supported/i);
+    }
     expect(mockPending).not.toHaveBeenCalled();
+  });
+
+  it('accepts williams and lynch boards (PIT scoring landed in Phase 4m+4n)', async () => {
+    for (const board of ['williams', 'lynch']) {
+      mockPending.mockClear();
+      mockGenerateRunId.mockReturnValue(`bt_${board}_001`);
+      const res = await invoke(
+        handler,
+        makeEvent({ body: { ...validConfig, board } }),
+      );
+      expect(res.statusCode).toBe(202);
+      expect(mockPending).toHaveBeenCalledTimes(1);
+    }
   });
 
   it('returns 409 when an in-flight run exists, with the existing runId', async () => {

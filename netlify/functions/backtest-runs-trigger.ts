@@ -138,11 +138,15 @@ export const handler: Handler = async (event) => {
     };
   }
 
-  // --- Prophet-only enforcement
-  // Other boards' PIT scoring landed partially in Phase 4a. Accepting
-  // them silently would produce systematically biased backtests.
-  // BACKTEST_LIMITATIONS.md is the long-form source.
-  if (config.board !== 'prophet') {
+  // --- Supported-board enforcement
+  // Phase 4a originally accepted only `prophet`. Phase 4m+4n (PR #41)
+  // added PIT-correct williams + lynch scorers in score-at-date.ts, so
+  // those are now safe to backtest server-side. catalyst / insider /
+  // target remain stubs (score-at-date returns null) — accepting them
+  // silently would produce systematically biased results.
+  // docs/BACKTEST_LIMITATIONS.md is the long-form source.
+  const SUPPORTED_BOARDS: ReadonlyArray<string> = ['prophet', 'williams', 'lynch'];
+  if (!SUPPORTED_BOARDS.includes(config.board)) {
     log.warn('board_not_supported', { board: config.board });
     return {
       statusCode: 400,
@@ -150,8 +154,9 @@ export const handler: Handler = async (event) => {
       body: JSON.stringify({
         ok: false,
         error:
-          `Only the prophet board is supported for backtests right now. ` +
-          `Other boards' point-in-time scoring is incomplete — see BACKTEST_LIMITATIONS.md.`,
+          `Board '${config.board}' is not supported for backtests. ` +
+          `Supported: ${SUPPORTED_BOARDS.join(', ')}. ` +
+          `catalyst / insider / target boards' point-in-time scoring is incomplete — see docs/BACKTEST_LIMITATIONS.md.`,
       }),
     };
   }
