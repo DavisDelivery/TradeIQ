@@ -29,44 +29,65 @@ const writeOps: Array<{
 const mockSetImpl = vi.fn(async (..._args: unknown[]) => {});
 
 vi.mock('../shared/firebase-admin', () => ({
-  getAdminDb: vi.fn(() => ({
-    collection: (cn: string) => ({
-      doc: (dn: string) => ({
-        get: async () => ({
-          exists: storedDoc !== null,
-          data: () => storedDoc ?? undefined,
-        }),
-        set: async (payload: any, opts?: { merge?: boolean }) => {
-          writeOps.push({
-            collection: cn,
-            doc: dn,
-            payload,
-            merge: !!opts?.merge,
-          });
-          if (opts?.merge) {
-            storedDoc = { ...(storedDoc ?? {}), ...payload };
-          } else {
-            storedDoc = { ...payload };
-          }
-          return mockSetImpl(payload, opts);
-        },
-        collection: (subCn: string) => ({
-          doc: (subDn: string) => ({
-            set: async (payload: any) => {
-              writeOps.push({
-                collection: cn,
-                doc: dn,
-                sub: subCn,
-                subDoc: subDn,
-                payload,
-              });
-              return mockSetImpl(payload);
-            },
+  getAdminDb: vi.fn(() => {
+    const dbObj: any = {
+      collection: (cn: string) => ({
+        doc: (dn: string) => ({
+          get: async () => ({
+            exists: storedDoc !== null,
+            data: () => storedDoc ?? undefined,
+          }),
+          set: async (payload: any, opts?: { merge?: boolean }) => {
+            writeOps.push({
+              collection: cn,
+              doc: dn,
+              payload,
+              merge: !!opts?.merge,
+            });
+            if (opts?.merge) {
+              storedDoc = { ...(storedDoc ?? {}), ...payload };
+            } else {
+              storedDoc = { ...payload };
+            }
+            return mockSetImpl(payload, opts);
+          },
+          collection: (subCn: string) => ({
+            doc: (subDn: string) => ({
+              set: async (payload: any) => {
+                writeOps.push({
+                  collection: cn,
+                  doc: dn,
+                  sub: subCn,
+                  subDoc: subDn,
+                  payload,
+                });
+                return mockSetImpl(payload);
+              },
+            }),
+            // Phase 4u — readAllPortfolio* helpers iterate the subcollection.
+            get: async () => ({
+              forEach: (_cb: (d: { data: () => any }) => void) => {},
+            }),
           }),
         }),
       }),
-    }),
-  })),
+      // Phase 4u — append helpers use a batched write.
+      batch: () => {
+        const ops: Array<() => Promise<void>> = [];
+        return {
+          set: (docRef: any, payload: any) => {
+            ops.push(async () => {
+              await docRef.set(payload);
+            });
+          },
+          commit: async () => {
+            for (const op of ops) await op();
+          },
+        };
+      },
+    };
+    return dbObj;
+  }),
 }));
 
 vi.mock('firebase-admin/firestore', () => ({
@@ -78,14 +99,15 @@ const mockFinalize = vi.fn();
 const mockInitialState = vi.fn((..._args: any[]) => ({
   cash: 100_000,
   positions: [],
-  equityCurve: [],
-  swaps: [],
-  warnings: [],
   totalSlippage: 0,
   totalTurnoverNotional: 0,
-  completedHolds: [],
   nextMarkIdx: 0,
   nextRebalanceIdx: 0,
+  // Phase 4u — bounded cursor counters.
+  equityCurveRowCount: 0,
+  swapRowCount: 0,
+  completedHoldRowCount: 0,
+  warningRowCount: 0,
 }));
 
 vi.mock('../shared/prophet-portfolio/backtest-harness-batched', () => ({
@@ -148,18 +170,22 @@ function makeTerminalHarnessResult() {
     state: {
       cash: 100_000,
       positions: [],
-      equityCurve: [{ date: '2024-04-08', portfolio: 100_000, spy: null, qqq: null, iwf: null }],
-      swaps: [],
-      warnings: [],
       totalSlippage: 0,
       totalTurnoverNotional: 0,
-      completedHolds: [],
       nextMarkIdx: 91,
       nextRebalanceIdx: 14,
+      equityCurveRowCount: 1,
+      swapRowCount: 0,
+      completedHoldRowCount: 0,
+      warningRowCount: 0,
     },
     done: true,
     rebalancesProcessed: 14,
     marksProcessed: 91,
+    batchEquityCurve: [{ date: '2024-04-08', portfolio: 100_000, spy: null, qqq: null, iwf: null }],
+    batchSwaps: [],
+    batchCompletedHolds: [],
+    batchWarnings: [],
   });
   mockFinalize.mockReturnValue({
     windowLabel: 'short-demo',
@@ -187,6 +213,19 @@ function makeTerminalHarnessResult() {
 }
 
 function makePartialHarnessResult() {
+  const batchSwaps = [{
+    swapId: '2024-01-08-bt',
+    timestamp: '2024-01-08T21:00:00.000Z',
+    asOfDate: '2024-01-08',
+    out: [],
+    in: [],
+    candidatesConsidered: 5,
+    swapsApplied: 0,
+    snapshotId: 'bt-2024-01-08',
+    notes: '',
+    signalId: 'composite-v1',
+  }];
+  const batchEquityCurve = [{ date: '2024-01-08', portfolio: 100_000, spy: null, qqq: null, iwf: null }];
   mockProcessBatch.mockResolvedValue({
     state: {
       cash: 90_000,
@@ -202,31 +241,22 @@ function makePartialHarnessResult() {
           sector: 'Tech',
         },
       ],
-      equityCurve: [{ date: '2024-01-08', portfolio: 100_000, spy: null, qqq: null, iwf: null }],
-      swaps: [
-        {
-          swapId: '2024-01-08-bt',
-          timestamp: '2024-01-08T21:00:00.000Z',
-          asOfDate: '2024-01-08',
-          out: [],
-          in: [],
-          candidatesConsidered: 5,
-          swapsApplied: 0,
-          snapshotId: 'bt-2024-01-08',
-          notes: '',
-          signalId: 'composite-v1',
-        },
-      ],
-      warnings: [],
       totalSlippage: 0,
       totalTurnoverNotional: 10_000,
-      completedHolds: [],
       nextMarkIdx: 1,
       nextRebalanceIdx: 8,
+      equityCurveRowCount: batchEquityCurve.length,
+      swapRowCount: batchSwaps.length,
+      completedHoldRowCount: 0,
+      warningRowCount: 0,
     },
     done: false,
     rebalancesProcessed: 8,
     marksProcessed: 1,
+    batchEquityCurve,
+    batchSwaps,
+    batchCompletedHolds: [],
+    batchWarnings: [],
   });
 }
 
@@ -344,14 +374,14 @@ describe('run-portfolio-backtest-background — checkpoint + reinvoke', () => {
         state: {
           cash: 60_000,
           positions: [],
-          equityCurve: [],
-          swaps: [],
-          warnings: [],
           totalSlippage: 0,
           totalTurnoverNotional: 0,
-          completedHolds: [],
           nextMarkIdx: 100,
           nextRebalanceIdx: 16,
+          equityCurveRowCount: 100,
+          swapRowCount: 16,
+          completedHoldRowCount: 4,
+          warningRowCount: 0,
         },
         cumulativeMetrics: { tradeCount: 16, mlTrainingCount: 80 },
       },

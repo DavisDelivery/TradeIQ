@@ -48,6 +48,16 @@ import {
   inferFunctionUrl,
   type ReinvokeContext,
 } from './shared/backtest-resume/reinvoke';
+import {
+  appendPortfolioCompletedHoldRows,
+  appendPortfolioEquityCurveRows,
+  appendPortfolioSwapRows,
+  appendPortfolioWarningRows,
+  readAllPortfolioCompletedHoldRows,
+  readAllPortfolioEquityCurveRows,
+  readAllPortfolioSwapRows,
+  readAllPortfolioWarningRows,
+} from './shared/prophet-portfolio/persistence';
 
 const COLLECTION = 'portfolioBacktests';
 
@@ -252,12 +262,57 @@ export const handler: Handler = async (event, context) => {
 
     const batchElapsedMs = Date.now() - invocationStart;
 
+    // Phase 4u — append every per-batch slice to its subcollection
+    // BEFORE writing the cursor. The cursor never carries these arrays
+    // now; it only carries the cumulative counts (resumed batches pick
+    // up the next doc id from them). Pre-4u they sat inline on
+    // cursor.state and would have overflowed the 1 MiB ceiling on
+    // long windows — see reports/phase-4u/diagnosis.md.
+    const ecStart = cursor.state?.equityCurveRowCount ?? 0;
+    const swStart = cursor.state?.swapRowCount ?? 0;
+    const chStart = cursor.state?.completedHoldRowCount ?? 0;
+    const wnStart = cursor.state?.warningRowCount ?? 0;
+    try {
+      if (res.batchEquityCurve.length > 0) {
+        await appendPortfolioEquityCurveRows(runId, res.batchEquityCurve, ecStart);
+      }
+      if (res.batchSwaps.length > 0) {
+        await appendPortfolioSwapRows(runId, res.batchSwaps, swStart);
+      }
+      if (res.batchCompletedHolds.length > 0) {
+        await appendPortfolioCompletedHoldRows(runId, res.batchCompletedHolds, chStart);
+      }
+      if (res.batchWarnings.length > 0) {
+        await appendPortfolioWarningRows(runId, res.batchWarnings, wnStart);
+      }
+    } catch (e: any) {
+      log.error('portfolio_subcollection_append_failed', {
+        runId,
+        err: String(e?.message ?? e),
+      });
+      throw e;
+    }
+
     if (res.done) {
-      // Terminal batch — compute final metrics and write summary.
+      // Terminal batch — read back the cumulative arrays from the
+      // subcollections, finalize, then persist the summary + the
+      // detail/full snapshot. The reads return them in insertion
+      // order thanks to the zero-padded ids.
+      const [allEquityCurve, allSwaps, allCompletedHolds, allWarnings] =
+        await Promise.all([
+          readAllPortfolioEquityCurveRows(runId),
+          readAllPortfolioSwapRows(runId),
+          readAllPortfolioCompletedHoldRows(runId),
+          readAllPortfolioWarningRows(runId),
+        ]);
       const result = finalizePortfolioBacktest({
         state: res.state,
         config,
         window: win,
+        allEquityCurve,
+        allSwaps,
+        allCompletedHolds,
+        allWarnings,
       });
 
       const summary = {
@@ -324,7 +379,11 @@ export const handler: Handler = async (event, context) => {
       state: res.state,
       nextRebalanceIndex: res.state.nextRebalanceIdx,
       cumulativeMetrics: {
-        tradeCount: res.state.swaps.length,
+        // Phase 4u — swap rowCount lives on state now (the cursor's
+        // bounded-checkpoint shape). The legacy `cumulativeMetrics.
+        // tradeCount` field is kept for the verdict/diagnostic
+        // surfaces that already consume it.
+        tradeCount: res.state.swapRowCount,
         mlTrainingCount: cursor.cumulativeMetrics.mlTrainingCount,
       },
     };

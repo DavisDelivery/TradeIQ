@@ -50,36 +50,41 @@ import type {
 const FAILURE_SAMPLE_CAP = 20;
 
 /**
- * Serializable per-run state. Mirrors the closure of `runBacktest`'s
- * loop, with the rebalance index explicit so the bg-function can resume.
- * mlRows are NOT carried here — they're written to the run's mlTraining
- * subcollection at each batch boundary and re-read at finalize time.
+ * Serializable per-run state — *bounded checkpoint only*. Carries
+ * everything the next batch needs to resume + counters used in the
+ * finalize, but NO unbounded accumulations. Phase 4u W1 moved
+ * `dailyEquity / trades / attribution / warnings` out of this shape
+ * into `ProcessBatchResult.batch*` slices that the worker streams to
+ * Firestore subcollections per batch — the same discipline
+ * `mlTraining` rows have followed since Phase 4e-1-infra. Without
+ * that the cursor doc blew past Firestore's 1 MiB ceiling on the
+ * 2026-05-19 Williams baseline. See `reports/phase-4u/diagnosis.md`.
  */
 export interface RegularBacktestState {
   /** Next rebalance index to process (0-based). */
   nextRebalanceIdx: number;
   /** Total rebalances in the schedule (immutable across batches). */
   totalRebalances: number;
-  /** Most recent target portfolio (passed into next rebalance's diff). */
+  /** Most recent target portfolio (passed into next rebalance's diff). Bounded by topN. */
   portfolio: PortfolioPosition[];
   /** Current NAV (compounded through marks). */
   nav: number;
-  /** Cumulative daily equity points. */
-  dailyEquity: DailyEquityPoint[];
-  /** Cumulative trades. */
-  trades: TradeRecord[];
-  /** Cumulative attribution records. */
-  attribution: AttributionRecord[];
-  /** Accumulated warnings. */
-  warnings: string[];
   /** Bounded sample of ticker failures (≤ 20 across the run). */
   tickerFailureSample: TickerFailure[];
-  /** Total ticker failures across the run (unbounded counter). */
+  /** Total ticker failures across the run (unbounded counter — a number, not an array). */
   tickerFailureTotal: number;
   /** Total ticker scoring attempts (denominator for failure-rate metric). */
   tickerAttemptTotal: number;
   /** Cumulative count of mlTraining rows written to the subcollection. */
   mlTrainingRowCount: number;
+  /** Cumulative count of dailyEquity points written to the subcollection (Phase 4u). */
+  dailyEquityRowCount: number;
+  /** Cumulative count of trades written to the subcollection (Phase 4u). */
+  tradeRowCount: number;
+  /** Cumulative count of attribution records written to the subcollection (Phase 4u). */
+  attributionRowCount: number;
+  /** Cumulative count of warnings written to the subcollection (Phase 4u). */
+  warningRowCount: number;
   /** Sticky flag: did we already warn about survivorship for this run? */
   survivorshipWarned: boolean;
 }
@@ -108,27 +113,50 @@ export interface ProcessBatchResult {
   rebalancesProcessed: number;
   /** mlTraining rows produced during THIS batch only. Caller persists them. */
   batchMlRows: MLTrainingRow[];
+  /** Phase 4u — dailyEquity points produced during THIS batch only.
+   *  Includes the t0 seed point on the very first batch (when
+   *  `opts.state.nextRebalanceIdx === 0`). Caller appends to the
+   *  per-run dailyEquity subcollection. */
+  batchDailyEquity: DailyEquityPoint[];
+  /** Phase 4u — trades produced during THIS batch only. Caller persists. */
+  batchTrades: TradeRecord[];
+  /** Phase 4u — attribution records produced during THIS batch only.
+   *  Caller persists. */
+  batchAttribution: AttributionRecord[];
+  /** Phase 4u — warnings emitted during THIS batch only. Caller persists.
+   *  Most batches emit zero or one warning; the sticky `survivorshipWarned`
+   *  flag prevents duplicates across batches. */
+  batchWarnings: string[];
 }
 
-/** Build the zero state for a fresh run. */
+/** Build the zero state for a fresh run.
+ *
+ *  Phase 4u — the t0 dailyEquity seed point is emitted by
+ *  `processRegularBatch` on its first invocation
+ *  (`nextRebalanceIdx === 0`), not seeded inline on the cursor — the
+ *  cursor is a *bounded checkpoint*, never a ledger. The seed lands
+ *  in the dailyEquity subcollection like every other equity point.
+ *  `firstRebalanceDate` is kept for backward compat with callers that
+ *  used to read the seeded array; the engine no longer reads it. */
 export function initialRegularState(
   config: BacktestConfig,
   totalRebalances: number,
-  firstRebalanceDate: string,
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  _firstRebalanceDate: string,
 ): RegularBacktestState {
   return {
     nextRebalanceIdx: 0,
     totalRebalances,
     portfolio: [],
     nav: config.initialCapital,
-    dailyEquity: [{ date: firstRebalanceDate, value: config.initialCapital }],
-    trades: [],
-    attribution: [],
-    warnings: [],
     tickerFailureSample: [],
     tickerFailureTotal: 0,
     tickerAttemptTotal: 0,
     mlTrainingRowCount: 0,
+    dailyEquityRowCount: 0,
+    tradeRowCount: 0,
+    attributionRowCount: 0,
+    warningRowCount: 0,
     survivorshipWarned: false,
   };
 }
@@ -188,20 +216,39 @@ export async function processRegularBatch(
   const { rebalanceDates, survivorship } = await prepRun(config);
 
   // Shallow-copy state so callers' references are not mutated.
+  // Phase 4u — `dailyEquity / trades / attribution / warnings` are no
+  // longer carried on state; the per-batch slices live in the
+  // batch-local accumulators below and the worker streams them to
+  // subcollections.
   const state: RegularBacktestState = {
     ...opts.state,
     portfolio: opts.state.portfolio.map((p) => ({ ...p })),
-    dailyEquity: opts.state.dailyEquity.slice(),
-    trades: opts.state.trades.slice(),
-    attribution: opts.state.attribution.slice(),
-    warnings: opts.state.warnings.slice(),
     tickerFailureSample: opts.state.tickerFailureSample.slice(),
   };
+
+  // Per-batch outputs — flushed to subcollections by the worker after
+  // the batch returns. Each is BATCH-LOCAL: the engine never reads them
+  // from a prior batch.
+  const batchMlRows: MLTrainingRow[] = [];
+  const batchDailyEquity: DailyEquityPoint[] = [];
+  const batchTrades: TradeRecord[] = [];
+  const batchAttribution: AttributionRecord[] = [];
+  const batchWarnings: string[] = [];
+
+  // Phase 4u — emit the t0 dailyEquity seed on the first batch only.
+  // (Phase 4e-1-infra seeded this on `initialRegularState` and carried
+  // it on the cursor; that's what unbounded growth was hiding.)
+  if (state.nextRebalanceIdx === 0) {
+    batchDailyEquity.push({
+      date: rebalanceDates[0],
+      value: state.nav,
+    });
+  }
 
   // Add the survivorship warning once per run (fresh-start state has the
   // flag false; resumed states retain whether the warning fired earlier).
   if (!state.survivorshipWarned && !survivorship.corrected) {
-    state.warnings.push(
+    batchWarnings.push(
       `Universe ${config.universe} is not fully survivorship-corrected ` +
         `over [${config.startDate}, ${config.endDate}]. Coverage starts at ` +
         `${survivorship.coverageThrough ?? 'unknown'}. Results may be ` +
@@ -210,7 +257,6 @@ export async function processRegularBatch(
     state.survivorshipWarned = true;
   }
 
-  const batchMlRows: MLTrainingRow[] = [];
   let rebalancesProcessed = 0;
 
   const startIdx = state.nextRebalanceIdx;
@@ -231,11 +277,11 @@ export async function processRegularBatch(
     // 1. Universe pool at this date (PIT)
     const pool = universePoolForDate(config.universe, asOfDate);
     if (pool.tickers.length === 0) {
-      state.warnings.push(
+      batchWarnings.push(
         `${asOfDate}: universe pool empty (no PIT snapshot covers date)`,
       );
       const flatDays = tradingDaysBetween(addDays(asOfDate, 1), nextAsOf);
-      for (const d of flatDays) state.dailyEquity.push({ date: d, value: state.nav });
+      for (const d of flatDays) batchDailyEquity.push({ date: d, value: state.nav });
       state.nextRebalanceIdx = i + 1;
       rebalancesProcessed++;
       if (isExpired()) break;
@@ -270,7 +316,7 @@ export async function processRegularBatch(
             !nonProphetBoardWarned
           ) {
             nonProphetBoardWarned = true;
-            state.warnings.push(
+            batchWarnings.push(
               `Board "${config.board}" has no PIT scoring path; ` +
                 `prophet/williams/lynch are the supported boards. All candidates null.`,
             );
@@ -295,7 +341,7 @@ export async function processRegularBatch(
     );
 
     if (rebalanceFailures.length > pool.tickers.length / 2) {
-      state.warnings.push(
+      batchWarnings.push(
         `${asOfDate}: ${rebalanceFailures.length}/${pool.tickers.length} ticker scoring attempts failed ` +
           `(sample: ${rebalanceFailures.slice(0, 3).map((f) => `${f.ticker}: ${f.message.slice(0, 80)}`).join('; ')})`,
       );
@@ -342,7 +388,7 @@ export async function processRegularBatch(
       0,
     );
     state.nav = Math.max(0, state.nav - costDrag);
-    state.trades.push(...segmentTrades);
+    batchTrades.push(...segmentTrades);
 
     // 6. Mark equity day-by-day from (asOfDate, nextAsOf]
     const positionReturns = new Map<string, { date: string; ret: number }[]>();
@@ -363,7 +409,7 @@ export async function processRegularBatch(
         portReturn += p.weight * todayRet;
       }
       state.nav = state.nav * (1 + portReturn);
-      state.dailyEquity.push({ date, value: state.nav });
+      batchDailyEquity.push({ date, value: state.nav });
     }
 
     // 7a. Per-position attribution — stays portfolio-level. One record
@@ -372,7 +418,7 @@ export async function processRegularBatch(
     for (const p of target) {
       const rets = positionReturns.get(p.ticker) ?? [];
       const segmentReturn = rets.reduce((acc, r) => (1 + acc) * (1 + r.ret) - 1, 0);
-      state.attribution.push({
+      batchAttribution.push({
         rebalanceDate: asOfDate,
         ticker: p.ticker,
         weight: p.weight,
@@ -448,12 +494,20 @@ export async function processRegularBatch(
 
   const done = state.nextRebalanceIdx >= rebalanceDates.length;
   state.mlTrainingRowCount += batchMlRows.length;
+  state.dailyEquityRowCount += batchDailyEquity.length;
+  state.tradeRowCount += batchTrades.length;
+  state.attributionRowCount += batchAttribution.length;
+  state.warningRowCount += batchWarnings.length;
 
   return {
     state,
     done,
     rebalancesProcessed,
     batchMlRows,
+    batchDailyEquity,
+    batchTrades,
+    batchAttribution,
+    batchWarnings,
   };
 }
 
@@ -463,6 +517,14 @@ export interface FinalizeOptions {
   state: RegularBacktestState;
   /** All mlTraining rows for this run — caller reads them back from the subcollection. */
   allMlRows: MLTrainingRow[];
+  /** All dailyEquity points for this run — caller reads from subcollection (Phase 4u). */
+  allDailyEquity: DailyEquityPoint[];
+  /** All trades for this run — caller reads from subcollection (Phase 4u). */
+  allTrades: TradeRecord[];
+  /** All attribution records for this run — caller reads from subcollection (Phase 4u). */
+  allAttribution: AttributionRecord[];
+  /** All warnings emitted during the run — caller reads from subcollection (Phase 4u). */
+  allWarnings: string[];
   /** Pre-fetched benchmark bars (or empty array). */
   benchBars: Bar[];
   /** Benchmark ticker (used for the result's benchmark field). */
@@ -475,12 +537,16 @@ export interface FinalizeOptions {
 
 /**
  * Compute the terminal BacktestResult from an exhausted state + the
- * subcollection-read mlTraining rows. Mirrors the metrics block at the
- * bottom of `runBacktest` so the result shape is identical.
+ * subcollection-read mlTraining/dailyEquity/trades/attribution/warning
+ * arrays. Mirrors the metrics block at the bottom of `runBacktest` so
+ * the result shape is identical.
  */
 export function finalizeRegularBacktest(opts: FinalizeOptions): BacktestResult {
-  const { config, runId, state, allMlRows, benchBars, benchTicker, rebalanceDates, survivorship } = opts;
-  const warnings = state.warnings.slice();
+  const {
+    config, runId, state, allMlRows, allDailyEquity, allTrades, allAttribution,
+    allWarnings, benchBars, benchTicker, rebalanceDates, survivorship,
+  } = opts;
+  const warnings = allWarnings.slice();
 
   const failureRate =
     state.tickerAttemptTotal > 0
@@ -504,9 +570,9 @@ export function finalizeRegularBacktest(opts: FinalizeOptions): BacktestResult {
   }
 
   const metrics = computeMetrics({
-    dailyEquity: state.dailyEquity,
-    trades: state.trades,
-    attribution: state.attribution,
+    dailyEquity: allDailyEquity,
+    trades: allTrades,
+    attribution: allAttribution,
     mlRows: allMlRows,
     benchmarkBars: benchBars,
     initialCapital: config.initialCapital,
@@ -518,9 +584,9 @@ export function finalizeRegularBacktest(opts: FinalizeOptions): BacktestResult {
     runId,
     config,
     metrics,
-    dailyEquity: state.dailyEquity,
-    trades: state.trades,
-    perAnalystAttribution: state.attribution,
+    dailyEquity: allDailyEquity,
+    trades: allTrades,
+    perAnalystAttribution: allAttribution,
     universeSurvivorshipCorrected: {
       universe: config.universe,
       corrected: survivorship.corrected,

@@ -27,37 +27,63 @@ const writeOps: Array<{
 }> = [];
 
 vi.mock('../shared/firebase-admin', () => ({
-  getAdminDb: vi.fn(() => ({
-    collection: (cn: string) => ({
-      doc: (dn: string) => ({
-        get: async () => ({
-          exists: storedDoc !== null,
-          data: () => storedDoc ?? undefined,
-        }),
-        set: async (payload: any, opts?: { merge?: boolean }) => {
-          writeOps.push({ collection: cn, doc: dn, payload });
-          if (opts?.merge) {
-            storedDoc = { ...(storedDoc ?? {}), ...payload };
-          } else {
-            storedDoc = { ...payload };
-          }
-        },
-        collection: (subCn: string) => ({
-          doc: (subDn: string) => ({
-            set: async (payload: any) => {
-              writeOps.push({
-                collection: cn,
-                doc: dn,
-                sub: subCn,
-                subDoc: subDn,
-                payload,
-              });
-            },
+  getAdminDb: vi.fn(() => {
+    const dbObj: any = {
+      collection: (cn: string) => ({
+        doc: (dn: string) => ({
+          get: async () => ({
+            exists: storedDoc !== null,
+            data: () => storedDoc ?? undefined,
+          }),
+          set: async (payload: any, opts?: { merge?: boolean }) => {
+            writeOps.push({ collection: cn, doc: dn, payload });
+            if (opts?.merge) {
+              storedDoc = { ...(storedDoc ?? {}), ...payload };
+            } else {
+              storedDoc = { ...payload };
+            }
+          },
+          collection: (subCn: string) => ({
+            doc: (subDn: string) => ({
+              set: async (payload: any) => {
+                writeOps.push({
+                  collection: cn,
+                  doc: dn,
+                  sub: subCn,
+                  subDoc: subDn,
+                  payload,
+                });
+              },
+            }),
+            // Phase 4u — readAllPortfolio* helpers iterate this.
+            get: async () => ({
+              forEach: (_cb: (d: { data: () => any }) => void) => {
+                // empty subcollection in this test — terminal finalize
+                // gets [] for all 4 arrays, which the mockFinalize
+                // accepts regardless.
+              },
+            }),
           }),
         }),
       }),
-    }),
-  })),
+      // Phase 4u — the bg-function now appends per-batch subcollection
+      // rows via batched writes; the mock needs a batch() shim.
+      batch: () => {
+        const ops: Array<() => Promise<void>> = [];
+        return {
+          set: (docRef: any, payload: any) => {
+            ops.push(async () => {
+              await docRef.set(payload);
+            });
+          },
+          commit: async () => {
+            for (const op of ops) await op();
+          },
+        };
+      },
+    };
+    return dbObj;
+  }),
 }));
 
 vi.mock('firebase-admin/firestore', () => ({
@@ -72,14 +98,15 @@ const mockFinalize = vi.fn();
 const mockInitialState = vi.fn((..._args: any[]) => ({
   cash: 100_000,
   positions: [],
-  equityCurve: [],
-  swaps: [],
-  warnings: [],
   totalSlippage: 0,
   totalTurnoverNotional: 0,
-  completedHolds: [],
   nextMarkIdx: 0,
   nextRebalanceIdx: 0,
+  // Phase 4u — bounded cursor counters.
+  equityCurveRowCount: 0,
+  swapRowCount: 0,
+  completedHoldRowCount: 0,
+  warningRowCount: 0,
 }));
 
 vi.mock('../shared/prophet-portfolio/backtest-harness-batched', () => ({
@@ -128,29 +155,35 @@ function setupAdvancingHarness() {
   mockProcessBatch.mockImplementation(async (opts: any) => {
     const start = opts.state.nextRebalanceIdx;
     const next = Math.min(start + BATCH_SIZE, TOTAL_REBALANCES);
+    const batchSwaps = Array.from({ length: next - start }).map((_, i) => ({
+      swapId: `swap-${start + i}`,
+      timestamp: '2024-01-01T00:00:00.000Z',
+      asOfDate: '2024-01-01',
+      out: [],
+      in: [],
+      candidatesConsidered: 0,
+      swapsApplied: 0,
+      snapshotId: '',
+      notes: '',
+      signalId: 'composite-v1',
+    }));
     return {
       state: {
         ...opts.state,
         nextRebalanceIdx: next,
         nextMarkIdx: opts.state.nextMarkIdx + 30, // arbitrary daily advance
-        swaps: opts.state.swaps.concat(
-          Array.from({ length: next - start }).map((_, i) => ({
-            swapId: `swap-${start + i}`,
-            timestamp: '2024-01-01T00:00:00.000Z',
-            asOfDate: '2024-01-01',
-            out: [],
-            in: [],
-            candidatesConsidered: 0,
-            swapsApplied: 0,
-            snapshotId: '',
-            notes: '',
-            signalId: 'composite-v1',
-          })),
-        ),
+        swapRowCount: (opts.state.swapRowCount ?? 0) + batchSwaps.length,
+        equityCurveRowCount: opts.state.equityCurveRowCount ?? 0,
+        completedHoldRowCount: opts.state.completedHoldRowCount ?? 0,
+        warningRowCount: opts.state.warningRowCount ?? 0,
       },
       done: next >= TOTAL_REBALANCES,
       rebalancesProcessed: next - start,
       marksProcessed: 30,
+      batchEquityCurve: [],
+      batchSwaps,
+      batchCompletedHolds: [],
+      batchWarnings: [],
     };
   });
   mockFinalize.mockImplementation(() => ({
@@ -290,7 +323,9 @@ describe('checkpoint chain — race protection', () => {
     expect((stateBefore as any).cursor.nextRebalanceIndex).toBe(8);
     await invoke(makeEvent({ runId: 'pb-race-x', window: 'full' }), { waitUntil: vi.fn() });
     expect((storedDoc as any).cursor.nextRebalanceIndex).toBe(16);
-    // Total swaps in state is rebalances processed so far.
-    expect((storedDoc as any).cursor.state.swaps.length).toBe(16);
+    // Phase 4u — swaps live in a subcollection now; the cursor only
+    // carries the count. After two batches of 8 rebalances we've
+    // appended 16 swap rows total.
+    expect((storedDoc as any).cursor.state.swapRowCount).toBe(16);
   });
 });

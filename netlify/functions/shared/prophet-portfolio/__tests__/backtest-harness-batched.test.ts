@@ -122,6 +122,13 @@ describe('processPortfolioBatch + finalize — equivalence with unbatched harnes
     let state = initialPortfolioState(CONFIG);
     let done = false;
     let safety = 0;
+    // Phase 4u — caller assembles cumulative arrays from per-batch
+    // slices (the worker streams these to subcollections; this test
+    // does the same in memory).
+    const allEquityCurve: any[] = [];
+    const allSwaps: any[] = [];
+    const allCompletedHolds: number[] = [];
+    const allWarnings: string[] = [];
     while (!done) {
       const res = await processPortfolioBatch({
         config: CONFIG,
@@ -133,6 +140,10 @@ describe('processPortfolioBatch + finalize — equivalence with unbatched harnes
       });
       state = res.state;
       done = res.done;
+      allEquityCurve.push(...res.batchEquityCurve);
+      allSwaps.push(...res.batchSwaps);
+      allCompletedHolds.push(...res.batchCompletedHolds);
+      allWarnings.push(...res.batchWarnings);
       if (safety++ > 100) throw new Error('runaway loop');
     }
 
@@ -140,6 +151,10 @@ describe('processPortfolioBatch + finalize — equivalence with unbatched harnes
       state,
       config: CONFIG,
       window: WINDOW_THREE,
+      allEquityCurve,
+      allSwaps,
+      allCompletedHolds,
+      allWarnings,
     });
 
     expect(batched.rebalanceCount).toBe(unbatched.rebalanceCount);
@@ -175,6 +190,10 @@ describe('processPortfolioBatch + finalize — equivalence with unbatched harnes
       state: res.state,
       config: CONFIG,
       window: WINDOW_THREE,
+      allEquityCurve: res.batchEquityCurve,
+      allSwaps: res.batchSwaps,
+      allCompletedHolds: res.batchCompletedHolds,
+      allWarnings: res.batchWarnings,
     });
 
     expect(batched.swaps).toEqual(unbatched.swaps);
@@ -275,6 +294,10 @@ describe('finalizePortfolioBacktest — terminal metrics', () => {
       state: empty,
       config: CONFIG,
       window: WINDOW_THREE,
+      allEquityCurve: [],
+      allSwaps: [],
+      allCompletedHolds: [],
+      allWarnings: [],
     });
     expect(result.equityCurve).toHaveLength(0);
     expect(result.swapCount).toBe(0);

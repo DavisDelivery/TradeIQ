@@ -35,11 +35,19 @@ import {
 } from './shared/backtest/engine-batched';
 import type { BacktestConfig } from './shared/backtest/types';
 import {
+  appendAttributionRows,
+  appendDailyEquityRows,
   appendMLTrainingRows,
+  appendTradeRows,
+  appendWarningRows,
   persistRunFailure,
-  persistRunResult,
   persistRunRunning,
+  persistRunSummary,
+  readAllAttributionRows,
+  readAllDailyEquityRows,
   readAllMLTrainingRows,
+  readAllTradeRows,
+  readAllWarningRows,
 } from './shared/backtest/persistence';
 import { getAdminDb } from './shared/firebase-admin';
 import { logger } from './shared/logger';
@@ -196,39 +204,73 @@ export const handler: Handler = withSentry(async (event, context) => {
 
     const batchElapsedMs = Date.now() - invocationStart;
 
-    // Append THIS batch's mlTraining rows to the subcollection.
-    if (res.batchMlRows.length > 0) {
-      try {
-        await appendMLTrainingRows(
-          runId,
-          res.batchMlRows,
-          cursor.cumulativeMetrics.mlTrainingCount,
-        );
-      } catch (e: any) {
-        log.error('ml_append_failed', {
-          runId,
-          err: String(e?.message ?? e),
-        });
-        throw e;
+    // Phase 4u — append every per-batch slice (ml rows, daily equity,
+    // trades, attribution, warnings) to its subcollection BEFORE
+    // writing the cursor. The cursor never carries these arrays now;
+    // it only carries the cumulative counts so a resumed batch picks up
+    // the next doc id. Pre-4u these all sat inline on `cursor.state`
+    // and grew the doc past Firestore's 1 MiB ceiling — see
+    // reports/phase-4u/diagnosis.md.
+    const mlStart = cursor.cumulativeMetrics.mlTrainingCount;
+    const deStart = cursor.state?.dailyEquityRowCount ?? 0;
+    const trStart = cursor.state?.tradeRowCount ?? 0;
+    const atStart = cursor.state?.attributionRowCount ?? 0;
+    const wnStart = cursor.state?.warningRowCount ?? 0;
+    try {
+      if (res.batchMlRows.length > 0) {
+        await appendMLTrainingRows(runId, res.batchMlRows, mlStart);
       }
+      if (res.batchDailyEquity.length > 0) {
+        await appendDailyEquityRows(runId, res.batchDailyEquity, deStart);
+      }
+      if (res.batchTrades.length > 0) {
+        await appendTradeRows(runId, res.batchTrades, trStart);
+      }
+      if (res.batchAttribution.length > 0) {
+        await appendAttributionRows(runId, res.batchAttribution, atStart);
+      }
+      if (res.batchWarnings.length > 0) {
+        await appendWarningRows(runId, res.batchWarnings, wnStart);
+      }
+    } catch (e: any) {
+      log.error('subcollection_append_failed', {
+        runId,
+        err: String(e?.message ?? e),
+      });
+      throw e;
     }
-    const updatedMlCount = cursor.cumulativeMetrics.mlTrainingCount + res.batchMlRows.length;
+    const updatedMlCount = mlStart + res.batchMlRows.length;
 
     if (res.done) {
-      // Terminal batch — read back all mlRows for IC computation, finalize.
-      const allMlRows = await readAllMLTrainingRows(runId);
+      // Terminal batch — read back every per-array subcollection for
+      // metrics + the final result doc, then write the run summary
+      // (subcollections are already populated by the per-batch
+      // appends above, so persistRunSummary writes only the top-level
+      // doc).
+      const [allMlRows, allDailyEquity, allTrades, allAttribution, allWarnings] =
+        await Promise.all([
+          readAllMLTrainingRows(runId),
+          readAllDailyEquityRows(runId),
+          readAllTradeRows(runId),
+          readAllAttributionRows(runId),
+          readAllWarningRows(runId),
+        ]);
       const result = finalizeRegularBacktest({
         config,
         runId,
         state: res.state,
         allMlRows,
+        allDailyEquity,
+        allTrades,
+        allAttribution,
+        allWarnings,
         benchBars: prep.benchBars,
         benchTicker: prep.benchTicker,
         rebalanceDates: prep.rebalanceDates,
         survivorship: prep.survivorship,
       });
 
-      await persistRunResult(runId, result);
+      await persistRunSummary(runId, result);
       await clearCursor(db, COLLECTION, runId);
 
       log.info('background_run_complete', {
@@ -250,7 +292,7 @@ export const handler: Handler = withSentry(async (event, context) => {
       state: res.state,
       nextRebalanceIndex: res.state.nextRebalanceIdx,
       cumulativeMetrics: {
-        tradeCount: res.state.trades.length,
+        tradeCount: res.state.tradeRowCount,
         mlTrainingCount: updatedMlCount,
       },
     };

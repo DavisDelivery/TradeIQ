@@ -111,11 +111,45 @@ export async function persistRunRunning(runId: string): Promise<void> {
 }
 
 /**
- * Write the final BacktestResult: top-level doc gets metrics + warnings,
- * subcollections get the per-event arrays. Batched 500 writes at a time
- * to stay clear of Firestore's batch ceiling.
+ * Write the final BacktestResult — single-pass path
+ * (`scripts/run-backtest.ts` CLI, the in-engine `runBacktest`). Top-
+ * level doc gets metrics + warnings; subcollections get the per-event
+ * arrays. Batched 500 writes at a time to stay clear of Firestore's
+ * batch ceiling. Idempotent on the subcollection writes (same doc
+ * IDs).
+ *
+ * Phase 4u — the bg-function's batched path now streams the per-event
+ * arrays to subcollections per batch (via `appendDailyEquityRows`
+ * etc.) and calls `persistRunSummary` instead, which writes only the
+ * top-level summary. This single-pass function stays as-is for the
+ * CLI path which builds the full result in one shot.
  */
 export async function persistRunResult(
+  runId: string,
+  result: BacktestResult,
+): Promise<void> {
+  await persistRunSummary(runId, result);
+  await persistSubcollection<DailyEquityPoint>(
+    runId,
+    'dailyEquity',
+    result.dailyEquity,
+  );
+  await persistSubcollection<TradeRecord>(runId, 'trades', result.trades);
+  await persistSubcollection<AttributionRecord>(
+    runId,
+    'attribution',
+    result.perAnalystAttribution,
+  );
+}
+
+/**
+ * Phase 4u — write only the top-level run summary, no subcollections.
+ * Used by the bg-function's terminal batch after the per-array
+ * subcollections have already been streamed batch-by-batch. Splitting
+ * this out prevents the terminal batch from re-writing potentially
+ * thousands of subcollection docs the bg-function already wrote.
+ */
+export async function persistRunSummary(
   runId: string,
   result: BacktestResult,
 ): Promise<void> {
@@ -133,18 +167,6 @@ export async function persistRunResult(
       benchmark: result.benchmark,
     },
     { merge: true },
-  );
-
-  await persistSubcollection<DailyEquityPoint>(
-    runId,
-    'dailyEquity',
-    result.dailyEquity,
-  );
-  await persistSubcollection<TradeRecord>(runId, 'trades', result.trades);
-  await persistSubcollection<AttributionRecord>(
-    runId,
-    'attribution',
-    result.perAnalystAttribution,
   );
 }
 
@@ -171,18 +193,7 @@ export async function appendMLTrainingRows(
   rows: MLTrainingRow[],
   startIdx: number,
 ): Promise<void> {
-  if (rows.length === 0) return;
-  const colRef = db().collection(COLLECTION).doc(runId).collection('mlTraining');
-  const CHUNK = 500;
-  for (let i = 0; i < rows.length; i += CHUNK) {
-    const slice = rows.slice(i, i + CHUNK);
-    const batch = db().batch();
-    slice.forEach((row, j) => {
-      const id = String(startIdx + i + j).padStart(8, '0');
-      batch.set(colRef.doc(id), row as unknown as Record<string, unknown>);
-    });
-    await batch.commit();
-  }
+  await appendSubcollection(runId, 'mlTraining', rows, startIdx);
 }
 
 /**
@@ -196,11 +207,117 @@ export async function appendMLTrainingRows(
 export async function readAllMLTrainingRows(
   runId: string,
 ): Promise<MLTrainingRow[]> {
-  const colRef = db().collection(COLLECTION).doc(runId).collection('mlTraining');
+  return readAllSubcollection<MLTrainingRow>(runId, 'mlTraining');
+}
+
+/**
+ * Phase 4u W1 — same append/read pattern for dailyEquity / trades /
+ * attribution / warnings. Pre-4u these arrays were accumulated on
+ * `cursor.state` and only written to subcollections at finalize time;
+ * the cursor doc grew with the run and eventually blew Firestore's
+ * 1 MiB per-doc ceiling (the 2026-05-19 Williams baseline failure).
+ * Now each batch streams its slice to the subcollection like mlTraining
+ * has done since 4e-1-infra; the cursor carries only a count per array.
+ *
+ * Ordering note: subcollection ids are zero-padded to 8 digits, so a
+ * lexicographic read iterates in insertion order — load-bearing for the
+ * dailyEquity arithmetic and attribution windows downstream.
+ */
+export async function appendDailyEquityRows(
+  runId: string,
+  rows: DailyEquityPoint[],
+  startIdx: number,
+): Promise<void> {
+  await appendSubcollection(runId, 'dailyEquity', rows, startIdx);
+}
+
+export async function readAllDailyEquityRows(
+  runId: string,
+): Promise<DailyEquityPoint[]> {
+  return readAllSubcollection<DailyEquityPoint>(runId, 'dailyEquity');
+}
+
+export async function appendTradeRows(
+  runId: string,
+  rows: TradeRecord[],
+  startIdx: number,
+): Promise<void> {
+  await appendSubcollection(runId, 'trades', rows, startIdx);
+}
+
+export async function readAllTradeRows(
+  runId: string,
+): Promise<TradeRecord[]> {
+  return readAllSubcollection<TradeRecord>(runId, 'trades');
+}
+
+export async function appendAttributionRows(
+  runId: string,
+  rows: AttributionRecord[],
+  startIdx: number,
+): Promise<void> {
+  await appendSubcollection(runId, 'attribution', rows, startIdx);
+}
+
+export async function readAllAttributionRows(
+  runId: string,
+): Promise<AttributionRecord[]> {
+  return readAllSubcollection<AttributionRecord>(runId, 'attribution');
+}
+
+/** Phase 4u — warnings persist as `{ idx, text }` so the read-side
+ *  can rebuild the original `string[]` in insertion order. */
+interface WarningRow {
+  idx: number;
+  text: string;
+}
+
+export async function appendWarningRows(
+  runId: string,
+  texts: string[],
+  startIdx: number,
+): Promise<void> {
+  const rows: WarningRow[] = texts.map((text, i) => ({ idx: startIdx + i, text }));
+  await appendSubcollection(runId, 'warnings', rows, startIdx);
+}
+
+export async function readAllWarningRows(runId: string): Promise<string[]> {
+  const rows = await readAllSubcollection<WarningRow>(runId, 'warnings');
+  return rows.map((r) => r.text);
+}
+
+/** Internal generic — used by every appendXRows above. Chunked at 500
+ *  to stay clear of the Firestore batched-write cap. */
+async function appendSubcollection<T extends object>(
+  runId: string,
+  name: string,
+  rows: T[],
+  startIdx: number,
+): Promise<void> {
+  if (rows.length === 0) return;
+  const colRef = db().collection(COLLECTION).doc(runId).collection(name);
+  const CHUNK = 500;
+  for (let i = 0; i < rows.length; i += CHUNK) {
+    const slice = rows.slice(i, i + CHUNK);
+    const batch = db().batch();
+    slice.forEach((row, j) => {
+      const id = String(startIdx + i + j).padStart(8, '0');
+      batch.set(colRef.doc(id), row as unknown as Record<string, unknown>);
+    });
+    await batch.commit();
+  }
+}
+
+/** Internal generic — used by every readAllX above. */
+async function readAllSubcollection<T>(
+  runId: string,
+  name: string,
+): Promise<T[]> {
+  const colRef = db().collection(COLLECTION).doc(runId).collection(name);
   const snap = await colRef.get();
-  const rows: MLTrainingRow[] = [];
+  const rows: T[] = [];
   snap.forEach((doc) => {
-    rows.push(doc.data() as MLTrainingRow);
+    rows.push(doc.data() as T);
   });
   return rows;
 }

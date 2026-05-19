@@ -1,4 +1,4 @@
-// GET /api/backtest-runs?limit=20
+// GET /api/backtest-runs?limit=20[&includeIncomplete=1][&status=failed]
 //
 // Returns the most recent backtest runs (Phase 4a engine output) for the
 // run-list view. Each row carries top-level metrics + the survivorship
@@ -7,9 +7,21 @@
 // Full subcollections (dailyEquity/trades/attribution) are NOT included
 // here — they live behind /api/backtest-runs/:runId.
 //
+// Default behaviour (Phase 4a):
+//   - Orders by `completedAt desc`.
+//   - Excludes runs without a `completedAt` (failed / pending / running).
+//
+// Phase 4u W2 — failed-run visibility:
+//   - `includeIncomplete=1` switches to `startedAt desc` and includes
+//     `failed`, `pending`, and `running` runs.
+//   - `status=<value>` filters by status (e.g. `status=failed`); implies
+//     `includeIncomplete=1`.
+//   - Each row's `error` field is surfaced (null when absent) so a
+//     failed run's reason is inspectable without leaving the API.
+//
 // Response shape:
 //   { ok: true, runs: [{
-//       runId, config, status, completedAt,
+//       runId, config, status, startedAt, completedAt, failedAt, error,
 //       metrics: { totalReturnPct, cagrPct, sharpe, maxDrawdownPct,
 //                  winRatePct, informationCoefficient, informationRatio,
 //                  tradeCount },
@@ -26,8 +38,21 @@ import { getAdminDb } from './shared/firebase-admin';
 const log = createLogger('backtest-runs-list');
 const headers = { 'Content-Type': 'application/json' };
 
+const ALLOWED_STATUSES = ['pending', 'running', 'complete', 'failed'] as const;
+type AllowedStatus = (typeof ALLOWED_STATUSES)[number];
+
 const QuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(50).default(20),
+  /** Phase 4u W2 — switch ordering to startedAt and include
+   *  failed/pending/running runs. Accepts `1` / `true` / `yes`. */
+  includeIncomplete: z
+    .string()
+    .optional()
+    .transform((v) => v === '1' || v === 'true' || v === 'yes'),
+  /** Phase 4u W2 — filter by status. Implies includeIncomplete. */
+  status: z
+    .enum(ALLOWED_STATUSES)
+    .optional(),
 });
 
 function summarizeMetrics(m: any): Record<string, number | null> {
@@ -63,28 +88,54 @@ export const handler: Handler = async (event) => {
   try {
     const params = QuerySchema.parse(event.queryStringParameters ?? {});
     const db = getAdminDb();
-    // Note: order by completedAt desc. Runs that never completed (running /
-    // failed) have no completedAt and won't appear here — that's intentional
-    // for now; a Phase 4b-2 launcher view will surface in-flight runs.
-    const snap = await db
+    // Phase 4u W2 — a `status=` filter implies includeIncomplete.
+    const includeIncomplete = params.includeIncomplete || params.status !== undefined;
+    // Order: completedAt for the default complete-only view (no failed
+    // runs ever land in that path); startedAt for the inclusive view
+    // (every run has a startedAt — written by the trigger).
+    const orderField = includeIncomplete ? 'startedAt' : 'completedAt';
+    let query = db
       .collection('backtestRuns')
-      .orderBy('completedAt', 'desc')
-      .limit(params.limit)
-      .get();
+      .orderBy(orderField, 'desc')
+      .limit(params.limit);
+    if (params.status !== undefined) {
+      query = db
+        .collection('backtestRuns')
+        .where('status', '==', params.status)
+        .orderBy(orderField, 'desc')
+        .limit(params.limit);
+    }
+    const snap = await query.get();
 
-    const runs = snap.docs.map((d) => {
-      const data = d.data();
-      return {
-        runId: data.runId ?? d.id,
-        config: data.config ?? null,
-        status: data.status ?? 'complete',
-        completedAt: data.completedAt ?? null,
-        metrics: summarizeMetrics(data.metrics),
-        universeSurvivorshipCorrected: data.universeSurvivorshipCorrected ?? null,
-        benchmark: data.benchmark ?? null,
-        warnings: Array.isArray(data.warnings) ? data.warnings : [],
-      };
-    });
+    const filterStatus: AllowedStatus | undefined = params.status;
+    const runs = snap.docs
+      .map((d) => {
+        const data = d.data();
+        return {
+          runId: data.runId ?? d.id,
+          config: data.config ?? null,
+          status: (data.status as AllowedStatus | undefined) ?? 'complete',
+          startedAt: data.startedAt ?? null,
+          completedAt: data.completedAt ?? null,
+          failedAt: data.failedAt ?? null,
+          // Phase 4u W2 — surface the engine's failure reason, set by
+          // `persistRunFailure`. Null when the run hasn't failed.
+          error: typeof data.error === 'string' ? data.error : null,
+          metrics: summarizeMetrics(data.metrics),
+          universeSurvivorshipCorrected: data.universeSurvivorshipCorrected ?? null,
+          benchmark: data.benchmark ?? null,
+          warnings: Array.isArray(data.warnings) ? data.warnings : [],
+        };
+      })
+      // Apply the filter in code as well — Firestore may return runs
+      // missing the field we ordered by; the where() clause does the
+      // server-side work but the extra defensive filter keeps the
+      // contract clean.
+      .filter((r) => {
+        if (filterStatus !== undefined) return r.status === filterStatus;
+        if (!includeIncomplete) return r.status === 'complete';
+        return true;
+      });
 
     log.info('response', {
       status: 200,
