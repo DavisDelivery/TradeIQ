@@ -75,6 +75,19 @@ const BUDGET_MS = Number(process.env.BACKTEST_BUDGET_MS ?? 13 * 60_000);
 // sp500/monthly. Override via BACKTEST_BATCH_SIZE for tuning.
 const BATCH_SIZE = Number(process.env.BACKTEST_BATCH_SIZE ?? 8);
 
+// Phase 4v — pre-dispatch startup jitter (ms). When two parallel
+// non-portfolio backtests (e.g. the Phase 4t sp500 + russell2k
+// composite pair) trip their 13-min watchdogs in the same wall-clock
+// window, their self-POSTs cluster at the gateway and hit the per-
+// function concurrency ceiling — observed live on bt_20260519184819
+// (sp500), which recorded `lastReinvokeError: "HTTP 500"` from its
+// 5th-batch reinvoke. The dispatch's internal retry-with-backoff
+// (reinvoke.ts:151+) is the primary defence; jitter just breaks up
+// the simultaneous-arrival pathology that triggers the 5xx in the
+// first place. Mirrors `REINVOKE_JITTER_MS` on the portfolio path
+// (run-portfolio-backtest-background.ts:80).
+const REINVOKE_JITTER_MS = Number(process.env.BACKTEST_REINVOKE_JITTER_MS ?? 1_500);
+
 interface BackgroundPayload {
   runId: string;
   config?: BacktestConfig;
@@ -309,15 +322,46 @@ export const handler: Handler = withSentry(async (event, context) => {
       '/.netlify/functions/run-backtest-background',
     );
 
+    // Phase 4v — mirror the portfolio path (run-portfolio-backtest-
+    // background.ts:408-433) by passing startup jitter to the dispatch
+    // AND unconditionally stamping the W1b telemetry fields on the
+    // cursor regardless of dispatch outcome. The pre-4v code only
+    // wrote `lastReinvokeError` on failure, so on success the cursor
+    // had no proof that a reinvoke was attempted — when a parallel
+    // run's reinvoke chain stalled (live: bt_20260519184826 / russell2k
+    // composite, 6 invocations with zero W1b telemetry on the cursor),
+    // we could not distinguish "dispatch never ran" from "dispatch ran
+    // and the next invocation was throttled". The always-stamp pattern
+    // pins that distinction. See reports/phase-4v-backtest-concurrency/
+    // diagnosis.md.
     const reinvokeCtx: ReinvokeContext = context as unknown as ReinvokeContext;
-    const dispatched = await dispatchReinvoke(reinvokeUrl, runId, reinvokeCtx);
+    const dispatched = await dispatchReinvoke(
+      reinvokeUrl,
+      runId,
+      reinvokeCtx,
+      {},
+      { jitterMs: REINVOKE_JITTER_MS },
+    );
+
+    const cursorWithDispatch: BacktestCursor<RegularBacktestState> = {
+      ...nextCursor,
+      lastReinvokeAt: new Date().toISOString(),
+      reinvokeAttempts: (cursor.reinvokeAttempts ?? 0) + 1,
+      lastReinvokeRetries: dispatched.attempts,
+      lastReinvokeStatus: dispatched.lastStatus,
+      ...(dispatched.ok
+        ? { lastReinvokeError: undefined }
+        : { lastReinvokeError: dispatched.error ?? 'unknown dispatch failure' }),
+    };
+    await writeCursor(db, COLLECTION, runId, cursorWithDispatch);
 
     if (!dispatched.ok) {
-      await writeCursor(db, COLLECTION, runId, {
-        ...nextCursor,
-        lastReinvokeError: dispatched.error,
+      log.error('reinvoke_dispatch_failed', {
+        runId,
+        attempts: dispatched.attempts,
+        lastStatus: dispatched.lastStatus,
+        err: dispatched.error,
       });
-      log.error('reinvoke_dispatch_failed', { runId, err: dispatched.error });
     }
 
     log.info('batch_complete_continuing', {
