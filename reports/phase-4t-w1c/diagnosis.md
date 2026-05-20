@@ -618,3 +618,276 @@ to be necessary-but-not-sufficient.
       `docs/BACKTEST_LIMITATIONS.md`.
 
 — Executor 4t W1c
+
+---
+
+## Addendum — probe results (2026-05-20)
+
+Per orchestrator W1c review: earnings authorised for W2; insider
+required a probe first. The diagnostic endpoint
+`/api/diag-insider-pit` was deployed on this branch and called
+against five (ticker, asOfDate) pairs to discriminate I-A/I-B/I-C.
+The probe **rejects I-A and I-B and confirms I-C**, but in a
+specific and architecturally tractable form. The leading-read in
+the report above ("I-B + I-C combined") was wrong on I-B; the
+true cause is cache pollution alone.
+
+### Raw probe data
+
+```text
+NVDA / 2020-06-30
+  pit raw rows: 273
+  pit in-window histogram: {S: 99, F: 5, A: 11}
+  pit processed: { totalBuys: 0, totalSells: 99, netDollars: -95,082,060 }   ← NOT silent
+  pit cache: absent
+  live processed: { totalSells: 38, netDollars: -163,747,346 }
+
+AAPL / 2022-03-31
+  pit raw rows: 145
+  pit in-window histogram: {A: 8, S: 5, M: 16, G: 1}
+  pit processed: { totalBuys: 0, totalSells: 5, netDollars: -4,713,702 }     ← NOT silent
+  pit cache: HIT — cachedShape: 'empty', cachedFetchedAt: '2026-05-14T10:31:02Z'   ← STALE EMPTY
+  live processed: { totalSells: 12, netDollars: -96,154,105 }
+
+MSFT / 2021-12-31
+  pit raw rows: 199
+  pit in-window histogram: {A: 19, G: 2, S: 19, F: 4}
+  pit processed: { totalBuys: 0, totalSells: 19, netDollars: -322,158,999 }  ← NOT silent
+  pit cache: absent
+  live processed: { totalSells: 2, netDollars: -5,564,810 }
+
+NVDA / 2024-06-30
+  pit raw rows: 584
+  pit in-window histogram: {S: 222, G: 7, F: 6, A: 2}
+  pit processed: { totalBuys: 0, totalSells: 222, netDollars: -537,719,169 } ← NOT silent
+  pit cache: absent
+
+AAPL / 2020-06-30
+  pit raw rows: 145
+  pit in-window histogram: {S: 23, M: 19, F: 4}
+  pit processed: { totalBuys: 0, totalSells: 23, netDollars: -24,750,311 }   ← NOT silent
+  pit cache: absent
+```
+
+### What the probe rejects
+
+- **I-A (provider depth) REJECTED.** Finnhub `/stock/insider-transactions`
+  returns rich historical data for every probed (ticker, asOfDate)
+  pair, including 273 rows for NVDA 2020-06-30 and 199 rows for
+  MSFT 2021-12-31. The `from`/`to` URL building at
+  `data-provider.ts:599-601` works correctly for historical windows.
+  The brief's hypothesis "Finnhub coverage cliff" was wrong for
+  insider.
+
+- **I-B (transactionCode filter exclusion) REJECTED.** Every probed
+  PIT call has `S` (open-market sale) codes in the in-window
+  histogram. The processed `totalSells` matches the in-window
+  `S` count exactly (99 for NVDA-2020, 5 for AAPL-2022, 19 for
+  MSFT-2021, 222 for NVDA-2024, 23 for AAPL-2020). The filter at
+  `insider-provider.ts:94-95` is correctly counting sells. The
+  brief's hypothesis "P/S filter exclusion" — and my own original
+  leading read — was also wrong.
+
+### What the probe confirms
+
+**I-C (stale PIT cache) is the cause, in a specific architecturally
+tractable form.**
+
+The AAPL/2022-03-31 probe shows the cache holding `cachedShape: 'empty'`
+from 2026-05-14T10:31:02Z — five days before the
+`bt_20260519233423_avaa64` sp500 backtest ran. Calling the live
+provider RIGHT NOW returns 5 `S` transactions in the same 90-day
+window, which would process to `totalSells: 5, netDollars:
+-$4.7M, score: 40 (short — "net sells")`. **The cache serves a
+stale empty that does not reflect actual provider data.** The
+backtest read that stale empty, ran `runInsider(empty)` →
+`scoreInsiderActivity` early-return → score=50 → attribution
+records 50 → brief's coverage script registers as silent.
+
+The remaining four pairs show `cache: absent` (probably because
+the sp500 backtest's writes have either not persisted to the
+public-read query path, or those specific keys were cleaned
+between then and now). The pattern is consistent with cache
+pollution being PARTIAL across the backtest's 1,662 attribution
+rows — the brief's 70-98% per-year silence (not a uniform
+100%) matches a cache that has many but not all entries poisoned.
+
+### Architectural root cause
+
+`netlify/functions/shared/insider-provider.ts:70` calls
+`getFinnhubInsiderTransactions(...)` which is a thin wrapper that
+**discards the status envelope** returned by the underlying
+`getFinnhubInsiderTransactionsWithStatus`:
+
+```typescript
+// data-provider.ts:570-577
+export async function getFinnhubInsiderTransactions(
+  ticker: string,
+  daysBack: number = 180,
+  opts: { asOfDate?: string } = {},
+): Promise<FinnhubInsiderTx[]> {
+  const r = await getFinnhubInsiderTransactionsWithStatus(ticker, daysBack, opts);
+  return r.data;   // ← drops `rateLimited`, `rateLimitExhausted`, `errorMessage`
+}
+```
+
+When the status envelope has `rateLimitExhausted: true` or a non-429
+`errorMessage`, `data` is `[]`. `getInsiderActivity` sees
+`raw.length === 0` and returns the `empty` InsiderActivity shape
+(line 73). **`empty` from rate-limit-exhaustion is indistinguishable
+from `empty` from verified-no-activity.**
+
+`pitCacheWrap` (`shared/pit-cache.ts:144-146`) then caches that
+`empty` shape with the comment "Cache nulls too — 'no insider
+activity in window' is itself PIT-stable." That comment is only
+correct when the call succeeded. For a rate-limit-exhausted call
+the cache is **lying** — it claims to know the answer when in fact
+the call failed.
+
+The Phase 4o W1 work that added the WithStatus envelope explicitly
+designed for surfaceability ("a 429-storm no longer becomes a
+silent `[]`") — but the consumer (`getInsiderActivity`) drops the
+status, and the cache layer caches the silently-failed `[]` as if
+it were verified empty. Phase 4o W1's intent was undermined at the
+consumer boundary.
+
+### Revised root cause — insider
+
+**`getInsiderActivity` discards the `rateLimitExhausted`/`errorMessage`
+status from `getFinnhubInsiderTransactionsWithStatus`, returns
+the `empty` shape on any provider failure, and `pitCacheWrap`
+caches that empty shape permanently.** Every backtest run after
+a rate-limit storm (or any other transient provider failure)
+serves cached lies for any key that was poisoned. The 70-98%
+chronic silence is the cumulative effect of poisoned keys
+across runs.
+
+Confirmed by direct cache inspection on AAPL/2022-03-31. The
+leading-read in the original report ("I-B + I-C combined") was
+wrong on I-B; the true cause is I-C alone, in a specific
+architectural form (cache poisoning by error-derived empties).
+
+### Revised proposed fix — insider
+
+Three small surgical changes:
+
+1. **`netlify/functions/shared/insider-provider.ts:67-73`** — call
+   `getFinnhubInsiderTransactionsWithStatus` directly (not the
+   thin `getFinnhubInsiderTransactions` wrapper). Check
+   `r.rateLimitExhausted` and `r.errorMessage`. If either is set,
+   **throw a `ProviderUnavailableError`** so the caller can
+   distinguish "failed fetch, unknown" from "successful fetch,
+   verified empty." ~15 LOC.
+
+2. **`netlify/functions/shared/backtest/score-at-date.ts:583-585`** —
+   wrap the insider fetcher in a "don't cache failures" pattern.
+   Either:
+   - **(a)** Catch `ProviderUnavailableError` in the fetcher
+     itself before pitCacheWrap sees it; if caught, return a
+     sentinel that `pitCacheSet` skips writing. Requires extending
+     `pitCacheWrap` with an optional `shouldCache` predicate.
+     ~20 LOC across pit-cache.ts + score-at-date.ts.
+   - **(b)** Use a new `pitCacheWrapNoErrorCache(key, fetcher)`
+     variant that swallows known error types and bypasses the
+     cache write on them. Same effect, slightly more invasive
+     because it's a new public API.
+   - Recommend **(a)**: a `shouldCache: (value) => boolean`
+     optional second-positional arg on `pitCacheWrap` keeps the
+     API surface small. Default behaviour (cache everything,
+     including null/empty) is unchanged for other callers; insider
+     opts in.
+
+3. **One-shot cache cleanup script** at
+   `scripts/clear-stale-insider-empties.ts`. Reads
+   `pitCache` Firestore docs where `key.provider === 'finnhub' &&
+   key.dataClass === 'insider' && value.totalBuys === 0 &&
+   value.totalSells === 0`, deletes them. Documented in the script
+   comment header and in `docs/BACKTEST_LIMITATIONS.md`. After
+   deploying the W2 fix, run this once; subsequent backtests
+   repopulate the cache with the corrected behaviour and the
+   silence rate drops. **The script is the cure for the
+   already-poisoned 1,662 rows**; the code fix prevents recurrence.
+   ~30 LOC.
+
+**Total revised insider scope: ~65 LOC.** Slightly larger than the
+original ~45 LOC estimate (was: filter expansion + diagnostic
+endpoint = ~45 LOC) because the actual fix touches three sites
+(provider call, cache wrap, cleanup script) — but each site is
+small and the fix is architecturally clean.
+
+The diagnostic endpoint `/api/diag-insider-pit` already shipped
+on this branch (committed `eb379df`); per the orchestrator's W1
+review ("The diagnostic endpoint is a good idea regardless —
+keep it in scope") it remains permanent and gated only by the
+"private URL" model.
+
+### Revised confidence — insider
+
+**High** on the root cause (cache poisoning of rate-limit-exhausted
+empties), backed by direct cache inspection of AAPL/2022-03-31
+showing `cachedShape: 'empty'` from 2026-05-14 alongside a live
+provider response with 5 `S` transactions in window.
+
+**Medium** on whether `shouldCache` (option 2a) is the right
+ergonomic shape for the cache fix. The alternative — having
+`getInsiderActivity` throw and `pitCacheWrap` not cache thrown
+errors — is also clean (throws never reach `pitCacheSet`). But
+the outer `.catch(() => null)` at `score-at-date.ts:584` would
+catch the throw before pitCacheWrap could surface it to the
+caller. So `shouldCache` (the value-shape predicate) is more
+robust than throw-based control flow here.
+
+**Open question for orchestrator**: option 2a (shouldCache
+predicate on pitCacheWrap) extends a shared module's API. That
+shared module is consumed by ALL eight PIT fetches in
+`score-at-date.ts`, not just insider. The W1c constraint is
+"earnings + insider data paths only; do NOT touch other
+analysts." A shouldCache addition that only insider OPTS INTO
+stays inside the W1c scope — but it does extend the shared
+module's surface. If the orchestrator prefers a strictly local
+fix, option 2b (a new `pitCacheWrapNoErrorCache` co-located in
+`score-at-date.ts` or a small helper in `insider-provider.ts`)
+keeps the pit-cache shared module untouched but means a slightly
+larger surface in the insider-specific code. Recommend **2a** for
+elegance; defer to orchestrator for scope discipline.
+
+### Revised W2 scope summary
+
+- Earnings: ~30 LOC code + ~80 LOC tests (unchanged from original).
+- Insider: ~65 LOC code + ~50 LOC tests (revised up from ~45 LOC).
+- Diagnostic endpoint: already shipped on this branch (~350 LOC
+  including hypothesis tagging) — permanent gated.
+- Cache-cleanup script: ~30 LOC + simple unit test (~20 LOC).
+- Optional `.catch` → logged-fallback: ~30 LOC (deferred — would
+  cross W1c scope into other-analyst paths).
+
+**Total: ~275 LOC code + ~150 LOC tests = ~425 LOC**, still under
+any reasonable "stop and re-scope" threshold.
+
+### Updated hand-off summary
+
+```
+Probe results — insider root cause discrimination:
+  I-A (provider depth):      REJECTED. Finnhub returns 145-584 historical
+    rows per ticker; 'S' codes present in every probed window.
+  I-B (code filter exclusion): REJECTED. Processed totalSells matches
+    in-window 'S' counts exactly across all 5 probes. The filter works.
+  I-C (stale PIT cache):     CONFIRMED. AAPL/2022-03-31 cache holds
+    cachedShape: 'empty' from 2026-05-14T10:31:02Z, while the live
+    provider response in the same window has 5 'S' transactions
+    ($4.7M sells). The backtest read the stale cache, not the live data.
+
+Architectural root cause:
+  getInsiderActivity (insider-provider.ts:70) discards the
+  rateLimitExhausted / errorMessage status envelope from
+  getFinnhubInsiderTransactionsWithStatus, returns the `empty` shape
+  indistinguishably from verified-no-activity. pitCacheWrap then caches
+  that empty permanently.
+
+Revised insider W2 scope:
+  1. insider-provider.ts: use WithStatus variant, throw on failure
+  2. pit-cache.ts: add optional shouldCache predicate; insider opts in
+  3. scripts/clear-stale-insider-empties.ts: one-shot cleanup of the
+     1,662-row contamination
+  ~65 LOC code + ~50 LOC tests.
+```

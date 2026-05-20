@@ -268,7 +268,7 @@ export const handler: Handler = async (event) => {
           `The insider-provider.ts:94-95 filter excludes everything (I-B).`,
       );
       leadingRead = 'I-B (transactionCode filter exclusion)';
-    } else if (pitRaw.rowCount > 0 && ('processed' in pitProcessed) === false) {
+    } else if (pitRaw.rowCount > 0 && 'empty' in pitProcessed) {
       // pit raw has data but processed is empty — points at code-side filter or sign-convention issue
       IB = 'consistent';
       notes.push(
@@ -278,6 +278,19 @@ export const handler: Handler = async (event) => {
           `Likely transactionCode filter + share-sign convention issue (I-B).`,
       );
       leadingRead = 'I-B (transactionCode filter exclusion)';
+    } else if (pitRaw.rowCount > 0 && !('empty' in pitProcessed)) {
+      // Provider returned data AND processed result has signal — but the
+      // backtest still showed silence. Almost certainly a cache pollution issue.
+      IA = 'inconsistent';
+      IB = 'inconsistent';
+      notes.push(
+        `Finnhub returned ${pitRaw.rowCount} historical rows and the processed result ` +
+          `is non-empty (${JSON.stringify(pitProcessed)}). The PIT code path produces a real ` +
+          `signal for this (ticker, asOfDate). If the deployed backtest was silent here, the ` +
+          `cause is either stale cache (I-C — see cache state above) or a transient run-time ` +
+          `issue (rate-limiting, provider error) that left a poisoned cache entry that has ` +
+          `since been cleared.`,
+      );
     }
     if (cacheState.cachedShape === 'empty' || cacheState.cachedShape === 'null') {
       IC = 'consistent';
