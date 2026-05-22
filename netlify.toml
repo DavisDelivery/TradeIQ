@@ -84,6 +84,13 @@
   to = "/.netlify/functions/target-rationale"
   status = 200
 
+# Phase 4t W1c — gated diagnostic surface for insider PIT vs live behaviour
+# discrimination. See reports/phase-4t-w1c/diagnosis.md § Insider.
+[[redirects]]
+  from = "/api/diag-insider-pit"
+  to = "/.netlify/functions/diag-insider-pit"
+  status = 200
+
 [[redirects]]
   from = "/api/price-history"
   to = "/.netlify/functions/price-history"
