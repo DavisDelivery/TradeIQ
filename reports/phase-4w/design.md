@@ -1,5 +1,29 @@
 # Phase 4w W1 — design report
 
+## Orchestrator decisions (locked during W1 partial review)
+
+The W1 design was reviewed partially while plan access is still blocked.
+Two decisions are locked; four remain deferred until post-upgrade probes
+can resolve them.
+
+- **Q2 — Cash flow scoping: DECIDED → Option 1 (build all three endpoint
+  helpers).** Overrides the report's Option 2 recommendation below. The
+  YAGNI argument (zero current cash-flow consumers) is acknowledged but
+  overridden because: (a) the vendor migration is a one-time forcing
+  function; (b) cash flow is domain-core (FCF, FCF yield, OCF margin,
+  capex intensity for Williams/Lynch theses) even if not currently
+  wired; (c) Phase 6 detail panel is a likely future consumer; (d) the
+  marginal ~100 LOC is cheaper than a separate future migration. W2
+  ships `fetchCashFlowStatements`.
+- **Q5 — Probe endpoint: DECIDED → permanent.** `diag-fundamentals-v1.ts`
+  + the netlify.toml redirect stay as gated diagnostic infrastructure
+  (mirror of the W1c diag-insider-pit decision).
+- **Q3 (equity field), Q4 (long_term_debt lease residual), Q6
+  (historical depth): DEFERRED** — resolved by post-upgrade probes. See
+  the updated probe plan in the Pre-W2 checklist below.
+
+W2 estimate consequently fixes on **Option 1 (~415 LOC)**.
+
 ## STOP signal — plan-access prerequisite NOT cleared
 
 Per kickoff PART 0: "If your first probe call to massive.com returns a
@@ -553,17 +577,37 @@ before W2 merges.
 ## Pre-W2 checklist (orchestrator-executed before W2 starts)
 
 - [ ] Massive plan upgraded to Stocks Advanced (or Financials Add-on)
-- [ ] Re-fire `GET /api/diag-fundamentals-v1?ticker=NVDA&periodEnd=2024-09-30`
-      on deploy-preview-54 — confirm 200 with non-zero `resultCount`
-      on all three new endpoints
-- [ ] Re-fire same probe for AAPL Q1 2018, MSFT Q1 2018, AAPL Q1 2010
-      to verify historical depth claim
-- [ ] Compare VX `latest.financials.balance_sheet.equity` value to new
-      endpoint's `total_equity_attributable_to_parent` and `total_equity`
-      to confirm the equity-attribution choice
+      — **BLOCKING; relayed to Chad**
+- [ ] **Shape verification**: re-fire
+      `GET /api/diag-fundamentals-v1?ticker=NVDA&periodEnd=2024-09-30`
+      on deploy-preview-54 — confirm 200 with non-zero `resultCount` on
+      all three new endpoints; reconcile docs-derived PROVISIONAL field
+      shapes above against the live response.
+- [ ] **Q3 equity field**: probe a minority-interest ticker — `GOOG`
+      `&periodEnd=2024-09-30`. Capture both `total_equity` and
+      `total_equity_attributable_to_parent`. Pick the field whose value
+      matches current VX `getFundamentals` behaviour for the same
+      ticker-period (compare against the VX `equity` value from the
+      same probe response). Document in a design.md addendum.
+- [ ] **Q4 long_term_debt lease residual**: probe `AAPL&periodEnd=2018-03-31`
+      (pre-ASC-842). Capture the delta between VX
+      `balance_sheet.long_term_debt` and the new endpoint's
+      `long_term_debt_and_capital_lease_obligations`. If delta is
+      small/zero → no action. If >5% of the long_term_debt value →
+      surface; may need a transformation layer to back out
+      lease-equivalents for pre-2019 backtest dates.
+- [ ] **Q6 historical depth**: probe `NVDA` one quarter per year across
+      2009→2018 on all three new endpoints. Document where the actual
+      data cliff lands per endpoint. If deeper than VX-in-practice,
+      that's the 4t backtest side-benefit unlock — note it for the
+      verdict report.
 - [ ] W1c W2 merged + post-merge insider cleanup + sp500 re-fire
       verification completed (PR #53 merge gate)
-- [ ] Orchestrator authorises W2 implementation with chosen scope
-      (Option 1 vs Option 2) + chosen equity field + probe disposition
+- [ ] Re-hand-off to orchestrator: updated design.md with captured
+      shapes + resolved Q3/Q4/Q6; the three fundamental-cliff
+      hypotheses stay documented for the 4t verdict reference.
+- [ ] Orchestrator full design review + W2 authorisation (scope already
+      fixed to Option 1; equity field + lease-residual action resolved
+      by the probes above)
 
 — Executor 4w
