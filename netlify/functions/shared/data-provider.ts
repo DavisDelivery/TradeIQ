@@ -3,7 +3,6 @@
 
 import {
   PolygonAggregatesResponseSchema,
-  PolygonFinancialsResponseSchema,
   PolygonNewsResponseSchema,
   FinnhubEarningsCalendarResponseSchema,
   FinnhubEarningsHistoryResponseSchema,
@@ -11,9 +10,23 @@ import {
   FinnhubRecommendationResponseSchema,
   FredObservationsResponseSchema,
   parseOrFallback,
+  type MassiveRatiosResult,
+  type MassiveIncomeStatement,
+  type MassiveBalanceSheet,
+  type MassiveCashFlow,
 } from './schemas';
 import { snapshotBeforeDate } from './snapshot-store';
 import { fetchWithRateLimit, getFinnhubBucket } from './rate-limiter';
+import {
+  fetchRatiosWithStatus,
+  fetchIncomeStatementsWithStatus,
+  fetchBalanceSheetsWithStatus,
+  fetchCashFlowStatementsWithStatus,
+  getIncomeStatementsPit,
+  getBalanceSheetsPit,
+  getCashFlowStatementsPit,
+  makeLiveCache,
+} from './massive-fundamentals';
 
 const POLYGON = 'https://api.polygon.io';
 const FINNHUB = 'https://finnhub.io/api/v1';
@@ -94,6 +107,13 @@ export async function getPreviousClose(ticker: string): Promise<Bar | null> {
 // ---------------------------------------------------------------------------
 
 export interface FundamentalsSnapshot {
+  // -----------------------------------------------------------------------
+  // SCORING-FACING FIELDS (Phase 4w W2: contract preserved exactly).
+  // These are the names + semantics that runFundamental, scan-lynch,
+  // scan-prophet, prophet-sieve and earnings-intel already consume.
+  // **DO NOT rename or change semantics** — analyst scores must not move
+  // because of the vendor migration.
+  // -----------------------------------------------------------------------
   ticker: string;
   revenue?: number;
   priorRevenue?: number;
@@ -119,185 +139,543 @@ export interface FundamentalsSnapshot {
   priorOperatingMarginYoY?: number;
   debtToEquity?: number;
   asOf?: string;
+
+  // -----------------------------------------------------------------------
+  // COMPREHENSIVE BLOCK (Phase 4w W2: ADDITIVE).
+  // Source: Massive ratios (live mode) + the three statement endpoints.
+  // Null fields carry a reason in the per-group `_reasons` map — no silent
+  // omission. The Phase 6 detail panel (PR-A+) and PR-B's FundamentalsStrip
+  // are the primary consumers.
+  // -----------------------------------------------------------------------
+  valuation?: ValuationGroup;
+  profitability?: ProfitabilityGroup;
+  liquidity?: LiquidityGroup;
+  leverage?: LeverageGroup;
+  cashflow?: CashflowGroup;
+  growth?: GrowthGroup;
+  /** Quarterly statement bundle for the fundamentals charts (5y+ history). */
+  statements?: QuarterlyStatement[];
+  meta?: FundamentalsMeta;
+}
+
+export interface ValuationGroup {
+  pe: number | null;
+  pb: number | null;
+  ps: number | null;
+  pcf: number | null;
+  pfcf: number | null;
+  evToEbitda: number | null;
+  evToSales: number | null;
+  enterpriseValue: number | null;
+  marketCap: number | null;
+  _reasons?: Record<string, string>;
+}
+
+export interface ProfitabilityGroup {
+  roe: number | null;
+  roa: number | null;
+  grossMargin: number | null;
+  operatingMargin: number | null;
+  netMargin: number | null;
+  eps: number | null;
+  _reasons?: Record<string, string>;
+}
+
+export interface LiquidityGroup {
+  currentRatio: number | null;
+  quickRatio: number | null;
+  cashRatio: number | null;
+  _reasons?: Record<string, string>;
+}
+
+export interface LeverageGroup {
+  debtToEquity: number | null;
+  longTermDebt: number | null;
+  _reasons?: Record<string, string>;
+}
+
+export interface CashflowGroup {
+  freeCashFlow: number | null;
+  dividendYield: number | null;
+  _reasons?: Record<string, string>;
+}
+
+export interface GrowthGroup {
+  revenueGrowthYoY: number | null;
+  epsGrowthYoY: number | null;
+  _reasons?: Record<string, string>;
+}
+
+export interface QuarterlyStatement {
+  periodEnd: string;
+  filingDate: string | null;
+  fiscalQuarter: number | null;
+  fiscalYear: number | null;
+  income: {
+    revenue: number | null;
+    grossProfit: number | null;
+    operatingIncome: number | null;
+    netIncome: number | null;
+    basicEps: number | null;
+    ebitda: number | null;
+  };
+  balance: {
+    totalAssets: number | null;
+    totalCurrentAssets: number | null;
+    totalCurrentLiabilities: number | null;
+    cashAndEquivalents: number | null;
+    inventories: number | null;
+    longTermDebt: number | null;
+    debtCurrent: number | null;
+    totalEquity: number | null;
+  };
+  cashflow: {
+    operatingCashFlow: number | null;
+    capitalExpenditure: number | null;
+    freeCashFlow: number | null;
+    dividendsPaid: number | null;
+  };
+}
+
+export interface FundamentalsMeta {
+  asOf: string | null;
+  latestFilingDate: string | null;
+  /** Provider tag — `'massive-ratios+statements'` (live) or
+   *  `'massive-statements-pit'` (PIT-derived). */
+  source: 'massive-ratios+statements' | 'massive-statements-pit' | 'no-data';
+  /** Why specific groups/values are null, when not already captured at the
+   *  per-group level. */
+  _reasons?: Record<string, string>;
 }
 
 /**
- * Estimate a filing date for a Polygon financials row when `filing_date`
- * is null (common for 10-K annuals on this Polygon plan). The SEC's
- * non-large filer 10-K deadline is 90 days post-period; large filers
- * file in 60-75 days. We pick 75 as a conservative middle so the PIT
- * filter doesn't silently exclude annuals that were public on `asOfDate`.
- *
- * Worst-case error is ±15 days, which is documented in
- * docs/POINT_IN_TIME_AUDIT.md as residual risk. For backtests at monthly
- * or quarterly cadence this is immaterial.
+ * Estimate a filing date when the provider returns `filing_date: null`
+ * (common for older annuals). SEC's 10-K deadline is 60-90 days post-period;
+ * 10-Qs are 40-45 days. The defensive fallback keeps the in-memory PIT
+ * filter from silently excluding annuals that were public on `asOfDate`.
+ * Worst-case error is ±15 days, documented in docs/POINT_IN_TIME_AUDIT.md.
  */
-function estimateFilingDate(endDate: string | undefined, fiscalPeriod: string | undefined): string | undefined {
-  if (!endDate) return undefined;
-  // 10-K (annual): ~75 day SEC deadline. 10-Q (quarterly): ~40 days but
-  // Polygon's response usually includes filing_date for 10-Qs, so we hit
-  // this branch mostly for Q4/FY filings.
-  const lagDays = fiscalPeriod === 'Q4' || fiscalPeriod === 'FY' ? 75 : 40;
-  const t = Date.parse(endDate);
+function estimateFilingDate(periodEnd: string | undefined, fiscalQuarter: number | undefined): string | undefined {
+  if (!periodEnd) return undefined;
+  const lagDays = fiscalQuarter === 4 || fiscalQuarter === undefined ? 75 : 40;
+  const t = Date.parse(periodEnd);
   if (!Number.isFinite(t)) return undefined;
   return new Date(t + lagDays * 86400000).toISOString().slice(0, 10);
 }
 
+/** Coerce a nullable Massive field to a finite number, or undefined. */
+function n(v: number | null | undefined): number | undefined {
+  return typeof v === 'number' && Number.isFinite(v) ? v : undefined;
+}
+
+/** Same, but returning `number | null` for the comprehensive block. */
+function nn(v: number | null | undefined): number | null {
+  return typeof v === 'number' && Number.isFinite(v) ? v : null;
+}
+
+function fiscalQuarter(row: MassiveIncomeStatement | MassiveBalanceSheet | MassiveCashFlow | undefined): number | undefined {
+  if (!row) return undefined;
+  const fq = row.fiscal_quarter;
+  if (typeof fq === 'number') return fq;
+  if (typeof fq === 'string') {
+    const parsed = Number(fq.replace(/[^0-9]/g, ''));
+    return Number.isFinite(parsed) ? parsed : undefined;
+  }
+  return undefined;
+}
+
+function fiscalYear(row: MassiveIncomeStatement | MassiveBalanceSheet | MassiveCashFlow | undefined): number | null {
+  if (!row) return null;
+  const fy = row.fiscal_year;
+  if (typeof fy === 'number') return fy;
+  if (typeof fy === 'string') {
+    const parsed = Number(fy);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
+
 /**
- * Fetch a fundamentals snapshot for `ticker`. Returns a normalized view
- * computed from up to 5 most recent quarterly filings.
+ * Filter a newest-first statement list by `(filing_date ?? estimateFilingDate)
+ * <= asOfDate`. Defense-in-depth on top of the API-side `filing_date.lte`
+ * filter; matches the legacy VX-era discipline.
+ */
+function filterByFilingDate<T extends { period_end?: string; filing_date?: string | null; fiscal_quarter?: number | string }>(
+  rows: T[],
+  asOfDate: string,
+): T[] {
+  return rows.filter((r) => {
+    const fd = r.filing_date ?? estimateFilingDate(r.period_end, fiscalQuarter(r as { fiscal_quarter?: number | string }));
+    return fd !== undefined && fd <= asOfDate;
+  });
+}
+
+// ---------------------------------------------------------------------------
+// 24h live cache for assembled FundamentalsSnapshots (no asOfDate).
+// PIT mode (asOfDate set) routes through pit-cache via the per-endpoint
+// fetchers in massive-fundamentals.ts.
+// ---------------------------------------------------------------------------
+
+const LIVE_CACHE = makeLiveCache<FundamentalsSnapshot>();
+
+/** Test seam — clears the 24h live cache. */
+export function _clearLiveFundamentalsCache(): void {
+  LIVE_CACHE.clear();
+}
+
+/**
+ * Fetch a fundamentals snapshot for `ticker`. Returns the existing
+ * scoring-facing fields PLUS a comprehensive `valuation/profitability/
+ * liquidity/leverage/cashflow/growth/statements/meta` block (Phase 4w W2).
  *
- * PIT semantics: when `asOfDate` is supplied, only filings public on or
- * before `asOfDate` are considered for the snapshot. The "as-of" filter
- * is applied at TWO layers for safety:
- *   1. Server-side via Polygon's `filing_date.lte` query parameter.
- *   2. In-memory via `(filing_date ?? estimateFilingDate(...)) <= asOfDate`,
- *      because Polygon's API omits the filter when filing_date is null
- *      AND because the API-side filter is treated as advisory (we always
- *      verify in memory).
+ * Data sources (Phase 4w migration):
+ *   - **LIVE mode (no asOfDate)**: Massive ratios + income/balance/cashflow
+ *     statements. Ratios endpoint supplies the vendor-canonical valuation
+ *     and liquidity numbers (pe, pb, ps, roe, roa, current/quick/cash);
+ *     statements supply revenue/EPS/margins/growth and the quarterly bundle.
+ *     Assembled snapshot cached in-process for 24h per ticker.
  *
- * RESIDUAL RISK: Polygon silently incorporates restatement edits into
- * past filings — values returned today for a filing dated 2022-06-15 may
- * differ from what was public on 2022-06-15 if the company restated.
- * The proper fix is snapshotting fundamentals into the boardSnapshots
- * store at scan time (Phase 1 schema extension, out of scope for Phase 3).
+ *   - **PIT mode (asOfDate set)**: ratios is skipped (it's a vendor-side
+ *     current-snapshot endpoint with no historical mode). The comprehensive
+ *     block is derived from the PIT-filtered statement set; valuation
+ *     ratios that need a historical price are returned `null` with a
+ *     `_reasons.needs_historical_price` flag, profitability/liquidity/
+ *     leverage/cashflow are computed from the statement line items.
  *
- * PIT-cacheable: keyed by (ticker, asOfDate).
+ * PIT discipline (W1c lesson — no cache poisoning):
+ *   - Per-endpoint pit-cache entries via `pitCacheGet`/`pitCacheSet`.
+ *   - Rate-limit-exhausted / hard-error fetches THROW; the outer
+ *     `.catch(() => null)` in callers turns the throw into null AND the
+ *     cache write is skipped (no error-null poisoning).
+ *   - Legitimately-empty PIT windows (e.g. pre-IPO date) ARE cached —
+ *     empty IS PIT-stable.
  *
- * See docs/POINT_IN_TIME_AUDIT.md for the full audit.
+ * The scoring-facing fields preserve their existing names and decimal-
+ * fraction semantics (margins as 0.44 = 44%, growth as 0.19 = 19%). The
+ * fundamental analyst score is unchanged.
+ *
+ * See docs/POINT_IN_TIME_AUDIT.md and reports/phase-4w/design.md.
  */
 export async function getFundamentals(
   ticker: string,
   opts: { asOfDate?: string } = {},
 ): Promise<FundamentalsSnapshot | null> {
-  try {
-    const filingFilter = opts.asOfDate
-      ? `&filing_date.lte=${encodeURIComponent(opts.asOfDate)}`
-      : '';
-    const url = `${POLYGON}/vX/reference/financials?ticker=${ticker}&limit=5&timeframe=quarterly&order=desc${filingFilter}&apiKey=${polygonKey()}`;
-    const res = await fetch(url);
-    if (!res.ok) return null;
-    const data = parseOrFallback(
-      PolygonFinancialsResponseSchema,
-      await res.json(),
-      { provider: 'polygon', endpoint: opts.asOfDate ? `financials:asOf=${opts.asOfDate}` : 'financials', ticker },
-      { results: [] },
-    );
-    let results = (data.results ?? []) as any[];
+  // LIVE cache hit
+  if (!opts.asOfDate) {
+    const hit = LIVE_CACHE.get(ticker);
+    if (hit) return hit;
+  }
 
-    // Defense-in-depth: re-apply the filter in memory using the estimate
-    // fallback for null filing_dates. We don't trust the server to honor
-    // filing_date.lte when filing_date is missing on the row.
+  try {
+    let income: MassiveIncomeStatement[];
+    let balance: MassiveBalanceSheet[];
+    let cashflow: MassiveCashFlow[];
+    let ratiosRow: MassiveRatiosResult | null = null;
+
     if (opts.asOfDate) {
-      const cutoff = opts.asOfDate;
-      results = results.filter((r) => {
-        const fd = r.filing_date ?? estimateFilingDate(r.end_date, r.fiscal_period);
-        return fd !== undefined && fd <= cutoff;
-      });
+      // PIT mode — three statement endpoints, no ratios endpoint.
+      const [inc, bs, cf] = await Promise.all([
+        getIncomeStatementsPit(ticker, opts.asOfDate, 8),
+        getBalanceSheetsPit(ticker, opts.asOfDate, 8),
+        getCashFlowStatementsPit(ticker, opts.asOfDate, 8),
+      ]);
+      // Defense-in-depth filter — re-apply on top of the API-side filter
+      // because rows with null `filing_date` slip past the server-side
+      // predicate (same residual the VX path guarded against).
+      income = filterByFilingDate(inc, opts.asOfDate);
+      balance = filterByFilingDate(bs, opts.asOfDate);
+      cashflow = filterByFilingDate(cf, opts.asOfDate);
+    } else {
+      // LIVE mode — ratios + three statement endpoints in parallel.
+      const [ratiosResp, incomeResp, balanceResp, cashflowResp] = await Promise.all([
+        fetchRatiosWithStatus(ticker),
+        fetchIncomeStatementsWithStatus(ticker, { limit: 8 }),
+        fetchBalanceSheetsWithStatus(ticker, { limit: 8 }),
+        fetchCashFlowStatementsWithStatus(ticker, { limit: 8 }),
+      ]);
+      // Live mode: rate-limit-exhausted or hard-error on statements is a
+      // failure (return null). Ratios alone failing is tolerable — we
+      // derive the comprehensive block from statements instead and flag it.
+      if (incomeResp.rateLimitExhausted || incomeResp.errorMessage) throw new Error(incomeResp.errorMessage ?? 'income statements rate-limit');
+      if (balanceResp.rateLimitExhausted || balanceResp.errorMessage) throw new Error(balanceResp.errorMessage ?? 'balance sheets rate-limit');
+      if (cashflowResp.rateLimitExhausted || cashflowResp.errorMessage) throw new Error(cashflowResp.errorMessage ?? 'cash flow rate-limit');
+      income = incomeResp.data;
+      balance = balanceResp.data;
+      cashflow = cashflowResp.data;
+      ratiosRow = ratiosResp.data[0] ?? null;
     }
 
-    if (results.length === 0) return null;
+    if (income.length === 0 && balance.length === 0 && cashflow.length === 0) {
+      return null;
+    }
 
-    const latest = results[0];
-    const prior = results[1];
-    const yearAgo = results[3];
-
-    const revenue = num(latest.financials?.income_statement?.revenues);
-    const priorRevenue = num(yearAgo?.financials?.income_statement?.revenues);
-    const eps = num(latest.financials?.income_statement?.basic_earnings_per_share);
-    const priorEpsYoY = num(yearAgo?.financials?.income_statement?.basic_earnings_per_share);
-    const grossProfit = num(latest.financials?.income_statement?.gross_profit);
-    const opIncome = num(latest.financials?.income_statement?.operating_income_loss);
-    const priorOpIncome = num(prior?.financials?.income_statement?.operating_income_loss);
-    const priorRev = num(prior?.financials?.income_statement?.revenues);
-    // 4c-2: YoY margin baselines (4 quarters ago) for margin-trend signal.
-    const yearAgoOpIncome = num(yearAgo?.financials?.income_statement?.operating_income_loss);
-    const yearAgoGrossProfit = num(yearAgo?.financials?.income_statement?.gross_profit);
-    // Q/Q gross margin baseline (prior quarter)
-    const priorGrossProfit = num(prior?.financials?.income_statement?.gross_profit);
-    const debt = num(latest.financials?.balance_sheet?.long_term_debt);
-    const equity = num(latest.financials?.balance_sheet?.equity);
-
-    const ttmEps = results
-      .slice(0, 4)
-      .map((r) => num(r.financials?.income_statement?.basic_earnings_per_share) ?? 0)
-      .reduce((a, b) => a + b, 0);
-
-    // 4c-2: TTM EPS as of ~1y ago — quarters 4..7 in the results array
-    // (3 inclusive to 7 exclusive in slice terms). Requires >=7 quarters
-    // of history; falls back to undefined otherwise so callers know we
-    // can't compute the comparable 1y-ago P/E.
-    const priorTtmEps = results.length >= 7
-      ? results
-          .slice(3, 7)
-          .map((r) => num(r.financials?.income_statement?.basic_earnings_per_share))
-          .reduce<{ sum: number; ok: boolean }>(
-            (acc, v) =>
-              v !== undefined && Number.isFinite(v)
-                ? { sum: acc.sum + v, ok: acc.ok }
-                : { sum: acc.sum, ok: false },
-            { sum: 0, ok: true },
-          )
-      : { sum: 0, ok: false };
-
-    return {
-      ticker,
-      revenue,
-      priorRevenue,
-      revenueGrowthYoY:
-        revenue !== undefined && priorRevenue !== undefined && priorRevenue !== 0
-          ? (revenue - priorRevenue) / priorRevenue
-          : undefined,
-      eps,
-      priorEps: priorEpsYoY,
-      epsGrowthYoY:
-        eps !== undefined && priorEpsYoY !== undefined && priorEpsYoY !== 0
-          ? (eps - priorEpsYoY) / Math.abs(priorEpsYoY)
-          : undefined,
-      ttmEps,
-      priorTtmEps: priorTtmEps.ok && priorTtmEps.sum !== 0 ? priorTtmEps.sum : undefined,
-      grossMargin:
-        revenue !== undefined && grossProfit !== undefined && revenue !== 0
-          ? grossProfit / revenue
-          : undefined,
-      priorGrossMargin:
-        priorRev !== undefined && priorGrossProfit !== undefined && priorRev !== 0
-          ? priorGrossProfit / priorRev
-          : undefined,
-      priorGrossMarginYoY:
-        priorRevenue !== undefined && yearAgoGrossProfit !== undefined && priorRevenue !== 0
-          ? yearAgoGrossProfit / priorRevenue
-          : undefined,
-      operatingMargin:
-        revenue !== undefined && opIncome !== undefined && revenue !== 0
-          ? opIncome / revenue
-          : undefined,
-      priorOperatingMargin:
-        priorRev !== undefined && priorOpIncome !== undefined && priorRev !== 0
-          ? priorOpIncome / priorRev
-          : undefined,
-      priorOperatingMarginYoY:
-        priorRevenue !== undefined && yearAgoOpIncome !== undefined && priorRevenue !== 0
-          ? yearAgoOpIncome / priorRevenue
-          : undefined,
-      debtToEquity:
-        debt !== undefined && equity !== undefined && equity !== 0
-          ? debt / equity
-          : undefined,
-      asOf: latest.end_date,
-    };
+    const assembled = assembleSnapshot(ticker, income, balance, cashflow, ratiosRow, !opts.asOfDate);
+    if (!opts.asOfDate && assembled) LIVE_CACHE.set(ticker, assembled);
+    return assembled;
   } catch {
     return null;
   }
 }
 
-function num(v: unknown): number | undefined {
-  if (v && typeof v === 'object' && 'value' in v) {
-    const n = Number((v as any).value);
-    return Number.isFinite(n) ? n : undefined;
+// ---------------------------------------------------------------------------
+// Assembler
+// ---------------------------------------------------------------------------
+
+function assembleSnapshot(
+  ticker: string,
+  income: MassiveIncomeStatement[],
+  balance: MassiveBalanceSheet[],
+  cashflow: MassiveCashFlow[],
+  ratios: MassiveRatiosResult | null,
+  liveMode: boolean,
+): FundamentalsSnapshot | null {
+  const latestInc = income[0];
+  const priorInc = income[1];
+  const yearAgoInc = income[3];
+  const latestBal = balance[0];
+  const latestCf = cashflow[0];
+
+  if (!latestInc && !latestBal) return null;
+
+  // ----- Scoring-facing fields (Phase 4w contract preservation) ---------
+  const revenue = n(latestInc?.revenue);
+  const priorRevenue = n(yearAgoInc?.revenue);
+  const priorRev = n(priorInc?.revenue);
+  const eps = n(latestInc?.basic_earnings_per_share);
+  const priorEpsYoY = n(yearAgoInc?.basic_earnings_per_share);
+  const grossProfit = n(latestInc?.gross_profit);
+  const priorGrossProfit = n(priorInc?.gross_profit);
+  const yearAgoGrossProfit = n(yearAgoInc?.gross_profit);
+  // Q4 decision: VX `operating_income_loss` → Massive `operating_income`
+  // (sign-equivalent; the suffix drop is cosmetic).
+  const opIncome = n(latestInc?.operating_income);
+  const priorOpIncome = n(priorInc?.operating_income);
+  const yearAgoOpIncome = n(yearAgoInc?.operating_income);
+  // Q3/Q4 decisions: long-term debt = `_and_capital_lease_obligations`,
+  // equity = `total_equity_attributable_to_parent`.
+  const longTermDebt = n(latestBal?.long_term_debt_and_capital_lease_obligations);
+  const totalEquity = n(latestBal?.total_equity_attributable_to_parent)
+    ?? n(latestBal?.total_equity); // safety fallback when attributable-to-parent missing
+
+  // ttmEps and priorTtmEps preserve VX semantics exactly.
+  const ttmEps = income.slice(0, 4)
+    .map((r) => n(r.basic_earnings_per_share) ?? 0)
+    .reduce((a, b) => a + b, 0);
+  const priorTtmEpsAcc = income.length >= 7
+    ? income.slice(3, 7).reduce<{ sum: number; ok: boolean }>(
+        (acc, r) => {
+          const v = n(r.basic_earnings_per_share);
+          return v !== undefined ? { sum: acc.sum + v, ok: acc.ok } : { sum: acc.sum, ok: false };
+        },
+        { sum: 0, ok: true },
+      )
+    : { sum: 0, ok: false };
+
+  const revenueGrowthYoY =
+    revenue !== undefined && priorRevenue !== undefined && priorRevenue !== 0
+      ? (revenue - priorRevenue) / priorRevenue
+      : undefined;
+  const epsGrowthYoY =
+    eps !== undefined && priorEpsYoY !== undefined && priorEpsYoY !== 0
+      ? (eps - priorEpsYoY) / Math.abs(priorEpsYoY)
+      : undefined;
+  const grossMargin = revenue && grossProfit !== undefined ? grossProfit / revenue : undefined;
+  const priorGrossMargin = priorRev && priorGrossProfit !== undefined ? priorGrossProfit / priorRev : undefined;
+  const priorGrossMarginYoY = priorRevenue && yearAgoGrossProfit !== undefined ? yearAgoGrossProfit / priorRevenue : undefined;
+  const operatingMargin = revenue && opIncome !== undefined ? opIncome / revenue : undefined;
+  const priorOperatingMargin = priorRev && priorOpIncome !== undefined ? priorOpIncome / priorRev : undefined;
+  const priorOperatingMarginYoY = priorRevenue && yearAgoOpIncome !== undefined ? yearAgoOpIncome / priorRevenue : undefined;
+  const debtToEquity =
+    longTermDebt !== undefined && totalEquity !== undefined && totalEquity !== 0
+      ? longTermDebt / totalEquity
+      : undefined;
+
+  // ----- Comprehensive groups (additive) --------------------------------
+  const netIncome = n(latestInc?.consolidated_net_income_loss)
+    ?? n(latestInc?.net_income_loss_attributable_common_shareholders);
+  const netMargin = revenue && netIncome !== undefined ? netIncome / revenue : undefined;
+  const totalAssets = n(latestBal?.total_assets);
+  const totalCurAssets = n(latestBal?.total_current_assets);
+  const totalCurLiab = n(latestBal?.total_current_liabilities);
+  const inventories = n(latestBal?.inventories);
+  const cashAndEquivalents = n(latestBal?.cash_and_equivalents);
+  const debtCurrent = n(latestBal?.debt_current);
+  const ocf = n(latestCf?.net_cash_from_operating_activities);
+  const capex = n(latestCf?.purchase_of_property_plant_and_equipment);
+
+  // FCF: OCF + capex (capex is negative in cashflow statement convention,
+  // so addition yields OCF − |capex|).
+  const freeCashFlow = ocf !== undefined && capex !== undefined ? ocf + capex : (ocf !== undefined ? ocf : undefined);
+
+  const valuation: ValuationGroup = liveMode && ratios
+    ? {
+        pe: nn(ratios.price_to_earnings),
+        pb: nn(ratios.price_to_book),
+        ps: nn(ratios.price_to_sales),
+        pcf: nn(ratios.price_to_cash_flow),
+        pfcf: nn(ratios.price_to_free_cash_flow),
+        evToEbitda: nn(ratios.ev_to_ebitda),
+        evToSales: nn(ratios.ev_to_sales),
+        enterpriseValue: nn(ratios.enterprise_value),
+        marketCap: nn(ratios.market_cap),
+      }
+    : {
+        pe: null, pb: null, ps: null, pcf: null, pfcf: null,
+        evToEbitda: null, evToSales: null, enterpriseValue: null, marketCap: null,
+        _reasons: {
+          pe: 'requires_historical_price',
+          pb: 'requires_historical_price',
+          ps: 'requires_historical_price',
+          pcf: 'requires_historical_price',
+          pfcf: 'requires_historical_price',
+          evToEbitda: 'requires_historical_price',
+          evToSales: 'requires_historical_price',
+          enterpriseValue: 'requires_historical_price',
+          marketCap: 'requires_historical_price',
+        },
+      };
+
+  const profitability: ProfitabilityGroup = {
+    roe: nn(ratios?.return_on_equity) ?? (netIncome !== undefined && totalEquity ? round(netIncome / totalEquity, 6) : null),
+    roa: nn(ratios?.return_on_assets) ?? (netIncome !== undefined && totalAssets ? round(netIncome / totalAssets, 6) : null),
+    grossMargin: nn(grossMargin),
+    operatingMargin: nn(operatingMargin),
+    netMargin: nn(netMargin),
+    eps: nn(eps),
+  };
+
+  const liquidity: LiquidityGroup = {
+    currentRatio: nn(ratios?.current) ?? (totalCurAssets !== undefined && totalCurLiab ? round(totalCurAssets / totalCurLiab, 4) : null),
+    quickRatio: nn(ratios?.quick) ?? (totalCurAssets !== undefined && inventories !== undefined && totalCurLiab ? round((totalCurAssets - inventories) / totalCurLiab, 4) : null),
+    cashRatio: nn(ratios?.cash) ?? (cashAndEquivalents !== undefined && totalCurLiab ? round(cashAndEquivalents / totalCurLiab, 4) : null),
+  };
+
+  const leverage: LeverageGroup = {
+    debtToEquity: nn(ratios?.debt_to_equity) ?? nn(debtToEquity),
+    longTermDebt: nn(longTermDebt),
+  };
+
+  const dividends = n(latestCf?.dividends);
+  const cashflowGroup: CashflowGroup = {
+    freeCashFlow: nn(ratios?.free_cash_flow) ?? nn(freeCashFlow),
+    dividendYield: nn(ratios?.dividend_yield),
+    ...(liveMode || ratios?.dividend_yield !== undefined
+      ? {}
+      : { _reasons: { dividendYield: 'requires_historical_price' } }),
+  };
+  if (cashflowGroup.dividendYield === null && !liveMode) {
+    cashflowGroup._reasons = { ...(cashflowGroup._reasons ?? {}), dividendYield: 'requires_historical_price' };
   }
-  if (typeof v === 'number') return v;
-  return undefined;
+  // dividendsPaid line item is preserved in the per-quarter `statements`
+  // bundle below; the surface above uses dividend YIELD which is a
+  // price-dependent ratio (null in PIT mode).
+  if (dividends === undefined) { /* dividend payments absent — keep narrative in statements only */ }
+
+  const growth: GrowthGroup = {
+    revenueGrowthYoY: nn(revenueGrowthYoY),
+    epsGrowthYoY: nn(epsGrowthYoY),
+  };
+
+  const statements = buildStatementBundle(income, balance, cashflow);
+
+  const meta: FundamentalsMeta = {
+    asOf: latestInc?.period_end ?? latestBal?.period_end ?? null,
+    latestFilingDate: latestInc?.filing_date ?? latestBal?.filing_date ?? null,
+    source: liveMode ? 'massive-ratios+statements' : 'massive-statements-pit',
+  };
+  if (liveMode && !ratios) {
+    meta._reasons = { ratios: 'ratios_endpoint_unavailable' };
+  }
+
+  return {
+    // Scoring-facing fields — exact preservation.
+    ticker,
+    revenue,
+    priorRevenue,
+    revenueGrowthYoY,
+    eps,
+    priorEps: priorEpsYoY,
+    epsGrowthYoY,
+    ttmEps,
+    priorTtmEps: priorTtmEpsAcc.ok && priorTtmEpsAcc.sum !== 0 ? priorTtmEpsAcc.sum : undefined,
+    grossMargin,
+    priorGrossMargin,
+    priorGrossMarginYoY,
+    operatingMargin,
+    priorOperatingMargin,
+    priorOperatingMarginYoY,
+    debtToEquity,
+    asOf: latestInc?.period_end ?? latestBal?.period_end,
+    // Comprehensive (Phase 4w W2).
+    valuation,
+    profitability,
+    liquidity,
+    leverage,
+    cashflow: cashflowGroup,
+    growth,
+    statements,
+    meta,
+  };
+}
+
+function buildStatementBundle(
+  income: MassiveIncomeStatement[],
+  balance: MassiveBalanceSheet[],
+  cashflow: MassiveCashFlow[],
+): QuarterlyStatement[] {
+  // Index balance + cashflow by period_end for join with income (the
+  // statements come back from independent endpoints; matching by period_end
+  // is the natural alignment).
+  const bByPeriod = new Map<string, MassiveBalanceSheet>();
+  for (const b of balance) if (b.period_end) bByPeriod.set(b.period_end, b);
+  const cByPeriod = new Map<string, MassiveCashFlow>();
+  for (const c of cashflow) if (c.period_end) cByPeriod.set(c.period_end, c);
+
+  return income
+    .filter((r) => r.period_end)
+    .map((inc) => {
+      const pe = inc.period_end!;
+      const bal = bByPeriod.get(pe);
+      const cf = cByPeriod.get(pe);
+      const ocf = n(cf?.net_cash_from_operating_activities);
+      const capex = n(cf?.purchase_of_property_plant_and_equipment);
+      const fcf = ocf !== undefined && capex !== undefined ? ocf + capex : (ocf ?? null);
+      return {
+        periodEnd: pe,
+        filingDate: inc.filing_date ?? bal?.filing_date ?? cf?.filing_date ?? null,
+        fiscalQuarter: fiscalQuarter(inc) ?? null,
+        fiscalYear: fiscalYear(inc),
+        income: {
+          revenue: nn(inc.revenue),
+          grossProfit: nn(inc.gross_profit),
+          operatingIncome: nn(inc.operating_income),
+          netIncome: nn(inc.consolidated_net_income_loss) ?? nn(inc.net_income_loss_attributable_common_shareholders),
+          basicEps: nn(inc.basic_earnings_per_share),
+          ebitda: nn(inc.ebitda),
+        },
+        balance: {
+          totalAssets: nn(bal?.total_assets),
+          totalCurrentAssets: nn(bal?.total_current_assets),
+          totalCurrentLiabilities: nn(bal?.total_current_liabilities),
+          cashAndEquivalents: nn(bal?.cash_and_equivalents),
+          inventories: nn(bal?.inventories),
+          longTermDebt: nn(bal?.long_term_debt_and_capital_lease_obligations),
+          debtCurrent: nn(bal?.debt_current),
+          totalEquity: nn(bal?.total_equity_attributable_to_parent) ?? nn(bal?.total_equity),
+        },
+        cashflow: {
+          operatingCashFlow: nn(cf?.net_cash_from_operating_activities),
+          capitalExpenditure: nn(cf?.purchase_of_property_plant_and_equipment),
+          freeCashFlow: typeof fcf === 'number' ? round(fcf, 0) : null,
+          dividendsPaid: nn(cf?.dividends),
+        },
+      };
+    });
+}
+
+function round(x: number, dp: number): number {
+  const f = 10 ** dp;
+  return Math.round(x * f) / f;
 }
 
 // ---------------------------------------------------------------------------

@@ -31,8 +31,20 @@ import { createLogger } from './shared/logger';
 
 const log = createLogger('diag-fundamentals-v1');
 
+// Phase 4w W2 plan-resolved: the Massive Fundamentals add-on is a SEPARATE
+// subscription/key from the Stocks Developer (prices/aggregates) key. The
+// three new endpoints sit at api.massive.com and authenticate with
+// MASSIVE_FUNDAMENTALS_API_KEY; the legacy VX endpoint stays at
+// api.polygon.io + POLYGON_API_KEY for side-by-side until the June 22, 2026
+// VX sunset.
+const MASSIVE = 'https://api.massive.com';
 const POLYGON = 'https://api.polygon.io';
 
+function massiveKey(): string {
+  const k = process.env.MASSIVE_FUNDAMENTALS_API_KEY;
+  if (!k) throw new Error('MASSIVE_FUNDAMENTALS_API_KEY not set');
+  return k;
+}
 function polygonKey(): string {
   const k = process.env.POLYGON_API_KEY;
   if (!k) throw new Error('POLYGON_API_KEY not set');
@@ -146,7 +158,7 @@ async function probeHistoricalDepth(
   // how far back the endpoint reaches.
   const url =
     `${baseUrl}?tickers=${encodeURIComponent(ticker)}&timeframe=quarterly&limit=100` +
-    `&sort=period_end.asc&apiKey=${polygonKey()}`;
+    `&sort=period_end.asc&apiKey=${massiveKey()}`;
   try {
     const res = await fetch(url);
     if (!res.ok) {
@@ -187,14 +199,16 @@ export const handler: Handler = async (event) => {
 
   log.info('probe_start', { ticker, periodEnd });
 
-  const key = polygonKey();
-  const bsUrl = `${POLYGON}/stocks/financials/v1/balance-sheets?tickers=${ticker}&period_end.lte=${periodEnd}&timeframe=quarterly&limit=5&sort=period_end.desc&apiKey=${key}`;
-  const cfUrl = `${POLYGON}/stocks/financials/v1/cash-flow-statements?tickers=${ticker}&period_end.lte=${periodEnd}&timeframe=quarterly&limit=5&sort=period_end.desc&apiKey=${key}`;
-  const isUrl = `${POLYGON}/stocks/financials/v1/income-statements?tickers=${ticker}&period_end.lte=${periodEnd}&timeframe=quarterly&limit=5&sort=period_end.desc&apiKey=${key}`;
-  const vxUrl = `${POLYGON}/vX/reference/financials?ticker=${ticker}&limit=5&timeframe=quarterly&order=desc&period_of_report_date.lte=${periodEnd}&apiKey=${key}`;
+  const mKey = massiveKey();
+  const pKey = polygonKey();
+  const bsUrl = `${MASSIVE}/stocks/financials/v1/balance-sheets?tickers=${ticker}&period_end.lte=${periodEnd}&timeframe=quarterly&limit=5&sort=period_end.desc&apiKey=${mKey}`;
+  const cfUrl = `${MASSIVE}/stocks/financials/v1/cash-flow-statements?tickers=${ticker}&period_end.lte=${periodEnd}&timeframe=quarterly&limit=5&sort=period_end.desc&apiKey=${mKey}`;
+  const isUrl = `${MASSIVE}/stocks/financials/v1/income-statements?tickers=${ticker}&period_end.lte=${periodEnd}&timeframe=quarterly&limit=5&sort=period_end.desc&apiKey=${mKey}`;
+  // VX stays on api.polygon.io + POLYGON_API_KEY until the June 22, 2026 sunset.
+  const vxUrl = `${POLYGON}/vX/reference/financials?ticker=${ticker}&limit=5&timeframe=quarterly&order=desc&period_of_report_date.lte=${periodEnd}&apiKey=${pKey}`;
 
-  const bsHistUrl = `${POLYGON}/stocks/financials/v1/balance-sheets`;
-  const isHistUrl = `${POLYGON}/stocks/financials/v1/income-statements`;
+  const bsHistUrl = `${MASSIVE}/stocks/financials/v1/balance-sheets`;
+  const isHistUrl = `${MASSIVE}/stocks/financials/v1/income-statements`;
 
   try {
     const [bsProbe, cfProbe, isProbe, vxProbe, bsDepth, isDepth] = await Promise.all([

@@ -34,7 +34,15 @@ export type PitDataClass =
   | 'earnings_history'
   // Phase 4t — upcoming-earnings calendar window (forward from asOfDate);
   // PIT-clean because the calendar API takes asOfDate as the anchor.
-  | 'upcoming_earnings';
+  | 'upcoming_earnings'
+  // Phase 4w — per-endpoint cache keys for the Massive Financials migration.
+  // Each statement endpoint caches independently so a rate-limit on one
+  // doesn't force a full re-fetch of the others (design.md Option B). The
+  // legacy `fundamentals` key remains for read-only fallback during the
+  // cleanup window; the cleanup script clears stranded VX entries.
+  | 'massive_income_statements'
+  | 'massive_balance_sheets'
+  | 'massive_cash_flow_statements';
 
 export type PitProvider = 'polygon' | 'finnhub' | 'quiver' | 'fred' | 'derived';
 

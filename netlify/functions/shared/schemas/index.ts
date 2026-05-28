@@ -8,4 +8,5 @@ export * from './polygon';
 export * from './finnhub';
 export * from './fred';
 export * from './quiver';
+export * from './massive';
 export * from './parse';
