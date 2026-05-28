@@ -35,6 +35,13 @@ export const queryKeys = {
   // memoized: opening the same stock twice returns the cached payload
   // without re-fetching).
   targetRationale: (ticker) => ['tradeiq', 'targetRationale', ticker],
+  // Phase 6 — per-ticker strategy rationale + comprehensive detail bundle
+  // backing the StockDetailPanel. Same session-memoization model as
+  // targetRationale (staleTime/gcTime Infinity): one fetch per ticker per
+  // QueryClient lifetime, shared across every surface that opens the panel.
+  williamsRationale: (ticker) => ['tradeiq', 'williamsRationale', ticker],
+  lynchRationale: (ticker) => ['tradeiq', 'lynchRationale', ticker],
+  stockDetail: (ticker) => ['tradeiq', 'stockDetail', ticker],
   snapshotHistory: (board) => ['tradeiq', 'snapshotHistory', board],
   optionsFlow: () => ['tradeiq', 'optionsFlow'],
   backtest: (lookback, tickers) => ['tradeiq', 'backtest', lookback, tickers],

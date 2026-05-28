@@ -1,9 +1,11 @@
 import React, { useState } from 'react';
 import { Activity } from 'lucide-react';
-import { LogButton } from './components/LogButton.jsx';
 import { FreshnessPill } from './components/FreshnessPill.jsx';
 import { useWilliams } from './hooks/useWilliams.js';
 import { useSortable, SortableTh } from './lib/useSortable.jsx';
+import { useBreakpoint } from './hooks/useBreakpoint.js';
+import { MasterDetail } from './layout/MasterDetail.jsx';
+import { StockDetailPanel } from './components/detail/StockDetailPanel.jsx';
 
 const SIDE_OPTIONS = [
   { id: 'both', label: 'Both' },
@@ -37,16 +39,19 @@ const VERDICT_STYLES = {
 
 export const WilliamsView = ({ universe = 'sp500' }) => {
   const [side, setSide] = useState('both');
-  const [expandedKey, setExpandedKey] = useState(null);
+  // Phase 6 W2 — row tap opens the comprehensive StockDetailPanel (modal on
+  // mobile, docked panel on desktop) instead of the old thin inline-expand.
+  const [selected, setSelected] = useState(null);
   const { data, error, isLoading: loading, isFetching, forceRescan } = useWilliams(universe, side);
   const isRescanning = isFetching && !loading;
   const { sortKey, sortDir, sortBy, sortRows } = useSortable('verdictRank', 'desc');
+  const { isDesktop } = useBreakpoint();
 
   const rows = (data?.candidates ?? []).map(normalize);
   const sorted = sortRows(rows);
 
-  return (
-    <div className="px-3 py-4 sm:p-6 max-w-[1400px] mx-auto">
+  const list = (
+    <div className={isDesktop ? 'px-6 py-5' : 'px-3 py-4 sm:p-6 max-w-[1400px] mx-auto'}>
       <header className="mb-5 sm:mb-6">
         <div className="flex items-baseline gap-3 mb-2">
           <Activity className="h-4 w-4 text-emerald-400" />
@@ -127,52 +132,45 @@ export const WilliamsView = ({ universe = 'sp500' }) => {
                 </thead>
                 <tbody>
                   {sorted.map((c) => {
-                    const isOpen = expandedKey === c.ticker;
+                    const isSelected = selected?.ticker === c.ticker;
                     return (
-                      <React.Fragment key={c.ticker}>
-                        <tr
-                          onClick={() => setExpandedKey(isOpen ? null : c.ticker)}
-                          className={`border-t border-neutral-800/60 cursor-pointer transition-colors ${
-                            isOpen ? 'bg-neutral-900/40' : 'hover:bg-neutral-900/20'
-                          }`}
-                        >
-                          <td className="px-3 py-2.5">
-                            <VerdictPill verdict={c.verdict} />
-                          </td>
-                          <td className="px-3 py-2.5 font-serif font-bold text-neutral-100 text-[13px]">
-                            {c.ticker}
-                            <span className="ml-2 text-[10px] text-neutral-500 font-mono font-normal">{c.name}</span>
-                          </td>
-                          <td className={`px-3 py-2.5 text-right tabular-nums font-bold ${c.score >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                            {(c.score ?? 0) > 0 ? '+' : ''}{(c.score ?? 0).toFixed(0)}
-                          </td>
-                          <td className="px-3 py-2.5 text-right tabular-nums text-neutral-300">
-                            {c.entry != null ? c.entry.toFixed(2) : '—'}
-                          </td>
-                          <td className="px-3 py-2.5 text-right tabular-nums text-rose-300/80">
-                            {c.stop != null ? c.stop.toFixed(2) : '—'}
-                          </td>
-                          <td className="px-3 py-2.5 text-right tabular-nums text-emerald-300/80">
-                            {c.target != null ? c.target.toFixed(2) : '—'}
-                          </td>
-                          <td className="px-3 py-2.5 text-right tabular-nums text-neutral-400">
-                            {c.atr != null ? c.atr.toFixed(2) : '—'}
-                          </td>
-                          <td className="px-3 py-2.5 text-right tabular-nums text-neutral-400">
-                            {c.signals?.williamsR ?? '—'}
-                          </td>
-                          <td className="px-3 py-2.5 text-right tabular-nums text-neutral-500">
-                            {Number.isFinite(c.confidence) ? `${(c.confidence * 100).toFixed(0)}%` : '—'}
-                          </td>
-                        </tr>
-                        {isOpen && (
-                          <tr className="border-t border-neutral-800/60 bg-neutral-950/60">
-                            <td colSpan={9} className="px-3 py-3">
-                              <WilliamsDetail c={c} />
-                            </td>
-                          </tr>
-                        )}
-                      </React.Fragment>
+                      <tr
+                        key={c.ticker}
+                        onClick={() => setSelected(c)}
+                        className={`border-t border-neutral-800/60 cursor-pointer transition-colors ${
+                          isSelected ? 'bg-emerald-500/[0.07]' : 'hover:bg-neutral-900/20'
+                        }`}
+                      >
+                        <td className="px-3 py-2.5 relative">
+                          {isSelected && <span className="absolute left-0 top-0 bottom-0 w-[2px] bg-emerald-400" />}
+                          <VerdictPill verdict={c.verdict} />
+                        </td>
+                        <td className="px-3 py-2.5 font-serif font-bold text-neutral-100 text-[13px]">
+                          {c.ticker}
+                          <span className="ml-2 text-[10px] text-neutral-500 font-mono font-normal">{c.name}</span>
+                        </td>
+                        <td className={`px-3 py-2.5 text-right tabular-nums font-bold ${c.score >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                          {(c.score ?? 0) > 0 ? '+' : ''}{(c.score ?? 0).toFixed(0)}
+                        </td>
+                        <td className="px-3 py-2.5 text-right tabular-nums text-neutral-300">
+                          {c.entry != null ? c.entry.toFixed(2) : '—'}
+                        </td>
+                        <td className="px-3 py-2.5 text-right tabular-nums text-rose-300/80">
+                          {c.stop != null ? c.stop.toFixed(2) : '—'}
+                        </td>
+                        <td className="px-3 py-2.5 text-right tabular-nums text-emerald-300/80">
+                          {c.target != null ? c.target.toFixed(2) : '—'}
+                        </td>
+                        <td className="px-3 py-2.5 text-right tabular-nums text-neutral-400">
+                          {c.atr != null ? c.atr.toFixed(2) : '—'}
+                        </td>
+                        <td className="px-3 py-2.5 text-right tabular-nums text-neutral-400">
+                          {c.signals?.williamsR ?? '—'}
+                        </td>
+                        <td className="px-3 py-2.5 text-right tabular-nums text-neutral-500">
+                          {Number.isFinite(c.confidence) ? `${(c.confidence * 100).toFixed(0)}%` : '—'}
+                        </td>
+                      </tr>
                     );
                   })}
                 </tbody>
@@ -182,6 +180,16 @@ export const WilliamsView = ({ universe = 'sp500' }) => {
         </>
       )}
     </div>
+  );
+
+  return (
+    <MasterDetail
+      selected={selected}
+      onClose={() => setSelected(null)}
+      list={list}
+      detail={selected ? <StockDetailPanel board="williams" ticker={selected.ticker} row={selected} /> : null}
+      closeLabel="Close Williams detail"
+    />
   );
 };
 
@@ -194,46 +202,3 @@ const VerdictPill = ({ verdict }) => (
     {verdict}
   </span>
 );
-
-const WilliamsDetail = ({ c }) => {
-  const isLong = c.side === 'long';
-  return (
-    <div className="space-y-3">
-      <p className="text-[12px] text-neutral-300 leading-relaxed">{c.rationale}</p>
-      {c.signal?.reasons?.length > 0 && (
-        <div className="text-[11px] text-neutral-500">
-          <span className="text-neutral-600">Confluence:</span>{' '}
-          {c.signal.reasons.join(' · ')}
-        </div>
-      )}
-      <div className="flex flex-wrap gap-x-4 gap-y-1 text-[10px] font-mono text-neutral-500">
-        {c.signals?.volBreakoutLong && <span className="text-emerald-400">VOL-BREAKOUT ↑</span>}
-        {c.signals?.volBreakoutShort && <span className="text-rose-400">VOL-BREAKOUT ↓</span>}
-        {c.signals?.uptrend && <span className="text-emerald-400">TREND ↑</span>}
-        {c.signals?.downtrend && <span className="text-rose-400">TREND ↓</span>}
-        {c.signals?.closeStrength10d !== undefined && (
-          <span>close-str {c.signals.closeStrength10d}%</span>
-        )}
-        {c.riskPerShare != null && (
-          <span>
-            risk ${c.riskPerShare.toFixed(2)}/sh · R:R {c.signal?.riskRewardRatio?.toFixed(1) ?? '—'}:1
-          </span>
-        )}
-      </div>
-      <div className="flex justify-end">
-        <LogButton
-          size="xs"
-          payload={{
-            ticker: c.ticker,
-            source: 'williams',
-            loggedPrice: c.entry ?? c.price ?? c.signals?.close,
-            composite: c.score,
-            direction: isLong ? 'long' : 'short',
-            rationale: c.rationale,
-            signals: { ...c.signals, verdict: c.verdict, entry: c.entry, stop: c.stop, target: c.target },
-          }}
-        />
-      </div>
-    </div>
-  );
-};
