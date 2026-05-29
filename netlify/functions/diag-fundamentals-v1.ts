@@ -59,6 +59,9 @@ interface EndpointProbe {
   resultCount: number;
   /** First record from results[], or null if empty. */
   sampleResult: unknown;
+  /** All records when the caller passes ?full=1 — supports field-level
+   *  regression diffs against VX without requiring multiple round-trips. */
+  allResults?: unknown[];
   /** Distinct top-level field names across sampleResult — for field-mapping discovery. */
   sampleFieldNames: string[];
   /** Pagination next_url if present. */
@@ -93,7 +96,7 @@ interface DiagResponse {
   notes: string[];
 }
 
-async function probeEndpoint(url: string): Promise<EndpointProbe> {
+async function probeEndpoint(url: string, includeAll = false): Promise<EndpointProbe> {
   const started = Date.now();
   try {
     const res = await fetch(url);
@@ -132,6 +135,7 @@ async function probeEndpoint(url: string): Promise<EndpointProbe> {
       rateLimitHeaders,
       resultCount: results.length,
       sampleResult: sample,
+      ...(includeAll ? { allResults: results } : {}),
       sampleFieldNames: fieldNames,
       hasNextUrl: Boolean(body.next_url),
     };
@@ -189,6 +193,10 @@ function redact(url: string): string {
 export const handler: Handler = async (event) => {
   const ticker = (event.queryStringParameters?.ticker ?? 'NVDA').toUpperCase().trim();
   const periodEnd = (event.queryStringParameters?.periodEnd ?? '2024-09-30').trim();
+  // Phase 4w W2 pre-merge validation hook — return all rows (not just the
+  // first sample) so the orchestrator can compute the full FundamentalsSnapshot
+  // from VX + Massive responses and diff per field.
+  const full = event.queryStringParameters?.full === '1';
 
   if (!/^[A-Z][A-Z.\-]{0,9}$/.test(ticker)) {
     return json(400, { ok: false, error: 'ticker must be uppercase 1-10 chars' });
@@ -212,10 +220,10 @@ export const handler: Handler = async (event) => {
 
   try {
     const [bsProbe, cfProbe, isProbe, vxProbe, bsDepth, isDepth] = await Promise.all([
-      probeEndpoint(bsUrl),
-      probeEndpoint(cfUrl),
-      probeEndpoint(isUrl),
-      probeEndpoint(vxUrl),
+      probeEndpoint(bsUrl, full),
+      probeEndpoint(cfUrl, full),
+      probeEndpoint(isUrl, full),
+      probeEndpoint(vxUrl, full),
       probeHistoricalDepth(bsHistUrl, ticker),
       probeHistoricalDepth(isHistUrl, ticker),
     ]);
