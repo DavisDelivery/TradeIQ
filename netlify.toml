@@ -90,6 +90,21 @@
   status = 200
 
 [[redirects]]
+  from = "/api/williams-rationale"
+  to = "/.netlify/functions/williams-rationale"
+  status = 200
+
+[[redirects]]
+  from = "/api/lynch-rationale"
+  to = "/.netlify/functions/lynch-rationale"
+  status = 200
+
+[[redirects]]
+  from = "/api/stock-detail"
+  to = "/.netlify/functions/stock-detail"
+  status = 200
+
+[[redirects]]
   from = "/api/logo"
   to = "/.netlify/functions/logo"
   status = 200
