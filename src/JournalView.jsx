@@ -8,6 +8,7 @@ import { readLog, removeTrade, computeForwardReturns, daysBetween, cloudSyncStat
 import { useResearch } from './hooks/useResearch.js';
 import { queryKeys } from './lib/queryKeys.js';
 import { fetchWithRetry } from './lib/validateResponse.js';
+import { FundamentalsStrip } from './components/detail/FundamentalsStrip.jsx';
 
 const SOURCE_META = {
   earnings: { label: 'Earnings', icon: Zap, color: 'text-sky-400 border-sky-500/40 bg-sky-500/5' },
@@ -239,6 +240,12 @@ export const JournalView = () => {
                       ))}
                     </div>
                   </button>
+                  {/* Phase 6 PR-G — fundamentals strip beneath each journal
+                      entry so the logged trade has current fundamentals
+                      context at-a-glance. */}
+                  <div className="border-t border-neutral-800/60 px-3 py-1.5 bg-neutral-950/40">
+                    <FundamentalsStrip ticker={t.ticker} showExpandIcon={false} />
+                  </div>
                   {isOpen && (
                     <div className="border-t border-neutral-800 p-3 sm:p-4 bg-black/40 space-y-3">
                       {t.rationale && (

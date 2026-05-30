@@ -13,6 +13,7 @@ import { FreshnessPill } from './components/FreshnessPill.jsx';
 import { SieveCoverageStrip } from './components/SieveCoverageStrip.jsx';
 import { useProphet } from './hooks/useProphet.js';
 import { useGenerateNarrative } from './hooks/useGenerateNarrative.js';
+import { FundamentalsStrip } from './components/detail/FundamentalsStrip.jsx';
 
 const UNIVERSE_OPTIONS = [
   { id: 'largecap', label: 'Large Cap', desc: 'S&P 500 + NDX + Dow (~230)' },
@@ -319,6 +320,10 @@ const ProphetRow = ({ pick, expanded, onToggle }) => {
           </div>
         </div>
       </button>
+      {/* Phase 6 PR-G — fundamentals strip beneath the prophet pick card */}
+      <div className="px-3 py-1.5 border-t border-neutral-800/60 bg-neutral-950/40">
+        <FundamentalsStrip ticker={pick.ticker} showExpandIcon={false} />
+      </div>
       {expanded && <ProphetDetail pick={pick} />}
     </div>
   );

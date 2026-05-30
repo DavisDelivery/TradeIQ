@@ -15,6 +15,8 @@ import { AnalystContributions } from './components/AnalystContributions.jsx';
 import { CompanyInfo } from './components/CompanyInfo.jsx';
 import { PriceChart } from './components/PriceChart.jsx';
 import { FundamentalsStrip } from './components/detail/FundamentalsStrip.jsx';
+import { useStockDetailsFanout } from './hooks/useStockDetailsFanout.js';
+import { fmtMcap, fmtNum1, fmtNum2, fmtPct1 } from './lib/formatters.jsx';
 import { useSortable, SortableTh } from './lib/useSortable.jsx';
 import { useTargetBoard } from './hooks/useTargetBoard.js';
 import { useBreakpoint } from './hooks/useBreakpoint.js';
@@ -126,7 +128,26 @@ const TargetCard = ({ target, onOpen }) => {
 // ---------------------------------------------------------------------------
 const TargetTable = ({ targets, onOpenTarget, selectedTicker }) => {
   const { sortKey, sortDir, sortBy, sortRows } = useSortable('composite', 'desc');
-  const rows = useMemo(() => sortRows(targets), [targets, sortRows]);
+  // Phase 6 PR-G — fan-out fundamentals so the new MCap/P-E/P-S/ROE/D-E
+  // columns sort cleanly. Shared queryKeys with FundamentalsStrip → one
+  // ticker = one fetch across both surfaces.
+  const tickers = useMemo(() => (targets ?? []).map((t) => t.ticker), [targets]);
+  const { metricsByTicker } = useStockDetailsFanout(tickers);
+  const enriched = useMemo(
+    () => (targets ?? []).map((t) => {
+      const m = metricsByTicker[t.ticker];
+      return {
+        ...t,
+        marketCap: m?.marketCap ?? null,
+        pe: m?.pe ?? null,
+        ps: m?.ps ?? null,
+        roe: m?.roe ?? null,
+        debtEquity: m?.debtEquity ?? null,
+      };
+    }),
+    [targets, metricsByTicker],
+  );
+  const rows = useMemo(() => sortRows(enriched), [enriched, sortRows]);
   return (
     <div className="border border-neutral-800/80 overflow-x-auto">
       <table className="w-full text-[12px] font-mono">
@@ -141,6 +162,13 @@ const TargetTable = ({ targets, onOpenTarget, selectedTicker }) => {
             <SortableTh sortKey={sortKey} sortDir={sortDir} sortBy={sortBy} field="price" align="right">Price</SortableTh>
             <SortableTh sortKey={sortKey} sortDir={sortDir} sortBy={sortBy} field="priceChangePct" align="right">Chg %</SortableTh>
             <SortableTh sortKey={sortKey} sortDir={sortDir} sortBy={sortBy} field="conflictLevel" align="left">Conflict</SortableTh>
+            {/* Phase 6 PR-G — sortable fundamentals columns from stock-detail
+                (shared cache with FundamentalsStrip). Null while loading. */}
+            <SortableTh sortKey={sortKey} sortDir={sortDir} sortBy={sortBy} field="marketCap" align="right">MCap</SortableTh>
+            <SortableTh sortKey={sortKey} sortDir={sortDir} sortBy={sortBy} field="pe" align="right">P/E</SortableTh>
+            <SortableTh sortKey={sortKey} sortDir={sortDir} sortBy={sortBy} field="ps" align="right">P/S</SortableTh>
+            <SortableTh sortKey={sortKey} sortDir={sortDir} sortBy={sortBy} field="roe" align="right">ROE</SortableTh>
+            <SortableTh sortKey={sortKey} sortDir={sortDir} sortBy={sortBy} field="debtEquity" align="right">D/E</SortableTh>
           </tr>
         </thead>
         <tbody>
@@ -197,6 +225,13 @@ const TargetTable = ({ targets, onOpenTarget, selectedTicker }) => {
                     <span className="text-neutral-700">—</span>
                   )}
                 </td>
+                {/* PR-G — sortable fundamentals cells (data from
+                    useStockDetailsFanout; null while loading) */}
+                <td className="px-3 py-1.5 text-right tabular-nums text-neutral-300">{fmtMcap(t.marketCap)}</td>
+                <td className="px-3 py-1.5 text-right tabular-nums text-neutral-300">{fmtNum1(t.pe)}</td>
+                <td className="px-3 py-1.5 text-right tabular-nums text-neutral-300">{fmtNum1(t.ps)}</td>
+                <td className="px-3 py-1.5 text-right tabular-nums text-neutral-300">{fmtPct1(t.roe)}</td>
+                <td className="px-3 py-1.5 text-right tabular-nums text-neutral-300">{fmtNum2(t.debtEquity)}</td>
               </tr>
               {/*
                 Phase 6 PR-F — FundamentalsStrip per target row. Tapping
@@ -205,7 +240,7 @@ const TargetTable = ({ targets, onOpenTarget, selectedTicker }) => {
                 an extra tap target.
               */}
               <tr data-testid={`target-strip-row-${t.ticker}`} className="bg-neutral-950/40">
-                <td colSpan={12} className="px-3 py-1.5">
+                <td colSpan={17} className="px-3 py-1.5">
                   <FundamentalsStrip ticker={t.ticker} onExpand={() => onOpenTarget(t)} />
                 </td>
               </tr>

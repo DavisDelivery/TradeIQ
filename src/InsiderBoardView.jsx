@@ -7,6 +7,7 @@ import { useSortable, SortableTh } from './lib/useSortable.jsx';
 import { FreshnessPill } from './components/FreshnessPill.jsx';
 import { useInsider } from './hooks/useInsider.js';
 import { useBreakpoint } from './hooks/useBreakpoint.js';
+import { FundamentalsStrip } from './components/detail/FundamentalsStrip.jsx';
 
 const WINDOW_OPTIONS = [
   { id: 30, label: '30d' },
@@ -263,6 +264,14 @@ export const InsiderBoardView = ({ universe = 'all' }) => {
                       </td>
                       <td className={`${cellPadX} ${cellPadY} text-right tabular-nums text-neutral-400`}>
                         {r.daysSinceLatest !== null ? `${r.daysSinceLatest}d ago` : '—'}
+                      </td>
+                    </tr>
+                    {/* Phase 6 PR-G — fundamentals strip beneath every row
+                        so insiders' net flow has fundamentals context at-a-
+                        glance. Lazy-fetched via intersection observer. */}
+                    <tr data-testid={`insider-strip-row-${r.ticker}`} className="bg-neutral-950/40">
+                      <td colSpan={10} className="px-3 py-1.5">
+                        <FundamentalsStrip ticker={r.ticker} showExpandIcon={false} />
                       </td>
                     </tr>
                     {isOpen && (

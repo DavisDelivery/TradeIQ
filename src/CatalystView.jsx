@@ -7,6 +7,7 @@ import { CatalystBadges, ConvictionChip, CatalystChip } from './components/Catal
 import { LogButton } from './components/LogButton.jsx';
 import { FreshnessPill } from './components/FreshnessPill.jsx';
 import { useCatalyst } from './hooks/useCatalyst.js';
+import { FundamentalsStrip } from './components/detail/FundamentalsStrip.jsx';
 
 const FILTER_OPTIONS = [
   { id: 'all', label: 'Any catalyst', desc: 'Any signal active' },
@@ -104,6 +105,7 @@ export const CatalystView = ({ universe = 'sp500', onNavigate }) => {
   );
 };
 
+
 const FilterRow = ({ label, options, value, onChange }) => (
   <div className="flex items-center gap-2 flex-wrap">
     <span className="text-[10px] text-neutral-500 uppercase tracking-wider w-20 shrink-0">{label}</span>
@@ -153,6 +155,12 @@ const CatalystRow = ({ pick, expanded, onToggle }) => {
           </div>
           <div className="mb-1.5"><CatalystBadges catalyst={pick} max={5} /></div>
           <p className="text-[11px] text-neutral-400 leading-relaxed line-clamp-2">{pick.rationale}</p>
+          {/* Phase 6 PR-G — fundamentals strip inline beneath the row content.
+              Same hook as everywhere else; lazy-fetched via intersection
+              observer. */}
+          <div className="mt-2 pt-2 border-t border-neutral-800/60">
+            <FundamentalsStrip ticker={pick.ticker} showExpandIcon={false} />
+          </div>
         </div>
       </button>
       {expanded && <CatalystDetail pick={pick} />}

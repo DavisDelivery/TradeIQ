@@ -3,6 +3,7 @@ import { CircleX } from 'lucide-react';
 import { tierColor } from './lib/formatters.jsx';
 import { ConvictionBadge, DirectionPill } from './components/Badges.jsx';
 import { useEngineTest } from './hooks/useEngineTest.js';
+import { FundamentalsStrip } from './components/detail/FundamentalsStrip.jsx';
 
 export const EngineTestView = () => {
   const [ticker, setTicker] = useState('NVDA');
@@ -71,6 +72,11 @@ export const EngineTestView = () => {
                 {result.priceChangePct >= 0 ? '+' : ''}{result.priceChangePct?.toFixed(2)}%
               </span>
               <span className="ml-auto text-[11px] font-mono text-neutral-500">{result.durationMs}ms</span>
+            </div>
+            {/* Phase 6 PR-G — fundamentals strip beneath the ticker header.
+                Same hook everywhere; lazy-fetched. */}
+            <div className="mb-3 pt-2 border-t border-neutral-800/60">
+              <FundamentalsStrip ticker={result.ticker} showExpandIcon={false} />
             </div>
 
             {result.target ? (

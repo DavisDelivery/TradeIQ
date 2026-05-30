@@ -23,6 +23,21 @@ export const fmt = {
   },
 };
 
+// Phase 6 PR-G — small metric formatters reused across the board tables'
+// new sortable Mcap/P-E/P-S/ROE/D-E columns.
+export const fmtMcap = (n) => {
+  if (n == null || !Number.isFinite(n)) return '—';
+  const a = Math.abs(n);
+  if (a >= 1e12) return `$${(n / 1e12).toFixed(2)}T`;
+  if (a >= 1e9) return `$${(n / 1e9).toFixed(1)}B`;
+  if (a >= 1e6) return `$${(n / 1e6).toFixed(0)}M`;
+  if (a >= 1e3) return `$${(n / 1e3).toFixed(0)}K`;
+  return `$${n.toFixed(0)}`;
+};
+export const fmtNum1 = (n) => (n == null || !Number.isFinite(n) ? '—' : n.toFixed(1));
+export const fmtNum2 = (n) => (n == null || !Number.isFinite(n) ? '—' : n.toFixed(2));
+export const fmtPct1 = (n) => (n == null || !Number.isFinite(n) ? '—' : `${n.toFixed(1)}%`);
+
 // Tolerates invalid / missing dates without throwing.
 export const safeTimestamp = (v) => {
   if (!v) return '—';

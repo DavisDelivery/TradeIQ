@@ -5,6 +5,7 @@ import { FreshnessPill } from './components/FreshnessPill.jsx';
 import { MOCK_EARNINGS } from './lib/mockData.js';
 import { useEarnings } from './hooks/useEarnings.js';
 import { readLog } from './tradeLog.js';
+import { FundamentalsStrip } from './components/detail/FundamentalsStrip.jsx';
 
 const DetailStat = ({ label, value, color }) => (
   <div>
@@ -223,6 +224,12 @@ export const EarningsPlaysView = () => {
                       </td>
                       <td className="px-3 py-2.5 text-neutral-400 text-[11px]">
                         {(e.bias ?? '—').replace(/_/g, ' ')}
+                      </td>
+                    </tr>
+                    {/* PR-G — fundamentals strip beneath every earnings row */}
+                    <tr className="bg-neutral-950/40">
+                      <td colSpan={9} className="px-3 py-1.5">
+                        <FundamentalsStrip ticker={e.ticker} showExpandIcon={false} />
                       </td>
                     </tr>
                     {isOpen && (
