@@ -186,4 +186,59 @@ describe('GET /api/stock-detail', () => {
     // a non-crash; assert the handler degrades gracefully.
     expect([404, 500]).toContain((res as any).statusCode);
   });
+
+  // -----------------------------------------------------------------------
+  // Phase 6 PR-G0 — resilience regression
+  //
+  // A single hanging provider must NOT take down the endpoint. Each dep is
+  // bounded by its per-dep timeout via withTimeoutStatus, so a hang resolves
+  // to that dep's fallback + a `_degraded.<name>` flag. The endpoint still
+  // returns 200 within the wall-clock budget.
+  // -----------------------------------------------------------------------
+
+  it('does NOT 502 when getInsiderActivity hangs — degrades cleanly + flags _degraded.insider', async () => {
+    // Insider hangs forever; everything else returns normally.
+    getInsiderActivityMock.mockImplementation(() => new Promise(() => { /* never settles */ }));
+    const t0 = Date.now();
+    const res = await handler(evt({ ticker: 'AAPL' }), {} as any, () => {});
+    const elapsed = Date.now() - t0;
+    expect((res as any).statusCode).toBe(200);
+    // Whole handler settles within the dep budget + assembly overhead
+    // (~6s + a couple seconds). Test in milliseconds with comfortable
+    // headroom so flaky-CI doesn't trip the assertion.
+    expect(elapsed).toBeLessThan(10_000);
+    const b = JSON.parse((res as any).body);
+    expect(b.ok).toBe(true);
+    expect(b._degraded?.insider).toBe('insider_timeout');
+    // The (formerly insider-derived) catalyst block must NOT be missing the
+    // payload shape — it just has insider=null.
+    expect(b.catalysts.insider).toBeNull();
+    // Other sections that didn't depend on insider still populate.
+    expect(b.metrics.valuation.pe).toBeGreaterThan(0);
+    expect(Array.isArray(b.relativeStrength.vsSpy)).toBe(true);
+  }, 15_000);
+
+  it('does NOT 502 when getSectorMedians hangs — degrades cleanly', async () => {
+    getSectorMediansMock.mockImplementation(() => new Promise(() => { /* never settles */ }));
+    const res = await handler(evt({ ticker: 'AAPL' }), {} as any, () => {});
+    expect((res as any).statusCode).toBe(200);
+    const b = JSON.parse((res as any).body);
+    expect(b._degraded?.sectorMedians).toBe('sectorMedians_timeout');
+    // Sector medians defaults to empty groups + sampleSize 0; the panel
+    // renders no median chip beside each metric, which is the honest state.
+    expect(b.sectorMedians.sampleSize).toBe(0);
+    // Stock-level metrics still populate.
+    expect(b.metrics.valuation.pe).toBeGreaterThan(0);
+  }, 15_000);
+
+  it('flags errored deps separately from timed-out deps', async () => {
+    // News rejects (errored), upcoming-earnings hangs (timeout).
+    getNewsMock.mockImplementation(() => Promise.reject(new Error('rate-limit')));
+    getUpcomingEarningsMock.mockImplementation(() => new Promise(() => { /* hang */ }));
+    const res = await handler(evt({ ticker: 'AAPL' }), {} as any, () => {});
+    expect((res as any).statusCode).toBe(200);
+    const b = JSON.parse((res as any).body);
+    expect(b._degraded?.news).toBe('news_error');
+    expect(b._degraded?.upcoming).toBe('upcoming_timeout');
+  }, 15_000);
 });

@@ -35,6 +35,15 @@
 [functions."catalyst-board"]
   timeout = 26
 
+# Phase 6 PR-G0 — stock-detail fans out to ~10 providers in parallel
+# (bars × 3, fundamentals, earnings × 2, news, insider, sector-medians,
+# ticker-info). Each call is bounded internally by withTimeoutStatus
+# (~6-7s per dep) so the handler should settle in ~7s + assembly. This
+# 26s ceiling is the Netlify-gateway safety net in case any of those
+# internal timeouts misbehave.
+[functions."stock-detail"]
+  timeout = 26
+
 # ==========================================================================
 # API redirects — rewrite /api/<endpoint> to /.netlify/functions/<endpoint>
 # ==========================================================================
