@@ -124,11 +124,17 @@ describe('GET /api/price-history', () => {
   });
 
   it('returns 400 for an invalid range', async () => {
-    const res = await handler(evt({ ticker: 'AAPL', range: '5Y' }), {} as any, () => {});
+    // Phase 6 PR-C added 3M + 5Y. `2D` is a representative truly-unknown range.
+    const res = await handler(evt({ ticker: 'AAPL', range: '2D' }), {} as any, () => {});
     expect((res as any).statusCode).toBe(400);
     const body = JSON.parse((res as any).body);
     expect(body.error).toMatch(/invalid range/i);
     expect(getDailyBarsMock).not.toHaveBeenCalled();
+  });
+
+  it('accepts 3M and 5Y ranges added in Phase 6 PR-C', () => {
+    expect(computeFrom('3M', '2026-05-17')).toBe('2026-02-15');
+    expect(computeFrom('5Y', '2026-05-17')).toBe('2021-05-18');
   });
 
   it('defaults to 6M when range is omitted (Chad-default)', async () => {

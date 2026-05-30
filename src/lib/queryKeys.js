@@ -42,6 +42,10 @@ export const queryKeys = {
   williamsRationale: (ticker) => ['tradeiq', 'williamsRationale', ticker],
   lynchRationale: (ticker) => ['tradeiq', 'lynchRationale', ticker],
   stockDetail: (ticker) => ['tradeiq', 'stockDetail', ticker],
+  // Phase 6 PR-C — per-(ticker,range) daily price bars. Cached together
+  // with the older Phase-4j 6M default, so the legacy PriceChart and the
+  // new detail-panel toggle share fetches when ranges overlap.
+  priceHistory: (ticker, range) => ['tradeiq', 'priceHistory', ticker, range],
   snapshotHistory: (board) => ['tradeiq', 'snapshotHistory', board],
   optionsFlow: () => ['tradeiq', 'optionsFlow'],
   backtest: (lookback, tickers) => ['tradeiq', 'backtest', lookback, tickers],

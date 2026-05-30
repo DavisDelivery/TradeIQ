@@ -8,8 +8,10 @@
 //
 // Ranges:
 //   1M  - 30  days back from today
+//   3M  - 91  days back
 //   6M  - 182 days back (default; what Chad sees on first open)
 //   1Y  - 365 days back
+//   5Y  - 1825 days back
 //   All - 2000-01-01 → today. Polygon returns whatever exists, which
 //         for a post-IPO ticker is since-listing. Plan-gated history
 //         pre-2003-ish is a documented limit in data-provider.ts.
@@ -23,7 +25,7 @@ import { createLogger } from './shared/logger';
 const log = createLogger('price-history');
 
 const COLLECTION = 'priceHistory';
-const VALID_RANGES = ['1M', '6M', '1Y', 'All'] as const;
+const VALID_RANGES = ['1M', '3M', '6M', '1Y', '5Y', 'All'] as const;
 type Range = (typeof VALID_RANGES)[number];
 
 const ALL_RANGE_FROM = '2000-01-01';
@@ -122,7 +124,12 @@ export const handler: Handler = async (event) => {
 
 export function computeFrom(range: Range, today: string): string {
   if (range === 'All') return ALL_RANGE_FROM;
-  const days = range === '1M' ? 30 : range === '6M' ? 182 : 365;
+  const days =
+    range === '1M' ? 30 :
+    range === '3M' ? 91 :
+    range === '6M' ? 182 :
+    range === '1Y' ? 365 :
+    range === '5Y' ? 1825 : 365;
   const t = Date.parse(`${today}T00:00:00Z`);
   if (!Number.isFinite(t)) throw new Error(`bad today: ${today}`);
   return new Date(t - days * 86_400_000).toISOString().slice(0, 10);
