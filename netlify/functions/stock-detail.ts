@@ -54,6 +54,7 @@ interface StockDetailResponse {
       beta: number | null;
       shortInterest: number | null;
       dividendYield: number | null;
+      freeCashFlow: number | null;
       range52w: { low: number; high: number; currentPctile: number } | null;
     };
     _reason?: string;
@@ -154,18 +155,70 @@ export const handler: Handler = async (event) => {
       prev && prev.c > 0 && last ? round(((last.c - prev.c) / prev.c) * 100, 2) : null;
 
     // --- Metrics ---
-    const pe = fund?.ttmEps && fund.ttmEps > 0 && price ? round(price / fund.ttmEps, 1) : null;
-    const grossMargin = fund?.grossMargin !== undefined ? round(fund.grossMargin * 100, 1) : null;
-    const opMargin = fund?.operatingMargin !== undefined ? round(fund.operatingMargin * 100, 1) : null;
-    const debtEquity = fund?.debtToEquity !== undefined ? round(fund.debtToEquity, 2) : null;
+    // PR-A scoring-facing fields kept verbatim for backward compat (PR-B/C/D
+    // already wired against these). PR-E adds pass-through of the Phase 4w
+    // comprehensive groups (fund.valuation / .profitability / .liquidity /
+    // .leverage / .cashflow) so the metrics grid lights up real values
+    // for pe/pb/ps/evToEbitda/evToSales/enterpriseValue/marketCap, roe/roa/
+    // netMargin/eps, current/quick/cash, longTermDebt, freeCashFlow,
+    // dividendYield — every metric the brief enumerated.
+    const pe = fund?.valuation?.pe
+      ?? (fund?.ttmEps && fund.ttmEps > 0 && price ? round(price / fund.ttmEps, 1) : null);
+    const grossMargin = fund?.profitability?.grossMargin !== undefined && fund?.profitability?.grossMargin !== null
+      ? fund.profitability.grossMargin
+      : fund?.grossMargin !== undefined ? round(fund.grossMargin * 100, 1) : null;
+    const opMargin = fund?.profitability?.operatingMargin !== undefined && fund?.profitability?.operatingMargin !== null
+      ? fund.profitability.operatingMargin
+      : fund?.operatingMargin !== undefined ? round(fund.operatingMargin * 100, 1) : null;
+    const debtEquity = fund?.leverage?.debtToEquity !== undefined && fund?.leverage?.debtToEquity !== null
+      ? fund.leverage.debtToEquity
+      : fund?.debtToEquity !== undefined ? round(fund.debtToEquity, 2) : null;
     const beta = computeBeta(bars, spyBars);
     const range52w = compute52wRange(bars);
 
     const metrics: NonNullable<StockDetailResponse['metrics']> = {
-      valuation: { pe, ps: null, evEbitda: null, pb: null },
-      profitability: { grossMargin, opMargin, roe: null, roa: null },
-      health: { debtEquity, currentRatio: null, interestCoverage: null },
-      market: { beta, shortInterest: null, dividendYield: null, range52w },
+      valuation: {
+        // Backward-compat shape
+        pe,
+        ps: fund?.valuation?.ps ?? null,
+        evEbitda: fund?.valuation?.evToEbitda ?? null,
+        pb: fund?.valuation?.pb ?? null,
+        // Phase 4w pass-through additions
+        pcf: fund?.valuation?.pcf ?? null,
+        pfcf: fund?.valuation?.pfcf ?? null,
+        evToSales: fund?.valuation?.evToSales ?? null,
+        enterpriseValue: fund?.valuation?.enterpriseValue ?? null,
+        marketCap: fund?.valuation?.marketCap ?? (typeof info?.marketCap === 'number' ? info.marketCap : null),
+      },
+      profitability: {
+        grossMargin,
+        opMargin,
+        roe: fund?.profitability?.roe !== undefined && fund?.profitability?.roe !== null
+          ? round(fund.profitability.roe * 100, 2)
+          : null,
+        roa: fund?.profitability?.roa !== undefined && fund?.profitability?.roa !== null
+          ? round(fund.profitability.roa * 100, 2)
+          : null,
+        netMargin: fund?.profitability?.netMargin !== undefined && fund?.profitability?.netMargin !== null
+          ? round(fund.profitability.netMargin * 100, 1)
+          : null,
+        eps: fund?.profitability?.eps ?? null,
+      },
+      health: {
+        debtEquity,
+        currentRatio: fund?.liquidity?.currentRatio ?? null,
+        quickRatio: fund?.liquidity?.quickRatio ?? null,
+        cashRatio: fund?.liquidity?.cashRatio ?? null,
+        longTermDebt: fund?.leverage?.longTermDebt ?? null,
+        interestCoverage: null, // not currently sourced
+      },
+      market: {
+        beta,
+        shortInterest: null,
+        dividendYield: fund?.cashflow?.dividendYield ?? null,
+        freeCashFlow: fund?.cashflow?.freeCashFlow ?? null,
+        range52w,
+      },
     };
     if (!fund) metrics._reason = 'fundamentals_unavailable';
 
@@ -173,7 +226,7 @@ export const handler: Handler = async (event) => {
     const sm = sectorMedianResult.medians;
     const sectorMedians: NonNullable<StockDetailResponse['sectorMedians']> = {
       valuation: { pe: sm.pe ?? null, ps: null, evEbitda: null, pb: null },
-      profitability: { grossMargin: sm.grossMargin ?? null, opMargin: sm.opMargin ?? null, roe: null, roa: null },
+      profitability: { grossMargin: sm.grossMargin ?? null, opMargin: sm.opMargin ?? null, roe: null, roa: null, netMargin: null, eps: null },
       health: { debtEquity: sm.debtEquity ?? null, currentRatio: null, interestCoverage: null },
       sampleSize: sectorMedianResult.sampleSize,
     };

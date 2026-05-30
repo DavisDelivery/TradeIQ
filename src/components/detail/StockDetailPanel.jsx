@@ -5,10 +5,11 @@
 // ('williams' | 'lynch' | 'target') and a `ticker`, picks the matching
 // strategy-rationale endpoint, and also pulls the shared stock-detail bundle.
 //
-// PR-B shipped the SHELL: the hero + the server-generated thesis. PR-C adds
-// the price + relative-strength charts in place of their stubs; PR-D will
-// land fundamentals, PR-E will land metrics / catalysts / risks / score
-// breakdown. The section order is the brief's 30-second-scan order:
+// PR-B shipped the SHELL: hero + server-generated thesis. PR-C added price
+// + relative-strength charts. PR-D added the fundamentals tab. PR-E lands
+// the remaining stub-free sections: KeyMetricsPanel, CatalystsFeed,
+// RiskCallouts, ScoreBreakdown. SectionStub is no longer imported.
+// Section order is the brief's 30-second-scan order:
 // Price chart → Key metrics → Relative strength → Fundamentals → Catalysts
 // → Risk callouts → Score breakdown.
 //
@@ -25,10 +26,13 @@ import { useTargetRationale } from '../../hooks/useTargetRationale.js';
 import { useStockDetail } from '../../hooks/useStockDetail.js';
 import { StockDetailHero } from './StockDetailHero.jsx';
 import { ThesisParagraph } from './ThesisParagraph.jsx';
-import { SectionStub } from './SectionStub.jsx';
 import { DetailPriceChart } from './DetailPriceChart.jsx';
 import { RelativeStrengthChart } from './RelativeStrengthChart.jsx';
 import { FundamentalsChart } from './FundamentalsChart.jsx';
+import { KeyMetricsPanel } from './KeyMetricsPanel.jsx';
+import { CatalystsFeed } from './CatalystsFeed.jsx';
+import { RiskCallouts } from './RiskCallouts.jsx';
+import { ScoreBreakdown } from './ScoreBreakdown.jsx';
 
 export function StockDetailPanel({ board, ticker, row }) {
   const isWilliams = board === 'williams';
@@ -75,12 +79,12 @@ export function StockDetailPanel({ board, ticker, row }) {
       />
 
       <DetailPriceChart ticker={ticker} />
-      <SectionStub title="Key Metrics" arrivesIn="PR-E" />
+      <KeyMetricsPanel ticker={ticker} />
       <RelativeStrengthChart ticker={ticker} />
       <FundamentalsChart ticker={ticker} />
-      <SectionStub title="Catalysts" arrivesIn="PR-E" />
-      <SectionStub title="Risk Callouts" arrivesIn="PR-E" />
-      <SectionStub title="Score Breakdown" arrivesIn="PR-E" />
+      <CatalystsFeed ticker={ticker} />
+      <RiskCallouts board={board} ticker={ticker} />
+      <ScoreBreakdown board={board} ticker={ticker} />
     </div>
   );
 }

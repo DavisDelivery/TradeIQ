@@ -46,7 +46,7 @@ import { DesktopShell } from './layout/DesktopShell.jsx';
 import { RegimeStrip } from './layout/RegimeStrip.jsx';
 
 
-const APP_VERSION = '0.19.13-alpha';
+const APP_VERSION = '0.19.14-alpha';
 
 // Phase 4k W1 — single navigation source-of-truth shared by the mobile
 // TopBar and the desktop Sidebar. Mobile renders the same array as a
