@@ -84,6 +84,16 @@
   to = "/.netlify/functions/target-rationale"
   status = 200
 
+# Phase 4w W1 — diagnostic surface for the Massive Fundamentals VX
+# migration. Surfaces raw responses from the three new endpoints
+# (balance-sheets, cash-flow-statements, income-statements) plus the
+# legacy VX response side-by-side, with field-name extraction and a
+# historical-depth probe. See reports/phase-4w/design.md.
+[[redirects]]
+  from = "/api/diag-fundamentals-v1"
+  to = "/.netlify/functions/diag-fundamentals-v1"
+  status = 200
+
 [[redirects]]
   from = "/api/price-history"
   to = "/.netlify/functions/price-history"
