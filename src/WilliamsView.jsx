@@ -6,6 +6,7 @@ import { useSortable, SortableTh } from './lib/useSortable.jsx';
 import { useBreakpoint } from './hooks/useBreakpoint.js';
 import { MasterDetail } from './layout/MasterDetail.jsx';
 import { StockDetailPanel } from './components/detail/StockDetailPanel.jsx';
+import { FundamentalsStrip } from './components/detail/FundamentalsStrip.jsx';
 
 const SIDE_OPTIONS = [
   { id: 'both', label: 'Both' },
@@ -134,8 +135,8 @@ export const WilliamsView = ({ universe = 'sp500' }) => {
                   {sorted.map((c) => {
                     const isSelected = selected?.ticker === c.ticker;
                     return (
+                      <React.Fragment key={c.ticker}>
                       <tr
-                        key={c.ticker}
                         onClick={() => setSelected(c)}
                         className={`border-t border-neutral-800/60 cursor-pointer transition-colors ${
                           isSelected ? 'bg-emerald-500/[0.07]' : 'hover:bg-neutral-900/20'
@@ -171,6 +172,18 @@ export const WilliamsView = ({ universe = 'sp500' }) => {
                           {Number.isFinite(c.confidence) ? `${(c.confidence * 100).toFixed(0)}%` : '—'}
                         </td>
                       </tr>
+                      {/*
+                        Phase 6 PR-F — FundamentalsStrip row beneath each
+                        candidate row. Single shared fetch path via
+                        useStockDetail; lazy-fetched by intersection observer
+                        so off-screen rows don't burn provider calls.
+                      */}
+                      <tr data-testid={`williams-strip-row-${c.ticker}`} className="bg-neutral-950/40">
+                        <td colSpan={10} className="px-3 py-1.5">
+                          <FundamentalsStrip ticker={c.ticker} onExpand={() => setSelected(c)} />
+                        </td>
+                      </tr>
+                      </React.Fragment>
                     );
                   })}
                 </tbody>

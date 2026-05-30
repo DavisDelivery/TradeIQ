@@ -14,6 +14,7 @@ import { LogButton } from './components/LogButton.jsx';
 import { AnalystContributions } from './components/AnalystContributions.jsx';
 import { CompanyInfo } from './components/CompanyInfo.jsx';
 import { PriceChart } from './components/PriceChart.jsx';
+import { FundamentalsStrip } from './components/detail/FundamentalsStrip.jsx';
 import { useSortable, SortableTh } from './lib/useSortable.jsx';
 import { useTargetBoard } from './hooks/useTargetBoard.js';
 import { useBreakpoint } from './hooks/useBreakpoint.js';
@@ -148,8 +149,8 @@ const TargetTable = ({ targets, onOpenTarget, selectedTicker }) => {
             const up = (t.priceChangePct ?? 0) >= 0;
             const Arrow = up ? ArrowUpRight : ArrowDownRight;
             return (
+              <React.Fragment key={t.ticker}>
               <tr
-                key={t.ticker}
                 onClick={() => onOpenTarget(t)}
                 className={`border-t border-neutral-800/60 cursor-pointer transition-colors ${
                   isSelected ? 'bg-emerald-500/[0.07]' : 'hover:bg-neutral-900/30'
@@ -197,6 +198,18 @@ const TargetTable = ({ targets, onOpenTarget, selectedTicker }) => {
                   )}
                 </td>
               </tr>
+              {/*
+                Phase 6 PR-F — FundamentalsStrip per target row. Tapping
+                opens the existing MasterDetail target panel (same handler
+                used by the main row), so the strip is both a preview AND
+                an extra tap target.
+              */}
+              <tr data-testid={`target-strip-row-${t.ticker}`} className="bg-neutral-950/40">
+                <td colSpan={12} className="px-3 py-1.5">
+                  <FundamentalsStrip ticker={t.ticker} onExpand={() => onOpenTarget(t)} />
+                </td>
+              </tr>
+              </React.Fragment>
             );
           })}
         </tbody>
