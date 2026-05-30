@@ -31,10 +31,10 @@ vi.mock('../shared/sector-medians', () => ({
   getSectorMedians: (...a: unknown[]) => getSectorMediansMock(...a),
 }));
 
-const getQuarterlyFundamentalsMock = vi.fn();
-vi.mock('../shared/quarterly-fundamentals', () => ({
-  getQuarterlyFundamentals: (...a: unknown[]) => getQuarterlyFundamentalsMock(...a),
-}));
+// Phase 6 PR-D: the quarterly chart series is now a pure transform over
+// `fund.statements` (4w's getFundamentals output). No separate provider to
+// mock — the test below drives quarterly[] via getFundamentalsMock's
+// `statements` field.
 
 const getTickerInfoMock = vi.fn();
 vi.mock('../shared/ticker-reference', () => ({
@@ -67,12 +67,22 @@ beforeEach(() => {
   for (const m of [
     getDailyBarsMock, getFundamentalsMock, getEarningsHistoryMock, getUpcomingEarningsMock,
     getNewsMock, getPreviousCloseMock, getInsiderActivityMock, getSectorMediansMock,
-    getQuarterlyFundamentalsMock, getTickerInfoMock,
+    getTickerInfoMock,
   ]) m.mockReset();
 
   getDailyBarsMock.mockResolvedValue(genBars());
   getFundamentalsMock.mockResolvedValue({
     ticker: 'AAPL', ttmEps: 6, grossMargin: 0.44, operatingMargin: 0.3, debtToEquity: 1.2,
+    // Phase 6 PR-D: stock-detail's quarterly chart series is derived from
+    // this `statements` bundle (4w shape), not a separate fetcher.
+    statements: [
+      {
+        periodEnd: '2026-03-31', filingDate: '2026-04-30', fiscalQuarter: 1, fiscalYear: 2026,
+        income: { revenue: 1000, grossProfit: 440, operatingIncome: 300, netIncome: 240, basicEps: 2.4, ebitda: 320 },
+        balance: { totalAssets: 5000, totalCurrentAssets: 2000, totalCurrentLiabilities: 1000, cashAndEquivalents: 1500, inventories: 100, longTermDebt: 600, debtCurrent: 50, totalEquity: 2000 },
+        cashflow: { operatingCashFlow: 280, capitalExpenditure: -30, freeCashFlow: 250, dividendsPaid: -10 },
+      },
+    ],
   });
   getEarningsHistoryMock.mockResolvedValue([
     { date: '2026-01-30', epsActual: 2.4, epsEstimate: 2.2, surprisePct: 9.1 },
@@ -90,9 +100,6 @@ beforeEach(() => {
     sector: 'Technology', sampleSize: 12, cached: false,
     medians: { pe: 26.1, grossMargin: 40, opMargin: 22.4, debtEquity: 1.85 },
   });
-  getQuarterlyFundamentalsMock.mockResolvedValue([
-    { period: 'Q1 2026', endDate: '2026-03-31', revenue: 1000, eps: 2.4, grossMargin: 44, opMargin: 30 },
-  ]);
   getTickerInfoMock.mockResolvedValue({ ticker: 'AAPL', name: 'Apple Inc.', marketCap: 3.5e12 });
 });
 
@@ -140,6 +147,11 @@ describe('GET /api/stock-detail', () => {
 
     // fundamentals history + relative strength
     expect(b.fundamentalsHistory.quarterly).toHaveLength(1);
+    expect(b.fundamentalsHistory.quarterly[0]).toMatchObject({
+      period: 'Q1 2026', endDate: '2026-03-31', revenue: 1000, eps: 2.4,
+      // Phase 6 PR-D: new derived fields
+      netMargin: 24, freeCashFlow: 250, debtToEquity: 0.3,
+    });
     expect(Array.isArray(b.relativeStrength.vsSpy)).toBe(true);
     expect(b.relativeStrength.vsSpy.length).toBeGreaterThan(0);
   });
@@ -154,8 +166,13 @@ describe('GET /api/stock-detail', () => {
     expect(b.metrics.health.debtEquity).toBeNull();
   });
 
-  it('flags empty fundamentals history with a reason', async () => {
-    getQuarterlyFundamentalsMock.mockResolvedValue([]);
+  it('flags empty fundamentals history with a reason when statements[] is empty', async () => {
+    // PR-D: quarterly[] is derived from fund.statements — empty statements
+    // → empty quarterly → _reason flagged.
+    getFundamentalsMock.mockResolvedValue({
+      ticker: 'AAPL', ttmEps: 6, grossMargin: 0.44, operatingMargin: 0.3, debtToEquity: 1.2,
+      statements: [],
+    });
     const res = await handler(evt({ ticker: 'AAPL' }), {} as any, () => {});
     const b = JSON.parse((res as any).body);
     expect(b.fundamentalsHistory.quarterly).toHaveLength(0);

@@ -28,6 +28,7 @@ import { ThesisParagraph } from './ThesisParagraph.jsx';
 import { SectionStub } from './SectionStub.jsx';
 import { DetailPriceChart } from './DetailPriceChart.jsx';
 import { RelativeStrengthChart } from './RelativeStrengthChart.jsx';
+import { FundamentalsChart } from './FundamentalsChart.jsx';
 
 export function StockDetailPanel({ board, ticker, row }) {
   const isWilliams = board === 'williams';
@@ -76,7 +77,7 @@ export function StockDetailPanel({ board, ticker, row }) {
       <DetailPriceChart ticker={ticker} />
       <SectionStub title="Key Metrics" arrivesIn="PR-E" />
       <RelativeStrengthChart ticker={ticker} />
-      <SectionStub title="Fundamentals" arrivesIn="PR-D" />
+      <FundamentalsChart ticker={ticker} />
       <SectionStub title="Catalysts" arrivesIn="PR-E" />
       <SectionStub title="Risk Callouts" arrivesIn="PR-E" />
       <SectionStub title="Score Breakdown" arrivesIn="PR-E" />
