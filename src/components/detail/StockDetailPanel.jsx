@@ -5,12 +5,12 @@
 // ('williams' | 'lynch' | 'target') and a `ticker`, picks the matching
 // strategy-rationale endpoint, and also pulls the shared stock-detail bundle.
 //
-// PR-B ships the SHELL: the hero + the server-generated thesis are real; the
-// seven content sections below are staged stubs (their final components land
-// in PR-C charts, PR-D fundamental charts, PR-E metrics/catalysts/risks/score
-// breakdown). The section order here is the final 30-second-scan order from
-// the brief: Price chart → Key metrics → Relative strength → Fundamentals →
-// Catalysts → Risk callouts → Score breakdown.
+// PR-B shipped the SHELL: the hero + the server-generated thesis. PR-C adds
+// the price + relative-strength charts in place of their stubs; PR-D will
+// land fundamentals, PR-E will land metrics / catalysts / risks / score
+// breakdown. The section order is the brief's 30-second-scan order:
+// Price chart → Key metrics → Relative strength → Fundamentals → Catalysts
+// → Risk callouts → Score breakdown.
 //
 // Data path: all three rationale hooks are mounted but enabled-gated to the
 // active board, so exactly one rationale fetch fires; useStockDetail is the
@@ -26,16 +26,8 @@ import { useStockDetail } from '../../hooks/useStockDetail.js';
 import { StockDetailHero } from './StockDetailHero.jsx';
 import { ThesisParagraph } from './ThesisParagraph.jsx';
 import { SectionStub } from './SectionStub.jsx';
-
-const SECTIONS = [
-  { title: 'Price Chart', arrivesIn: 'PR-C' },
-  { title: 'Key Metrics', arrivesIn: 'PR-E' },
-  { title: 'Relative Strength', arrivesIn: 'PR-C' },
-  { title: 'Fundamentals', arrivesIn: 'PR-D' },
-  { title: 'Catalysts', arrivesIn: 'PR-E' },
-  { title: 'Risk Callouts', arrivesIn: 'PR-E' },
-  { title: 'Score Breakdown', arrivesIn: 'PR-E' },
-];
+import { DetailPriceChart } from './DetailPriceChart.jsx';
+import { RelativeStrengthChart } from './RelativeStrengthChart.jsx';
 
 export function StockDetailPanel({ board, ticker, row }) {
   const isWilliams = board === 'williams';
@@ -81,9 +73,13 @@ export function StockDetailPanel({ board, ticker, row }) {
         onRetry={() => rationaleQuery.refetch()}
       />
 
-      {SECTIONS.map((s) => (
-        <SectionStub key={s.title} title={s.title} arrivesIn={s.arrivesIn} />
-      ))}
+      <DetailPriceChart ticker={ticker} />
+      <SectionStub title="Key Metrics" arrivesIn="PR-E" />
+      <RelativeStrengthChart ticker={ticker} />
+      <SectionStub title="Fundamentals" arrivesIn="PR-D" />
+      <SectionStub title="Catalysts" arrivesIn="PR-E" />
+      <SectionStub title="Risk Callouts" arrivesIn="PR-E" />
+      <SectionStub title="Score Breakdown" arrivesIn="PR-E" />
     </div>
   );
 }
