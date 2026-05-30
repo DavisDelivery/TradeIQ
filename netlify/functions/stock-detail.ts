@@ -26,7 +26,7 @@ import {
 } from './shared/data-provider';
 import { getInsiderActivity } from './shared/insider-provider';
 import { getSectorMedians, type SectorMedians } from './shared/sector-medians';
-import { getQuarterlyFundamentals, type QuarterlyFundamental } from './shared/quarterly-fundamentals';
+import { quarterlyFromStatements, type QuarterlyFundamental } from './shared/quarterly-fundamentals';
 import { findEntry, SECTOR_ETFS, SPY } from './shared/universe';
 import { getTickerInfo } from './shared/ticker-reference';
 import { createLogger } from './shared/logger';
@@ -120,7 +120,6 @@ export const handler: Handler = async (event) => {
       news,
       insider,
       sectorMedianResult,
-      quarterly,
       info,
     ] = await Promise.all([
       getDailyBars(ticker, from, to).catch(() => [] as Bar[]),
@@ -134,9 +133,13 @@ export const handler: Handler = async (event) => {
       getSectorMedians(sector, { excludeTicker: ticker }).catch(
         () => ({ medians: {} as SectorMedians, sampleSize: 0, sector, cached: false }),
       ),
-      getQuarterlyFundamentals(ticker, 20).catch(() => [] as QuarterlyFundamental[]),
       getTickerInfo(ticker).catch(() => null),
     ]);
+
+    // Phase 6 PR-D: the quarterly chart series is now a pure transform over
+    // the statements bundle that 4w's getFundamentals already returns — no
+    // second fetch, no remaining VX dependency.
+    const quarterly: QuarterlyFundamental[] = quarterlyFromStatements(fund?.statements, 20);
 
     if (!bars || bars.length === 0) {
       log.warn('no_bars', { ticker, durationMs: Date.now() - start });
