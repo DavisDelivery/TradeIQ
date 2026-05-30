@@ -92,6 +92,24 @@ export const handler: Handler = async (event) => {
     }
   }
 
+  // Phase 6 PR-H — for the largecap universe a scheduled after-close scan
+  // builds the snapshot every weekday at 22:00 UTC. Russell / All do NOT
+  // yet have a scheduled scan, and a live scan on those reliably exceeds
+  // the function budget → FALLBACK PARTIAL. Per brief: "do NOT silently
+  // live-scan to a timeout." Return an explicit not-built sentinel so the
+  // UI can render an honest "snapshot not yet built for this universe"
+  // state. force=1 still triggers a live scan (manual override).
+  if (!force && universe !== 'largecap') {
+    log.info('snapshot_not_built_for_universe', { universe });
+    return json(200, {
+      ok: true,
+      universe,
+      snapshotNotBuilt: true,
+      reason: `${universe} does not yet have a scheduled after-close scan; adding it is a follow-on phase`,
+      hint: 'pass ?force=1 to trigger a live partial scan (may time out)',
+    });
+  }
+
   return runLiveAndRespond(
     universe,
     minConviction,

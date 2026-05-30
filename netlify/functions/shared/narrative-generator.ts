@@ -17,7 +17,12 @@
 import { callAnthropic, BudgetExhaustedError, CircuitOpenError, AnthropicHttpError } from './anthropic-client';
 import { getCachedNarrative, setCachedNarrative } from './narrative-cache';
 
-const MODEL = 'claude-opus-4-7';
+// Phase 6 PR-H — bumped Opus to 4.8 (same $5/$25 pricing tier). The
+// scheduled scan does NOT call into this module; thesis generation is
+// strictly on-demand from /api/prophet-narrate when a detail panel opens
+// and is Firestore-cached per (ticker, snapshotDate) by that endpoint to
+// keep cost down when a panel re-opens within a session.
+const MODEL = 'claude-opus-4-8';
 const MAX_TOKENS = 350;
 
 const SYSTEM_PROMPT =
