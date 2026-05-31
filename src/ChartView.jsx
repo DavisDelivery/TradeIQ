@@ -10,6 +10,7 @@ import {
 } from 'lucide-react';
 import { LogButton } from './components/LogButton.jsx';
 import { useChartAnalysis } from './hooks/useChartAnalysis.js';
+import { FundamentalsStrip } from './components/detail/FundamentalsStrip.jsx';
 
 const QUICK_TICKERS = ['NVDA', 'AAPL', 'MSFT', 'TSLA', 'META', 'GOOGL', 'AMZN', 'SPY'];
 
@@ -84,6 +85,10 @@ export const ChartView = () => {
 
       {data && data.ok && (
         <>
+          {/* Phase 6 PR-G — fundamentals strip above the chart signal header */}
+          <div className="border border-neutral-800/80 bg-neutral-950/40 px-3 py-2">
+            <FundamentalsStrip ticker={ticker} showExpandIcon={false} />
+          </div>
           <SignalHeader data={data} />
           <PricePanel data={data} />
           <VolumePanel data={data} />

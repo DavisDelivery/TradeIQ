@@ -7,6 +7,8 @@ import { useBreakpoint } from './hooks/useBreakpoint.js';
 import { MasterDetail } from './layout/MasterDetail.jsx';
 import { StockDetailPanel } from './components/detail/StockDetailPanel.jsx';
 import { FundamentalsStrip } from './components/detail/FundamentalsStrip.jsx';
+import { useStockDetailsFanout } from './hooks/useStockDetailsFanout.js';
+import { fmtMcap, fmtNum1, fmtNum2, fmtPct1 } from './lib/formatters.jsx';
 
 const SIDE_OPTIONS = [
   { id: 'both', label: 'Both' },
@@ -48,7 +50,24 @@ export const WilliamsView = ({ universe = 'sp500' }) => {
   const { sortKey, sortDir, sortBy, sortRows } = useSortable('verdictRank', 'desc');
   const { isDesktop } = useBreakpoint();
 
-  const rows = (data?.candidates ?? []).map(normalize);
+  const baseRows = (data?.candidates ?? []).map(normalize);
+  // Phase 6 PR-G — enrich rows with the 5 fundamentals metrics so the new
+  // Mcap / P-E / P-S / ROE / D-E columns sort cleanly. The fan-out hook
+  // shares query keys with FundamentalsStrip (one ticker = one fetch
+  // across both the per-row strip and the sortable columns).
+  const tickers = baseRows.map((c) => c.ticker);
+  const { metricsByTicker } = useStockDetailsFanout(tickers);
+  const rows = baseRows.map((c) => {
+    const m = metricsByTicker[c.ticker];
+    return {
+      ...c,
+      marketCap: m?.marketCap ?? null,
+      pe: m?.pe ?? null,
+      ps: m?.ps ?? null,
+      roe: m?.roe ?? null,
+      debtEquity: m?.debtEquity ?? null,
+    };
+  });
   const sorted = sortRows(rows);
 
   const list = (
@@ -129,6 +148,15 @@ export const WilliamsView = ({ universe = 'sp500' }) => {
                     <SortableTh sortKey={sortKey} sortDir={sortDir} sortBy={sortBy} field="atr" align="right">ATR</SortableTh>
                     <SortableTh sortKey={sortKey} sortDir={sortDir} sortBy={sortBy} field="signals.williamsR" align="right">%R</SortableTh>
                     <SortableTh sortKey={sortKey} sortDir={sortDir} sortBy={sortBy} field="confidence" align="right">Conf</SortableTh>
+                    {/* Phase 6 PR-G — sortable fundamentals columns. Data via
+                        useStockDetailsFanout shares cache with FundamentalsStrip;
+                        unloaded rows sort to the bottom via useSortable's
+                        null-handling. */}
+                    <SortableTh sortKey={sortKey} sortDir={sortDir} sortBy={sortBy} field="marketCap" align="right">MCap</SortableTh>
+                    <SortableTh sortKey={sortKey} sortDir={sortDir} sortBy={sortBy} field="pe" align="right">P/E</SortableTh>
+                    <SortableTh sortKey={sortKey} sortDir={sortDir} sortBy={sortBy} field="ps" align="right">P/S</SortableTh>
+                    <SortableTh sortKey={sortKey} sortDir={sortDir} sortBy={sortBy} field="roe" align="right">ROE</SortableTh>
+                    <SortableTh sortKey={sortKey} sortDir={sortDir} sortBy={sortBy} field="debtEquity" align="right">D/E</SortableTh>
                   </tr>
                 </thead>
                 <tbody>
@@ -171,6 +199,13 @@ export const WilliamsView = ({ universe = 'sp500' }) => {
                         <td className="px-3 py-2.5 text-right tabular-nums text-neutral-500">
                           {Number.isFinite(c.confidence) ? `${(c.confidence * 100).toFixed(0)}%` : '—'}
                         </td>
+                        {/* PR-G — sortable fundamentals cells (data from
+                            useStockDetailsFanout; null while loading) */}
+                        <td className="px-3 py-2.5 text-right tabular-nums text-neutral-300">{fmtMcap(c.marketCap)}</td>
+                        <td className="px-3 py-2.5 text-right tabular-nums text-neutral-300">{fmtNum1(c.pe)}</td>
+                        <td className="px-3 py-2.5 text-right tabular-nums text-neutral-300">{fmtNum1(c.ps)}</td>
+                        <td className="px-3 py-2.5 text-right tabular-nums text-neutral-300">{fmtPct1(c.roe)}</td>
+                        <td className="px-3 py-2.5 text-right tabular-nums text-neutral-300">{fmtNum2(c.debtEquity)}</td>
                       </tr>
                       {/*
                         Phase 6 PR-F — FundamentalsStrip row beneath each
@@ -179,7 +214,7 @@ export const WilliamsView = ({ universe = 'sp500' }) => {
                         so off-screen rows don't burn provider calls.
                       */}
                       <tr data-testid={`williams-strip-row-${c.ticker}`} className="bg-neutral-950/40">
-                        <td colSpan={10} className="px-3 py-1.5">
+                        <td colSpan={15} className="px-3 py-1.5">
                           <FundamentalsStrip ticker={c.ticker} onExpand={() => setSelected(c)} />
                         </td>
                       </tr>

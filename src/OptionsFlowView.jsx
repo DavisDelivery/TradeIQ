@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { CircleX, Info, AlertTriangle } from 'lucide-react';
 import { useOptionsFlow } from './hooks/useOptionsFlow.js';
+import { FundamentalsStrip } from './components/detail/FundamentalsStrip.jsx';
 
 export const OptionsFlowView = () => {
   const [filter, setFilter] = useState('all');
@@ -147,6 +148,10 @@ export const OptionsFlowView = () => {
               </div>
 
               <p className="text-[12px] text-neutral-400 leading-relaxed">{o.rationale}</p>
+              {/* PR-G — fundamentals strip beneath each options-flow card */}
+              <div className="mt-3 pt-2 border-t border-neutral-800/60">
+                <FundamentalsStrip ticker={o.ticker} showExpandIcon={false} />
+              </div>
             </div>
           );
         })}

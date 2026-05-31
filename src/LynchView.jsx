@@ -7,6 +7,8 @@ import { useBreakpoint } from './hooks/useBreakpoint.js';
 import { MasterDetail } from './layout/MasterDetail.jsx';
 import { StockDetailPanel } from './components/detail/StockDetailPanel.jsx';
 import { FundamentalsStrip } from './components/detail/FundamentalsStrip.jsx';
+import { useStockDetailsFanout } from './hooks/useStockDetailsFanout.js';
+import { fmtMcap, fmtNum1, fmtNum2, fmtPct1 } from './lib/formatters.jsx';
 
 const VERDICT_RANK = { BUY: 3, HOLD: 2, AVOID: 1 };
 
@@ -37,7 +39,25 @@ export const LynchView = ({ universe = 'sp500' }) => {
   const { sortKey, sortDir, sortBy, sortRows } = useSortable('verdictRank', 'desc');
   const { isDesktop } = useBreakpoint();
 
-  const rows = (data?.candidates ?? []).map(normalize);
+  const baseRows = (data?.candidates ?? []).map(normalize);
+  // Phase 6 PR-G — enrich rows with fundamentals metrics so MCap/PE/PS/ROE/DE
+  // columns sort cleanly. Shares queryKeys with FundamentalsStrip → one
+  // ticker = one fetch across both surfaces.
+  const tickers = baseRows.map((c) => c.ticker);
+  const { metricsByTicker } = useStockDetailsFanout(tickers);
+  // Lynch already has a `debtToEquity` field in signals; the column reads from
+  // the consolidated stock-detail metrics for parity with the strip + Williams.
+  const rows = baseRows.map((c) => {
+    const m = metricsByTicker[c.ticker];
+    return {
+      ...c,
+      marketCap: m?.marketCap ?? null,
+      pe: m?.pe ?? null,
+      ps: m?.ps ?? null,
+      roe: m?.roe ?? null,
+      debtEquity: m?.debtEquity ?? null,
+    };
+  });
   const sorted = sortRows(rows);
 
   const list = (
@@ -102,8 +122,17 @@ export const LynchView = ({ universe = 'sp500' }) => {
                     <SortableTh sortKey={sortKey} sortDir={sortDir} sortBy={sortBy} field="fairValueLow" align="right">FV Low</SortableTh>
                     <SortableTh sortKey={sortKey} sortDir={sortDir} sortBy={sortBy} field="fairValueHigh" align="right">FV High</SortableTh>
                     <SortableTh sortKey={sortKey} sortDir={sortDir} sortBy={sortBy} field="signals.epsGrowthYoYPct" align="right">EPS YoY</SortableTh>
-                    <SortableTh sortKey={sortKey} sortDir={sortDir} sortBy={sortBy} field="signals.debtToEquity" align="right">D/E</SortableTh>
+                    <SortableTh sortKey={sortKey} sortDir={sortDir} sortBy={sortBy} field="signals.debtToEquity" align="right">D/E (sig)</SortableTh>
                     <SortableTh sortKey={sortKey} sortDir={sortDir} sortBy={sortBy} field="confidence" align="right">Conf</SortableTh>
+                    {/* Phase 6 PR-G — sortable fundamentals columns from
+                        stock-detail (shared cache with FundamentalsStrip).
+                        D/E (sig) above is the Lynch signal's input; MCap/PE/PS/
+                        ROE/D-E below are the comprehensive fundamentals view. */}
+                    <SortableTh sortKey={sortKey} sortDir={sortDir} sortBy={sortBy} field="marketCap" align="right">MCap</SortableTh>
+                    <SortableTh sortKey={sortKey} sortDir={sortDir} sortBy={sortBy} field="pe" align="right">P/E</SortableTh>
+                    <SortableTh sortKey={sortKey} sortDir={sortDir} sortBy={sortBy} field="ps" align="right">P/S</SortableTh>
+                    <SortableTh sortKey={sortKey} sortDir={sortDir} sortBy={sortBy} field="roe" align="right">ROE</SortableTh>
+                    <SortableTh sortKey={sortKey} sortDir={sortDir} sortBy={sortBy} field="debtEquity" align="right">D/E</SortableTh>
                   </tr>
                 </thead>
                 <tbody>
@@ -156,6 +185,13 @@ export const LynchView = ({ universe = 'sp500' }) => {
                         <td className="px-3 py-2.5 text-right tabular-nums text-neutral-500">
                           {Number.isFinite(c.confidence) ? `${(c.confidence * 100).toFixed(0)}%` : '—'}
                         </td>
+                        {/* PR-G — sortable fundamentals cells (data from
+                            useStockDetailsFanout; null while loading) */}
+                        <td className="px-3 py-2.5 text-right tabular-nums text-neutral-300">{fmtMcap(c.marketCap)}</td>
+                        <td className="px-3 py-2.5 text-right tabular-nums text-neutral-300">{fmtNum1(c.pe)}</td>
+                        <td className="px-3 py-2.5 text-right tabular-nums text-neutral-300">{fmtNum1(c.ps)}</td>
+                        <td className="px-3 py-2.5 text-right tabular-nums text-neutral-300">{fmtPct1(c.roe)}</td>
+                        <td className="px-3 py-2.5 text-right tabular-nums text-neutral-300">{fmtNum2(c.debtEquity)}</td>
                       </tr>
                       {/*
                         Phase 6 PR-F — FundamentalsStrip per row. Lazy-fetched
@@ -163,7 +199,7 @@ export const LynchView = ({ universe = 'sp500' }) => {
                         cache so opening the detail panel never re-fetches.
                       */}
                       <tr data-testid={`lynch-strip-row-${c.ticker}`} className="bg-neutral-950/40">
-                        <td colSpan={10} className="px-3 py-1.5">
+                        <td colSpan={15} className="px-3 py-1.5">
                           <FundamentalsStrip ticker={c.ticker} onExpand={() => setSelected(c)} />
                         </td>
                       </tr>

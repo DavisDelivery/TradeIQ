@@ -5,6 +5,7 @@ import { useTargetBoard } from './hooks/useTargetBoard.js';
 import { useCatalyst } from './hooks/useCatalyst.js';
 import { useEarnings } from './hooks/useEarnings.js';
 import { useRegime } from './hooks/useRegime.js';
+import { FundamentalsStrip } from './components/detail/FundamentalsStrip.jsx';
 
 export const AlertsView = () => {
   // AlertsView is a *derived* surface: it reads the four upstream boards
@@ -179,7 +180,8 @@ export const AlertsView = () => {
             </thead>
             <tbody>
               {alerts.map(a => (
-                <tr key={a.id} className="border-b border-neutral-800/60 hover:bg-neutral-900/40">
+                <React.Fragment key={a.id}>
+                <tr className="border-b border-neutral-800/60 hover:bg-neutral-900/40">
                   <td className="px-4 py-3">
                     <span className={`inline-flex items-center px-2 py-0.5 text-[10px] font-mono uppercase tracking-wider border ${sourceColor(a.source)}`}>
                       {a.source}
@@ -193,6 +195,13 @@ export const AlertsView = () => {
                     <div className="line-clamp-2">{a.rationale}</div>
                   </td>
                 </tr>
+                {/* PR-G — fundamentals strip beneath each alert row */}
+                <tr className="border-b border-neutral-900/40 bg-neutral-950/30">
+                  <td colSpan={6} className="px-4 py-1.5">
+                    <FundamentalsStrip ticker={a.ticker} showExpandIcon={false} />
+                  </td>
+                </tr>
+                </React.Fragment>
               ))}
             </tbody>
           </table>
