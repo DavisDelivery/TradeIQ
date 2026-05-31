@@ -163,6 +163,14 @@
   to = "/.netlify/functions/analysts-status"
   status = 200
 
+# Phase 6 PR-H — manual trigger for the Prophet large-cap snapshot scan.
+# Token-gated (SCHEDULED_SCAN_TRIGGER_TOKEN). Lets us test-run the
+# scheduled scan once before relying on the cron + re-run on demand.
+[[redirects]]
+  from = "/api/scan-prophet-largecap-trigger"
+  to = "/.netlify/functions/scan-prophet-largecap-trigger"
+  status = 200
+
 [[redirects]]
   from = "/api/chart-analysis"
   to = "/.netlify/functions/chart-analysis"

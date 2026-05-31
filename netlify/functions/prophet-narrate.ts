@@ -36,6 +36,13 @@
 import type { Handler } from '@netlify/functions';
 import { logger } from './shared/logger';
 import { generateNarrative, type NarrativeInput } from './shared/narrative-generator';
+import { getCachedThesis, setCachedThesis } from './shared/thesis-cache';
+
+// Phase 6 PR-H — model identifier mirrored from narrative-generator.ts so
+// the cached entry records which Opus generation produced the text. When
+// the orchestrator bumps the model later, a cache miss on the old key is
+// the desired behaviour (re-narrate with the new model on first open).
+const THESIS_MODEL = 'claude-opus-4-8';
 
 const RATE_LIMIT_PER_HOUR = 30;
 const RATE_WINDOW_MS = 60 * 60 * 1000;
@@ -93,6 +100,24 @@ export const handler: Handler = async (event) => {
     return json(400, { ok: false, error: 'missing_fields' });
   }
 
+  // Phase 6 PR-H — Firestore thesis cache keyed by (ticker, snapshotDate).
+  // The client passes the active snapshot's date; a hit returns instantly
+  // without spending a Claude call. Falls through to live generation on
+  // miss; the result is persisted for the next panel-open within the
+  // same snapshot window.
+  const snapshotDate = typeof (event.queryStringParameters?.snapshotDate) === 'string'
+    ? event.queryStringParameters!.snapshotDate
+    : (typeof (body as { snapshotDate?: unknown }).snapshotDate === 'string'
+        ? String((body as { snapshotDate?: string }).snapshotDate)
+        : '');
+  if (snapshotDate && /^\d{4}-\d{2}-\d{2}$/.test(snapshotDate)) {
+    const hit = await getCachedThesis(body.ticker, snapshotDate);
+    if (hit) {
+      log.info('thesis_cache_hit', { ticker: body.ticker, snapshotDate });
+      return json(200, { ok: true, ticker: body.ticker, narrative: hit.text, cached: true, cacheSource: 'firestore' });
+    }
+  }
+
   if (!process.env.ANTHROPIC_API_KEY) {
     log.error('anthropic_key_missing');
     return json(500, { ok: false, error: 'anthropic_not_configured' });
@@ -119,6 +144,13 @@ export const handler: Handler = async (event) => {
   }
 
   log.info('narrate_ok', { ticker: body.ticker, cached: result.cached, ms, len: result.text.length });
+
+  // PR-H — persist to the (ticker, snapshotDate) Firestore cache so the
+  // next panel-open in this snapshot window serves without re-billing
+  // Claude. Best-effort; cache errors must NOT fail the response.
+  if (snapshotDate && /^\d{4}-\d{2}-\d{2}$/.test(snapshotDate)) {
+    await setCachedThesis(body.ticker, snapshotDate, result.text, THESIS_MODEL);
+  }
 
   return json(200, { ok: true, ticker: body.ticker, narrative: result.text, cached: result.cached });
 };

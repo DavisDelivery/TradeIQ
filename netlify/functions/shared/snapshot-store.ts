@@ -66,6 +66,13 @@ export interface BoardSnapshot {
   /** Phase 4o W3 — when degraded=true, this carries the W3 guard's
    *  human-readable reason (e.g. "8/100 finnhub calls rate-limited"). */
   degradedReason?: string;
+  /** Phase 6 PR-H — scan completion status. `complete` (default) means
+   *  the scan finished within budget; `partial` means it ran out of
+   *  budget. Partial snapshots are written to the `runs/` history for
+   *  diagnostic visibility but do NOT promote into `_latest/` — the
+   *  prior good complete snapshot remains canonical. The write helper
+   *  enforces this discipline. */
+  status?: 'complete' | 'partial';
   /** 4c-2: sieve metadata for Russell snapshots produced by the 3-stage sieve. */
   sieve?: {
     stage1: { scored: number; survived: number; thresholdScore: number | null; budgetMs: number; partial: boolean };
@@ -336,9 +343,17 @@ export async function writeSnapshot(
   board: BoardName,
   universe: UniverseKey,
   snapshot: BoardSnapshot,
-): Promise<{ snapshotId: string }> {
+): Promise<{ snapshotId: string; promotedToLatest: boolean }> {
   const db = getAdminDb();
   const snapshotId = snapshotIdFor(universe, new Date(snapshot.generatedAt));
+
+  // Phase 6 PR-H — partial-safe write. A snapshot with status:'partial'
+  // (scan ran out of budget, results incomplete) is persisted to runs/
+  // for diagnostics but does NOT promote into _latest/ — the prior good
+  // complete snapshot stays canonical. Without this guard, the brief's
+  // hard-stop "NEVER overwrite a good complete snapshot with a failed/
+  // empty one" would be violable by a single bad scheduled run.
+  const isPartial = snapshot.status === 'partial';
 
   const runDoc = db.collection('boardSnapshots').doc(board).collection('runs').doc(snapshotId);
   const latestDoc = db
@@ -354,17 +369,19 @@ export async function writeSnapshot(
       board,
       writtenAt: Timestamp.now(),
     });
-    tx.set(latestDoc, {
-      snapshotId,
-      generatedAt: snapshot.generatedAt,
-      modelVersion: snapshot.modelVersion,
-      universeChecked: snapshot.universeChecked,
-      resultsCount: snapshot.results.length,
-      writtenAt: Timestamp.now(),
-    });
+    if (!isPartial) {
+      tx.set(latestDoc, {
+        snapshotId,
+        generatedAt: snapshot.generatedAt,
+        modelVersion: snapshot.modelVersion,
+        universeChecked: snapshot.universeChecked,
+        resultsCount: snapshot.results.length,
+        writtenAt: Timestamp.now(),
+      });
+    }
   });
 
-  return { snapshotId };
+  return { snapshotId, promotedToLatest: !isPartial };
 }
 
 /**

@@ -1,107 +1,70 @@
-// Per-universe scheduled scan: prophet board.
-// Prophet has 3 universes (largecap, russell, all) — one function each.
+// Phase 6 PR-H — after-close scheduled Prophet snapshot scan (Large Cap).
 //
-// Board:    prophet
-// Universe: largecap (stored as 'largecap')
-// Schedule: 0,30 13-21 * * 1-5
+// CADENCE: weekdays at 22:00 UTC — safely after the 4pm-ET close in both
+// EST and EDT and after EOD data settles. The cron itself skips
+// weekends; an additional US-market-holiday guard skips Thanksgiving,
+// Christmas, Good Friday, etc. so we never overwrite a good snapshot
+// with junk data on a closed-market day.
 //
-// Split from Phase 1's multi-universe scan-prophet.ts so each universe gets
-// its own 15-min Netlify background container instead of competing for one.
+// SAFETY DISCIPLINE (brief's hard rule):
+//   - NEVER overwrite a good complete snapshot with a failed/empty one.
+//     `writeSnapshot` only promotes the new doc to `_latest/` when
+//     `status: 'complete'`. Partial scans land in `runs/` for diagnostics
+//     and leave the canonical pointer alone.
+//   - NO Claude in the scan. The scan body calls only deterministic
+//     scoring (the existing 7-layer Prophet path). Per-ticker thesis
+//     stays on-demand via `/api/prophet-narrate`, cached per (ticker,
+//     snapshotDate) in Firestore.
 //
-// Phase 4c-1 (W4): pre-narrate every qualified pick before writing the
-// snapshot, so the served data is complete on first read. Bounded by
-// NARRATE_BUDGET_MS to protect the container timeout. Any picks the budget
-// can't cover ship without a narrative and the prophet-narrate endpoint
-// (W2) regenerates on demand when the user expands them.
+// This file is intentionally a thin scheduling shim around
+// `runProphetSnapshot`. The manual-trigger HTTP endpoint
+// (`scan-prophet-largecap-trigger.ts`) invokes the same shared body, so
+// the schedule and the test-run produce identical behaviour.
 
 import { schedule } from '@netlify/functions';
-import { runProphetScan, type ProphetUniverseKey } from './shared/scan-prophet';
-import { writeSnapshot, FRESHNESS_BUDGETS_MS, type UniverseKey } from './shared/snapshot-store';
-import { MODEL_VERSION } from './shared/model-version';
 import { logger } from './shared/logger';
-import { narrateAll } from './shared/narrative-generator';
+import { runProphetSnapshot } from './shared/prophet-snapshot-runner';
+import { isMarketClosed } from './shared/us-market-holidays';
 
-// 14 min — leaves 60s margin under the 15-min Netlify background timeout.
-const PER_SCAN_BUDGET_MS = 14 * 60_000;
-// Largecap: ~60 qualified picks × ~2s = ~30s at concurrency 4. 3 min is
-// generous headroom.
-const NARRATE_BUDGET_MS = 3 * 60_000;
-const NARRATE_CONCURRENCY = 4;
+export const handler = schedule('0 22 * * 1-5', async () => {
+  const now = new Date();
+  const log = logger.child({ fn: 'scan-prophet-largecap', universe: 'largecap', triggeredAt: now.toISOString() });
 
-const UNIVERSE: ProphetUniverseKey = 'largecap';
-const STORE_KEY: UniverseKey = 'largecap';
-
-export const handler = schedule('0,30 13-21 * * 1-5', async () => {
-  const log = logger.child({ fn: 'scan-prophet-largecap', universe: UNIVERSE });
-  const overallStart = Date.now();
-  log.info('scheduled_scan_started', { board: 'prophet', universe: UNIVERSE });
-
-  try {
-    const scan = await runProphetScan({
-      universe: UNIVERSE,
-      scanBudgetMs: PER_SCAN_BUDGET_MS,
-      concurrency: 7,
-      sufficientQualified: Infinity,
-      logger: log,
-    });
-
-    if (process.env.ANTHROPIC_API_KEY && scan.picks.length > 0) {
-      const narrateResult = await narrateAll(scan.picks, {
-        concurrency: NARRATE_CONCURRENCY,
-        budgetMs: NARRATE_BUDGET_MS,
-        onWarn: (msg, ticker, err) =>
-          log.warn(msg, { ticker, err: String((err as any)?.message ?? err) }),
-      });
-      log.info('narrate_all_complete', {
-        picks: scan.picks.length,
-        narrated: narrateResult.narrated,
-        failed: narrateResult.failed,
-        skipped: narrateResult.skipped,
-        durationMs: narrateResult.durationMs,
-      });
-    }
-
-    const { snapshotId } = await writeSnapshot('prophet', STORE_KEY, {
-      modelVersion: MODEL_VERSION,
-      generatedAt: new Date().toISOString(),
-      scanDurationMs: scan.scanDurationMs,
-      universeChecked: scan.universeChecked,
-      results: scan.picks,
-      freshnessBudgetMs: FRESHNESS_BUDGETS_MS.prophet,
-      warnings: scan.warnings,
-    });
-
-    const count = scan.picks.length;
-    const narratedCount = scan.picks.filter((p) => p.narrative).length;
-    log.info('snapshot_written', {
-      snapshotId,
-      picks: count,
-      narrated: narratedCount,
-      universeChecked: scan.universeChecked,
-      scanDurationMs: scan.scanDurationMs,
-      overallDurationMs: Date.now() - overallStart,
-    });
-
+  if (isMarketClosed(now)) {
+    log.info('scheduled_scan_skipped_market_closed', { date: now.toISOString().slice(0, 10) });
     return {
       statusCode: 200,
       body: JSON.stringify({
         ok: true,
         board: 'prophet',
-        universe: UNIVERSE,
-        snapshotId,
-        picks: count,
-        narrated: narratedCount,
-        universeChecked: scan.universeChecked,
-        scanDurationMs: scan.scanDurationMs,
-        warnings: scan.warnings,
+        universe: 'largecap',
+        skipped: true,
+        reason: 'market_closed',
+        date: now.toISOString().slice(0, 10),
       }),
     };
-  } catch (err: any) {
-    const msg = String(err?.message ?? err);
-    log.error('scheduled_scan_failed', { err: msg, universe: UNIVERSE });
-    return {
-      statusCode: 500,
-      body: JSON.stringify({ ok: false, board: 'prophet', universe: UNIVERSE, error: msg }),
-    };
   }
+
+  const result = await runProphetSnapshot({
+    universe: 'largecap',
+    storeKey: 'largecap',
+    logger: log,
+  });
+
+  return {
+    statusCode: result.ok ? 200 : 500,
+    body: JSON.stringify({
+      ok: result.ok,
+      board: 'prophet',
+      universe: 'largecap',
+      snapshotId: result.snapshotId,
+      status: result.status,
+      promotedToLatest: result.promotedToLatest,
+      picks: result.picks,
+      universeChecked: result.universeChecked,
+      scanDurationMs: result.scanDurationMs,
+      warnings: result.warnings,
+      error: result.error,
+    }),
+  };
 });
