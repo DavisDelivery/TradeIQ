@@ -21,7 +21,11 @@ const BOARD_UNIVERSES: Record<BoardName, UniverseKey[]> = {
   insider: ['sp500', 'ndx', 'dow', 'russell2k'],
   williams: ['sp500', 'ndx', 'dow', 'russell2k'],
   lynch: ['sp500', 'ndx', 'dow', 'russell2k'],
-  earnings: ['sp500', 'ndx', 'dow', 'russell2k'],
+  // The earnings scan writes a single cross-universe snapshot under the
+  // 'all' store key (see scan-earnings.ts), so health must probe 'all' —
+  // probing the per-index universes would always find them missing and
+  // never detect a stale/failed earnings scan.
+  earnings: ['all'],
 };
 
 export const handler: Handler = async () => {
