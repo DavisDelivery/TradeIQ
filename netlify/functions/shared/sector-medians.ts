@@ -17,6 +17,7 @@
 
 import { UNIVERSE } from './universe';
 import { getFundamentals, getPreviousClose } from './data-provider';
+import { withTimeout } from './with-timeout';
 
 export type SectorMedianMetric = 'pe' | 'grossMargin' | 'opMargin' | 'debtEquity';
 
@@ -32,6 +33,12 @@ const CACHE = new Map<string, CacheEntry>();
 const TTL_MS = 60 * 60 * 1000; // 1h
 const MAX_PEERS = 16; // bound the per-sector fetch cost
 const CONCURRENCY = 4;
+// Phase 6 PR-G0 — per-peer hard cap. One slow Massive/Polygon response
+// can no longer stall the entire sector-medians fan-out. With CONCURRENCY=4
+// and MAX_PEERS=16 we run 4 sequential batches; worst-case wall-clock is
+// ~4 × PEER_TIMEOUT_MS = ~16s, which the caller's outer timeout then bounds
+// even further (stock-detail caps the whole getSectorMedians call at ~5s).
+const PEER_TIMEOUT_MS = 4_000;
 
 export interface SectorMedianResult {
   sector: string;
@@ -73,11 +80,15 @@ export async function getSectorMedians(
 
   for (let i = 0; i < peers.length; i += CONCURRENCY) {
     const chunk = peers.slice(i, i + CONCURRENCY);
+    // PR-G0: each peer is bounded by PEER_TIMEOUT_MS via withTimeout. A
+    // hanging upstream becomes `{fund:null, prev:null}` rather than
+    // stalling the batch. The outer Promise.all still resolves in the
+    // bounded time of the slowest peer in the batch.
     const rows = await Promise.all(
       chunk.map(async (t) => {
         const [fund, prev] = await Promise.all([
-          getFundamentals(t).catch(() => null),
-          getPreviousClose(t).catch(() => null),
+          withTimeout(getFundamentals(t).catch(() => null), PEER_TIMEOUT_MS, null),
+          withTimeout(getPreviousClose(t).catch(() => null), PEER_TIMEOUT_MS, null),
         ]);
         return { fund, prev };
       }),

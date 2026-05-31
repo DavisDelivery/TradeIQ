@@ -29,7 +29,30 @@ import { getSectorMedians, type SectorMedians } from './shared/sector-medians';
 import { quarterlyFromStatements, type QuarterlyFundamental } from './shared/quarterly-fundamentals';
 import { findEntry, SECTOR_ETFS, SPY } from './shared/universe';
 import { getTickerInfo } from './shared/ticker-reference';
+import { withTimeoutStatus, type WithTimeoutResult } from './shared/with-timeout';
 import { createLogger } from './shared/logger';
+
+// Phase 6 PR-G0 — per-dependency wall-clock budgets so a single hanging
+// provider can no longer 502 the entire endpoint. All deps run in parallel;
+// total handler wall-clock is bounded by the longest budget below.
+//
+// Why these numbers: Netlify's gateway gives the function ~26s (configured
+// in netlify.toml below). The aggressive heavy deps (sector-medians fan-out,
+// insider provider Finnhub rate limiting) are most likely to hang; each is
+// capped at 6s so the whole Promise.all settles in ≤6s + assembly overhead,
+// leaving generous headroom under the gateway cap.
+const DEP_TIMEOUTS = {
+  bars: 6_000,
+  spyBars: 6_000,
+  sectorBars: 6_000,
+  fundamentals: 7_000,       // Massive endpoints — usually fast, allow extra for cold start
+  earningsHistory: 5_000,
+  upcomingEarnings: 5_000,
+  news: 5_000,
+  insider: 6_000,             // Finnhub — W1c-style rate-limit retry could eat budget
+  sectorMedians: 6_000,       // fans out to 16 peers; each peer bounded at 4s internally
+  tickerInfo: 4_000,
+};
 
 const log = createLogger('stock-detail');
 
@@ -91,6 +114,12 @@ interface StockDetailResponse {
     sectorEtf: string | null;
     _reason?: string;
   };
+  /** Phase 6 PR-G0 — per-section degradation map. Keys are dep names that
+   *  hit the per-dep timeout or rejected during fetch; values are short
+   *  reason strings ("<name>_timeout" | "<name>_error"). Absent when every
+   *  dep succeeded. UI surfaces this to keep the panel honest about what
+   *  came back live vs. degraded. */
+  _degraded?: Record<string, string>;
 }
 
 export const handler: Handler = async (event) => {
@@ -109,33 +138,71 @@ export const handler: Handler = async (event) => {
     const to = new Date().toISOString().slice(0, 10);
     const from = new Date(Date.now() - 400 * 86400000).toISOString().slice(0, 10);
 
-    // Fire everything in parallel — one slow provider must not serialize the
-    // others. Each is independently graceful.
+    // Fire everything in parallel, each individually bounded by DEP_TIMEOUTS.
+    // PR-G0: any single hanging/slow provider degrades to its fallback +
+    // `_reason` rather than 502'ing the whole function. The total wall-
+    // clock is the longest budget among the deps (~7s), well under the
+    // 26s Netlify timeout configured below.
     const [
-      bars,
-      spyBars,
-      sectorBars,
-      fund,
-      earnings,
-      upcoming,
-      news,
-      insider,
-      sectorMedianResult,
-      info,
+      barsR,
+      spyBarsR,
+      sectorBarsR,
+      fundR,
+      earningsR,
+      upcomingR,
+      newsR,
+      insiderR,
+      sectorMedianR,
+      infoR,
     ] = await Promise.all([
-      getDailyBars(ticker, from, to).catch(() => [] as Bar[]),
-      getDailyBars(SPY, from, to).catch(() => [] as Bar[]),
-      sectorEtf ? getDailyBars(sectorEtf, from, to).catch(() => [] as Bar[]) : Promise.resolve([] as Bar[]),
-      getFundamentals(ticker).catch(() => null),
-      getEarningsHistory(ticker, 8).catch(() => []),
-      getUpcomingEarnings(ticker, 90).catch(() => null),
-      getNews(ticker, { limit: 5 }).catch(() => []),
-      getInsiderActivity(ticker, 90).catch(() => null),
-      getSectorMedians(sector, { excludeTicker: ticker }).catch(
-        () => ({ medians: {} as SectorMedians, sampleSize: 0, sector, cached: false }),
+      withTimeoutStatus(getDailyBars(ticker, from, to), DEP_TIMEOUTS.bars, [] as Bar[]),
+      withTimeoutStatus(getDailyBars(SPY, from, to), DEP_TIMEOUTS.spyBars, [] as Bar[]),
+      sectorEtf
+        ? withTimeoutStatus(getDailyBars(sectorEtf, from, to), DEP_TIMEOUTS.sectorBars, [] as Bar[])
+        : Promise.resolve({ value: [] as Bar[], timedOut: false, errored: false } as WithTimeoutResult<Bar[]>),
+      withTimeoutStatus(getFundamentals(ticker), DEP_TIMEOUTS.fundamentals, null),
+      withTimeoutStatus(getEarningsHistory(ticker, 8), DEP_TIMEOUTS.earningsHistory, [] as Array<{ date: string; epsActual: number; epsEstimate: number; surprisePct?: number }>),
+      withTimeoutStatus(getUpcomingEarnings(ticker, 90), DEP_TIMEOUTS.upcomingEarnings, null),
+      withTimeoutStatus(getNews(ticker, { limit: 5 }), DEP_TIMEOUTS.news, [] as Array<{ id: string; title: string; description?: string; publishedUtc: string; url: string; tickers: string[]; publisher?: string }>),
+      withTimeoutStatus(getInsiderActivity(ticker, 90), DEP_TIMEOUTS.insider, null),
+      withTimeoutStatus(
+        getSectorMedians(sector, { excludeTicker: ticker }),
+        DEP_TIMEOUTS.sectorMedians,
+        { medians: {} as SectorMedians, sampleSize: 0, sector, cached: false },
       ),
-      getTickerInfo(ticker).catch(() => null),
+      withTimeoutStatus(getTickerInfo(ticker), DEP_TIMEOUTS.tickerInfo, null),
     ]);
+
+    const bars = barsR.value;
+    const spyBars = spyBarsR.value;
+    const sectorBars = sectorBarsR.value;
+    const fund = fundR.value;
+    const earnings = earningsR.value;
+    const upcoming = upcomingR.value;
+    const news = newsR.value;
+    const insider = insiderR.value;
+    const sectorMedianResult = sectorMedianR.value;
+    const info = infoR.value;
+
+    // Collect degraded-section reasons; surfaced at the response-level _reasons.
+    const degraded: Record<string, string> = {};
+    function flagDegraded(key: string, r: WithTimeoutResult<unknown>): void {
+      if (r.timedOut) degraded[key] = `${key}_timeout`;
+      else if (r.errored) degraded[key] = `${key}_error`;
+    }
+    flagDegraded('bars', barsR);
+    flagDegraded('spyBars', spyBarsR);
+    flagDegraded('sectorBars', sectorBarsR);
+    flagDegraded('fundamentals', fundR);
+    flagDegraded('earnings', earningsR);
+    flagDegraded('upcoming', upcomingR);
+    flagDegraded('news', newsR);
+    flagDegraded('insider', insiderR);
+    flagDegraded('sectorMedians', sectorMedianR);
+    flagDegraded('tickerInfo', infoR);
+    if (Object.keys(degraded).length > 0) {
+      log.warn('stock_detail_degraded', { ticker, degraded });
+    }
 
     // Phase 6 PR-D: the quarterly chart series is now a pure transform over
     // the statements bundle that 4w's getFundamentals already returns — no
@@ -294,6 +361,7 @@ export const handler: Handler = async (event) => {
         ...(quarterly.length === 0 ? { _reason: 'quarterly_history_unavailable' } : {}),
       },
       relativeStrength,
+      ...(Object.keys(degraded).length > 0 ? { _degraded: degraded } : {}),
     };
 
     log.info('response', { status: 200, ticker, bars: bars.length, durationMs: Date.now() - start });
