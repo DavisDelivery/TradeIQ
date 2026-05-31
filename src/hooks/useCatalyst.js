@@ -13,7 +13,7 @@ export function useCatalyst(universe, filter, minConviction) {
   };
 
   const query = useQuery({
-    queryKey: queryKeys.catalyst(universe),
+    queryKey: queryKeys.catalyst(universe, filter, minConviction),
     queryFn: async ({ signal }) => {
       const r = await fetchWithRetry(url(false), { signal });
       const json = await r.json();
@@ -28,7 +28,7 @@ export function useCatalyst(universe, filter, minConviction) {
     const json = await r.json();
     if (!r.ok || json.error) throw new Error(json.error || `HTTP ${r.status}`);
     const validated = validate(json, SHAPES.catalyst, 'catalyst');
-    qc.setQueryData(queryKeys.catalyst(universe), validated);
+    qc.setQueryData(queryKeys.catalyst(universe, filter, minConviction), validated);
     return validated;
   };
 

@@ -36,6 +36,20 @@ describe('queryKeys', () => {
     expect(high).not.toBe(med);
   });
 
+  it('catalyst filter + conviction are part of the key', () => {
+    const base = JSON.stringify(queryKeys.catalyst('sp500'));
+    const cluster = JSON.stringify(queryKeys.catalyst('sp500', 'cluster', 'medium'));
+    const clusterHigh = JSON.stringify(queryKeys.catalyst('sp500', 'cluster', 'high'));
+    expect(base).not.toBe(cluster);
+    expect(cluster).not.toBe(clusterHigh);
+  });
+
+  it('insider windowDays is part of the key', () => {
+    const d90 = JSON.stringify(queryKeys.insider('sp500', 90));
+    const d30 = JSON.stringify(queryKeys.insider('sp500', 30));
+    expect(d90).not.toBe(d30);
+  });
+
   it('all keys begin with the tradeiq namespace', () => {
     const samples = [
       queryKeys.targetBoard('sp500'),

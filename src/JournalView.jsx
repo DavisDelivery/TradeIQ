@@ -198,7 +198,7 @@ export const JournalView = () => {
               const errored = errorTickers.has(t.ticker);
               const fwd = bars ? computeForwardReturns(bars, t.loggedAt, t.loggedPrice) : {};
               // SPY benchmark at the same log date, using its own base price at that point
-              const spyFwd = spyBars ? computeForwardReturns(spyBars, t.loggedAt, spyBars.find((b) => new Date(b.date).getTime() >= new Date(t.loggedAt).getTime())?.c ?? spyBars[0].c) : {};
+              const spyFwd = spyBars?.length ? computeForwardReturns(spyBars, t.loggedAt, spyBars.find((b) => new Date(b.date).getTime() >= new Date(t.loggedAt).getTime())?.c ?? spyBars[0]?.c) : {};
               const source = SOURCE_META[t.source] ?? SOURCE_META.chart;
               const SourceIcon = source.icon;
               const isOpen = expandedId === t.id;

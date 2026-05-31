@@ -18,8 +18,10 @@ export const queryKeys = {
   targetBoard: (universe) => ['tradeiq', 'targetBoard', universe],
   prophet: (universe, conviction) =>
     ['tradeiq', 'prophet', universe, conviction ?? 'all'],
-  catalyst: (universe) => ['tradeiq', 'catalyst', universe],
-  insider: (universe) => ['tradeiq', 'insider', universe],
+  catalyst: (universe, filter, minConviction) =>
+    ['tradeiq', 'catalyst', universe, filter ?? 'all', minConviction ?? 'all'],
+  insider: (universe, windowDays) =>
+    ['tradeiq', 'insider', universe, windowDays ?? 90],
   williams: (universe) => ['tradeiq', 'williams', universe],
   lynch: (universe) => ['tradeiq', 'lynch', universe],
   earnings: (windowDays, universe) =>

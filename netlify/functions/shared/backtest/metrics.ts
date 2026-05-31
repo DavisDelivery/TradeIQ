@@ -60,6 +60,11 @@ function maxDrawdown(
   equity: DailyEquityPoint[],
 ): { mdd: number; troughIdx: number; peakIdx: number } {
   let peak = equity[0]?.value ?? 0;
+  let runningPeakIdx = 0;
+  // peakIdx is the peak that PRECEDED the max-drawdown trough — not the
+  // global running peak. Capturing the running peak at the moment the
+  // trough is recorded keeps recoveryDays measuring recovery back to the
+  // pre-drawdown high rather than to a later all-time high.
   let peakIdx = 0;
   let troughIdx = 0;
   let mdd = 0;
@@ -67,12 +72,13 @@ function maxDrawdown(
     const v = equity[i].value;
     if (v > peak) {
       peak = v;
-      peakIdx = i;
+      runningPeakIdx = i;
     }
     const dd = peak > 0 ? (peak - v) / peak : 0;
     if (dd > mdd) {
       mdd = dd;
       troughIdx = i;
+      peakIdx = runningPeakIdx;
     }
   }
   return { mdd, troughIdx, peakIdx };

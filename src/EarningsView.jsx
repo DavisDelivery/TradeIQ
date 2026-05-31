@@ -4,7 +4,7 @@ import { useSortable, SortableTh } from './lib/useSortable.jsx';
 import { FreshnessPill } from './components/FreshnessPill.jsx';
 import { MOCK_EARNINGS } from './lib/mockData.js';
 import { useEarnings } from './hooks/useEarnings.js';
-import { readLog } from './tradeLog.js';
+import { readLog, logTrade } from './tradeLog.js';
 
 const DetailStat = ({ label, value, color }) => (
   <div>
