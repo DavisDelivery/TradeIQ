@@ -110,7 +110,13 @@ export async function fetchRatiosWithStatus(
       { provider: 'polygon', endpoint: 'massive/ratios', ticker },
       { results: [] },
     );
-    return { ...emptyStatus<MassiveRatiosResult>(), data: data.results ?? [] };
+    // Ratios filters by the SINGULAR `ticker` field on the row (sending the
+    // plural `tickers=` param is ignored here and returns the wrong company,
+    // e.g. ?tickers=AVGO → Agilent). Verify identity; drop non-matching rows.
+    // Ratios-alone failure is tolerable (getFundamentals derives the block
+    // from statements), so a mismatch returns empty rather than erroring.
+    const rows = (data.results ?? []).filter((row) => row.ticker === ticker);
+    return { ...emptyStatus<MassiveRatiosResult>(), data: rows };
   } catch (err: unknown) {
     return { data: [], rateLimited: false, rateLimitExhausted: false, errorMessage: err instanceof Error ? err.message : String(err) };
   }
@@ -128,8 +134,14 @@ async function fetchStatementWithStatus<T>(
     const filter = opts.asOfDate
       ? `&filing_date.lte=${encodeURIComponent(opts.asOfDate)}`
       : '';
+    // The three statement endpoints filter by `tickers` (PLURAL). Sending
+    // the singular `ticker` is silently IGNORED — the endpoint then returns
+    // its default unfiltered page (whatever filed most recently), so e.g.
+    // ?ticker=AVGO came back as Deere. (Ratios is the opposite: it filters
+    // by the singular `ticker` and ignores `tickers`.) Each statement row
+    // carries a `tickers: string[]` identity we verify below.
     const url =
-      `${MASSIVE}${endpointPath}?ticker=${encodeURIComponent(ticker)}&timeframe=quarterly&limit=${limit}&sort=period_end.desc${filter}&apiKey=${massiveKey()}`;
+      `${MASSIVE}${endpointPath}?tickers=${encodeURIComponent(ticker)}&timeframe=quarterly&limit=${limit}&sort=period_end.desc${filter}&apiKey=${massiveKey()}`;
     const r = await fetchJson(url);
     if (!r.ok) {
       if (r.status === 429) {
@@ -138,7 +150,27 @@ async function fetchStatementWithStatus<T>(
       return { data: [], rateLimited: false, rateLimitExhausted: false, errorMessage: `${endpointLabel} ${r.status}: ${r.bodyText?.slice(0, 200) ?? ''}` };
     }
     const data = parse(r.body, { provider: 'polygon', endpoint: endpointLabel, ticker });
-    return { ...emptyStatus<T>(), data };
+
+    // W1c discipline — no wrong-company data, no silent universe shrink.
+    // Verify each row's `tickers` identity matches the request. A non-empty
+    // response that matches NOTHING means the filter was ignored (a param
+    // regression), so we must NEVER assemble another company's financials;
+    // surface it as a hard error (the caller's null-on-error path keeps the
+    // ticker out of scoring loudly, instead of silently feeding it the
+    // default page). A legitimately-empty response (no coverage) stays empty.
+    const matched = data.filter((row) => {
+      const t = (row as { tickers?: string[] }).tickers;
+      return Array.isArray(t) && t.includes(ticker);
+    });
+    if (data.length > 0 && matched.length === 0) {
+      return {
+        data: [],
+        rateLimited: false,
+        rateLimitExhausted: false,
+        errorMessage: `${endpointLabel} returned ${data.length} row(s) but none match ${ticker} (tickers filter ignored?)`,
+      };
+    }
+    return { ...emptyStatus<T>(), data: matched };
   } catch (err: unknown) {
     return { data: [], rateLimited: false, rateLimitExhausted: false, errorMessage: err instanceof Error ? err.message : String(err) };
   }

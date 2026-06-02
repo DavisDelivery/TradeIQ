@@ -151,7 +151,8 @@ describe('getFundamentals PIT semantics (Massive Financials)', () => {
     multiMockFetch({ income: { status: 'OK', results: onlyQ4 } });
     // Q4 2023 has filing_date=null but period_end=2023-12-31.
     // Estimated filing ≈ 2024-03-15. So asOfDate=2024-04-01 admits it.
-    const snap = await getFundamentals('FOO', { asOfDate: '2024-04-01' });
+    // (ticker must match the fixture's `tickers` identity for the W1c guard.)
+    const snap = await getFundamentals('NVDA', { asOfDate: '2024-04-01' });
     expect(snap).not.toBeNull();
     expect(snap!.asOf).toBe('2023-12-31');
   });
@@ -160,7 +161,7 @@ describe('getFundamentals PIT semantics (Massive Financials)', () => {
     const onlyQ4 = [incomeRows[3]];
     multiMockFetch({ income: { status: 'OK', results: onlyQ4 } });
     // 2024-02-01 < estimated filing 2024-03-15 → dropped.
-    const snap = await getFundamentals('FOO', { asOfDate: '2024-02-01' });
+    const snap = await getFundamentals('NVDA', { asOfDate: '2024-02-01' });
     expect(snap).toBeNull();
   });
 
