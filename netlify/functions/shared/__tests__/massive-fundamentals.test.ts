@@ -89,6 +89,55 @@ describe('Massive WithStatus fetch helpers', () => {
     expect(seen[2]).toMatch(/cash-flow-statements\?.*filing_date\.lte=2019-03-31/);
     expect(seen.every((u) => u.includes('timeframe=quarterly'))).toBe(true);
     expect(seen.every((u) => u.includes('sort=period_end.desc'))).toBe(true);
+    // Regression — the statement endpoints filter by `tickers` (PLURAL).
+    // Sending the singular `ticker` is silently ignored and returns the
+    // default page (the AVGO→Deere bug). Pin the plural param and assert the
+    // singular form never appears.
+    expect(seen.every((u) => /[?&]tickers=AAPL/.test(u))).toBe(true);
+    expect(seen.some((u) => /[?&]ticker=AAPL/.test(u))).toBe(false);
+  });
+
+  it('GUARD: keeps only statement rows whose `tickers` includes the request', async () => {
+    globalThis.fetch = vi.fn(async () =>
+      jsonRes({
+        status: 'OK',
+        results: [
+          { tickers: ['AVGO'], revenue: 19311000000, period_end: '2026-02-01' },
+          { tickers: ['DE', 'DEw'], revenue: 13369000000, period_end: '2026-05-03' },
+        ],
+      }),
+    ) as any;
+    const r = await fetchIncomeStatementsWithStatus('AVGO');
+    expect(r.errorMessage).toBeUndefined();
+    expect(r.data).toHaveLength(1);
+    expect(r.data[0].revenue).toBe(19311000000);
+  });
+
+  it('GUARD: a non-empty response that matches NOTHING is a hard error, not silent data', async () => {
+    // The AVGO→Deere signature: rows returned, none belong to the request.
+    globalThis.fetch = vi.fn(async () =>
+      jsonRes({ status: 'OK', results: [{ tickers: ['DE', 'DEw'], revenue: 13369000000 }] }),
+    ) as any;
+    const r = await fetchIncomeStatementsWithStatus('AVGO');
+    expect(r.data).toEqual([]);
+    expect(r.errorMessage).toMatch(/none match AVGO/);
+  });
+
+  it('GUARD: a legitimately-empty response stays empty (no error)', async () => {
+    globalThis.fetch = vi.fn(async () => jsonRes({ status: 'OK', results: [] })) as any;
+    const r = await fetchBalanceSheetsWithStatus('AVGO');
+    expect(r.data).toEqual([]);
+    expect(r.errorMessage).toBeUndefined();
+  });
+
+  it('GUARD: ratios filters by the singular `ticker` field, dropping a mismatch', async () => {
+    // ?tickers= is ignored by ratios and returns the wrong company (→ "A");
+    // the row-identity filter drops it rather than mis-attributing ratios.
+    globalThis.fetch = vi.fn(async () =>
+      jsonRes({ status: 'OK', results: [{ ticker: 'A', price_to_earnings: 27.14 }] }),
+    ) as any;
+    const r = await fetchRatiosWithStatus('AVGO');
+    expect(r.data).toEqual([]);
   });
 
   it('surfaces a 429 as rateLimitExhausted (no data, no errorMessage)', async () => {
