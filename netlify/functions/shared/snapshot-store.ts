@@ -97,9 +97,17 @@ export interface BoardSnapshot {
 // next 23.5 hours would fall into the inline-live-scan path and
 // produce the 25-second hang. 26h gives a safe margin past 7pm next
 // day and keeps the snapshot "fresh" for the entire inter-scan gap.
+// Phase 6 PR-H follow-up: prophet widened from 30 min → 26 hours for the
+// same reason. PR-H moved the largecap scan to a once-daily after-close
+// run (22:00 UTC weekdays); a 30-min budget marked that snapshot stale ~23h
+// of the day, so every largecap read fell into the live `fallback-partial`
+// scan — slow (~30s on the 508-name universe, riding the 26s ceiling) and
+// returning a handful of partial picks instead of the full warm snapshot.
+// 26h keeps the daily snapshot fresh to the next scan. Russell still scans
+// every 30 min in market hours, so this only relaxes its overnight window.
 export const FRESHNESS_BUDGETS_MS: Record<BoardName, number> = {
   'target-board': 26 * 60 * 60_000,
-  prophet: 30 * 60_000,
+  prophet: 26 * 60 * 60_000,
   catalyst: 30 * 60_000,
   williams: 30 * 60_000,
   earnings: 12 * 60 * 60_000,
