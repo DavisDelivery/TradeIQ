@@ -1,4 +1,4 @@
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
 import { queryKeys } from '../lib/queryKeys.js';
 import { validate, SHAPES, fetchWithRetry } from '../lib/validateResponse.js';
 
@@ -50,25 +50,28 @@ async function fetchProphet(url, signal) {
 }
 
 export function useProphet(universe, minConviction) {
-  const qc = useQueryClient();
-  const url = (force = false) => {
+  const url = () => {
     const qs = new URLSearchParams({ universe, limit: '30' });
     if (minConviction) qs.set('minConviction', minConviction);
-    if (force) qs.set('force', '1');
     return `/api/prophet-picks?${qs.toString()}`;
   };
 
   const query = useQuery({
     queryKey: queryKeys.prophet(universe, minConviction),
-    queryFn: ({ signal }) => fetchProphet(url(false), signal),
+    queryFn: ({ signal }) => fetchProphet(url(), signal),
     staleTime: 60_000,
   });
 
-  const forceRescan = async () => {
-    const validated = await fetchProphet(url(true), undefined);
-    qc.setQueryData(queryKeys.prophet(universe, minConviction), validated);
-    return validated;
-  };
+  // "Force Rescan" in the snapshot-first model = re-read the authoritative
+  // latest snapshot, NOT a live `force=1` scan. A forced live scan is slower
+  // than the snapshot (~30s, riding the 26s function ceiling → intermittent
+  // 504), returns FEWER picks (partial: it only reaches a fraction of the
+  // 508/1928 universe before the budget), and bypasses the query lifecycle
+  // so the UI shows no spinner and swallows errors — the exact behavior
+  // PR-H removed. `refetch()` re-reads the snapshot and drives `isFetching`
+  // + `error` correctly. Fresh scans come from the 22:00 cron / background
+  // trigger, which is the only path that can scan the full universe.
+  const forceRescan = () => query.refetch();
 
   return { ...query, forceRescan };
 }

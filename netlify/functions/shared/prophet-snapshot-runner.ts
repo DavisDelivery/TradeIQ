@@ -64,7 +64,13 @@ export async function runProphetSnapshot(
     const scan = await runProphetScan({
       universe: opts.universe,
       scanBudgetMs: opts.scanBudgetMs ?? DEFAULT_PROPHET_SCAN_BUDGET_MS,
-      concurrency: opts.concurrency ?? 7,
+      // Largecap is now the full S&P 500 ∪ Nasdaq-100 ∪ Dow union (~508
+      // names, up from a curated 208). At concurrency 7 a 508-ticker scan
+      // ran ~16 min — past the 14-min budget → it would land `partial` and
+      // never promote. 12 brings it to ~10 min with margin. The partial-safe
+      // write guard still protects prod if a future universe growth ever
+      // pushes it back over budget.
+      concurrency: opts.concurrency ?? 12,
       sufficientQualified: Infinity,
       logger: log,
     });
