@@ -103,9 +103,9 @@ export const ProphetView = () => {
             {data.partial && <span className="text-amber-500">· partial</span>}
             {data.stale && <span className="text-amber-500">· stale fallback</span>}
           </div>
-          <button onClick={() => forceRescan()} disabled={loading} className="flex items-center gap-1 text-neutral-500 hover:text-neutral-300 transition-colors">
-            <RefreshCw className={`h-3 w-3 ${loading ? 'animate-spin' : ''}`} />
-            {loading ? 'scanning…' : 'refresh'}
+          <button onClick={() => forceRescan()} disabled={isFetching} className="flex items-center gap-1 text-neutral-500 hover:text-neutral-300 transition-colors disabled:opacity-60">
+            <RefreshCw className={`h-3 w-3 ${isFetching ? 'animate-spin' : ''}`} />
+            {isFetching ? 'refreshing…' : 'refresh'}
           </button>
         </div>
       )}
