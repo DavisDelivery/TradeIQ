@@ -54,7 +54,7 @@ export const handler: Handler = async (event) => {
           ageMs,
           modelVersion: snap.modelVersion,
           universeSize: snap.universeChecked,
-          scanned: all.length,
+          scanned: snap.originalResultCount ?? all.length,
           scored: all.length,
           count: Math.min(limit, filtered.length),
           candidates: filtered.slice(0, limit),
