@@ -355,13 +355,24 @@ export async function writeSnapshot(
   const db = getAdminDb();
   const snapshotId = snapshotIdFor(universe, new Date(snapshot.generatedAt));
 
+  // Phase 6 PR-H follow-up — centralized size-safety trim. Firestore rejects
+  // any document over 1 MiB and the whole write throws (the insider sp500
+  // scan over the 503-name universe assembled a 2.97 MB doc and failed).
+  // Previously only the russell2k workers called trimResultsForDocLimit;
+  // applying it here protects EVERY board+universe as the universe grows.
+  // Idempotent — a caller that already trimmed passes through unchanged.
+  const trim = trimResultsForDocLimit(snapshot.results);
+  const safeSnapshot: BoardSnapshot = trim.truncated
+    ? { ...snapshot, results: trim.results, truncated: true, originalResultCount: trim.originalCount }
+    : snapshot;
+
   // Phase 6 PR-H — partial-safe write. A snapshot with status:'partial'
   // (scan ran out of budget, results incomplete) is persisted to runs/
   // for diagnostics but does NOT promote into _latest/ — the prior good
   // complete snapshot stays canonical. Without this guard, the brief's
   // hard-stop "NEVER overwrite a good complete snapshot with a failed/
   // empty one" would be violable by a single bad scheduled run.
-  const isPartial = snapshot.status === 'partial';
+  const isPartial = safeSnapshot.status === 'partial';
 
   const runDoc = db.collection('boardSnapshots').doc(board).collection('runs').doc(snapshotId);
   const latestDoc = db
@@ -372,7 +383,7 @@ export async function writeSnapshot(
 
   await db.runTransaction(async (tx) => {
     tx.set(runDoc, {
-      ...snapshot,
+      ...safeSnapshot,
       universe,
       board,
       writtenAt: Timestamp.now(),
@@ -380,10 +391,10 @@ export async function writeSnapshot(
     if (!isPartial) {
       tx.set(latestDoc, {
         snapshotId,
-        generatedAt: snapshot.generatedAt,
-        modelVersion: snapshot.modelVersion,
-        universeChecked: snapshot.universeChecked,
-        resultsCount: snapshot.results.length,
+        generatedAt: safeSnapshot.generatedAt,
+        modelVersion: safeSnapshot.modelVersion,
+        universeChecked: safeSnapshot.universeChecked,
+        resultsCount: safeSnapshot.results.length,
         writtenAt: Timestamp.now(),
       });
     }

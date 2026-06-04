@@ -102,7 +102,7 @@ export const handler: Handler = async (event) => {
       ageMs,
       modelVersion: snap.modelVersion,
       universeSize: snap.universeChecked,
-      tickersScanned: results.length,
+      tickersScanned: snap.originalResultCount ?? results.length,
       warnings: snap.warnings ?? [],
     });
   }
@@ -129,7 +129,7 @@ export const handler: Handler = async (event) => {
         ageMs: snapshotAgeMs(snap),
         modelVersion: snap.modelVersion,
         universeSize: snap.universeChecked,
-        tickersScanned: results.length,
+        tickersScanned: snap.originalResultCount ?? results.length,
         warnings: snap.warnings ?? [],
         warning: `snapshot is older than the freshness budget (${Math.round(
           snapshotAgeMs(snap) / 60_000,
@@ -209,7 +209,7 @@ function serveSnapshotOrEmpty(
       ageMs,
       modelVersion: snap.modelVersion,
       universeSize: snap.universeChecked,
-      tickersScanned: results.length,
+      tickersScanned: snap.originalResultCount ?? results.length,
       warnings: snap.warnings ?? [],
     });
   })();
