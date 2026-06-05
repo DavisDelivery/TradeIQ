@@ -108,8 +108,13 @@ export interface BoardSnapshot {
 export const FRESHNESS_BUDGETS_MS: Record<BoardName, number> = {
   'target-board': 26 * 60 * 60_000,
   prophet: 26 * 60 * 60_000,
-  catalyst: 30 * 60_000,
-  williams: 30 * 60_000,
+  // catalyst + williams scan every 30 min in market hours but NOT off-hours;
+  // a 30-min budget marked them stale overnight/weekends → every read fell
+  // into a live `fallback-partial` scan that only reaches a fraction of the
+  // 1928-name Russell universe (~200) before its budget. 26h serves the last
+  // full market-hours snapshot off-hours instead (same fix as target/prophet).
+  catalyst: 26 * 60 * 60_000,
+  williams: 26 * 60 * 60_000,
   earnings: 12 * 60 * 60_000,
   insider: 24 * 60 * 60_000,
   lynch: 24 * 60 * 60_000,
