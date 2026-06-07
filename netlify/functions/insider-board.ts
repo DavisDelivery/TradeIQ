@@ -39,6 +39,45 @@ const AGGREGATE_UNIVERSES: UniverseKey[] = ['sp500', 'ndx', 'dow', 'russell2k'];
 const fallbackCache = new Map<string, { data: any; at: number }>();
 const FALLBACK_CACHE_TTL_MS = 30 * 60 * 1000; // daily-cadence board
 
+// Large single universes NEVER inline-scan (mirrors target-board Phase 4h /
+// the index=all aggregate path): serve the latest snapshot, stale-flagged
+// when past the freshness budget, instead of a capped live scan that only
+// reaches ~80 of the universe.
+const SNAPSHOT_ONLY_UNIVERSES = new Set<UniverseKey>(['russell2k', 'sp500']);
+
+function insiderSnapshotResponse(
+  snap: any,
+  windowDays: number,
+  limit: number,
+  source: 'snapshot' | 'snapshot-stale',
+  ageMs: number,
+  stale: boolean,
+) {
+  const allRows = snap.results as InsiderBoardRow[];
+  const windowed =
+    windowDays === INSIDER_SCHEDULED_WINDOW_DAYS
+      ? allRows
+      : filterRowsToWindow(allRows, windowDays);
+  return json(200, {
+    rows: windowed.slice(0, limit),
+    universeChecked: snap.universeChecked,
+    windowDays,
+    generatedAt: snap.generatedAt,
+    cached: true,
+    ...(stale ? { stale: true } : {}),
+    source,
+    ageMs,
+    modelVersion: snap.modelVersion,
+    ...(stale
+      ? {
+          warning: `snapshot is older than the freshness budget (${Math.round(
+            ageMs / 60_000,
+          )} min); next scheduled scan will refresh it`,
+        }
+      : {}),
+  });
+}
+
 export const handler: Handler = async (event) => {
   const qs = event.queryStringParameters ?? {};
   const rawDays = Number(qs.days);
@@ -55,39 +94,41 @@ export const handler: Handler = async (event) => {
   const snapshotUniverse: UniverseKey | null =
     indexFilter === 'all' ? null : (indexFilter as UniverseKey);
 
-  if (!force && snapshotUniverse) {
+  let snap: any = null;
+  if (snapshotUniverse) {
     try {
-      const snap = await latestSnapshot('insider', snapshotUniverse);
-      if (snap && isSnapshotFresh(snap)) {
-        const ageMs = snapshotAgeMs(snap);
-        log.info('snapshot_hit', { ageMs, modelVersion: snap.modelVersion });
-        const allRows = snap.results as InsiderBoardRow[];
-        const windowed =
-          windowDays === INSIDER_SCHEDULED_WINDOW_DAYS
-            ? allRows
-            : filterRowsToWindow(allRows, windowDays);
-        const trimmed = windowed.slice(0, limit);
-        const response: InsiderBoardResponse & {
-          source: string;
-          ageMs: number;
-          modelVersion: string;
-        } = {
-          rows: trimmed,
-          universeChecked: snap.universeChecked,
-          windowDays,
-          generatedAt: snap.generatedAt,
-          cached: true,
-          source: 'snapshot',
-          ageMs,
-          modelVersion: snap.modelVersion,
-        };
-        return json(200, response);
-      }
-      if (snap) log.warn('snapshot_stale', { ageMs: snapshotAgeMs(snap) });
-      else log.warn('snapshot_missing');
+      snap = await latestSnapshot('insider', snapshotUniverse);
     } catch (err: any) {
       log.error('snapshot_read_failed', { err: String(err?.message ?? err) });
+      snap = null;
     }
+  }
+
+  if (snap && !force && isSnapshotFresh(snap)) {
+    const ageMs = snapshotAgeMs(snap);
+    log.info('snapshot_hit', { ageMs, modelVersion: snap.modelVersion });
+    return insiderSnapshotResponse(snap, windowDays, limit, 'snapshot', ageMs, false);
+  }
+
+  // Large single universes: never live-scan — serve the snapshot (stale-flagged) or empty.
+  if (snapshotUniverse && SNAPSHOT_ONLY_UNIVERSES.has(snapshotUniverse)) {
+    if (snap) {
+      const ageMs = snapshotAgeMs(snap);
+      log.warn('snapshot_stale_serving_stale', { ageMs });
+      return insiderSnapshotResponse(snap, windowDays, limit, 'snapshot-stale', ageMs, true);
+    }
+    log.warn('snapshot_missing_no_inline_scan', { universe: snapshotUniverse });
+    return json(200, {
+      rows: [],
+      universeChecked: 0,
+      windowDays,
+      generatedAt: new Date().toISOString(),
+      cached: false,
+      source: 'snapshot-missing',
+      ageMs: 0,
+      modelVersion: MODEL_VERSION,
+      warning: 'no snapshot built yet for this universe; next scheduled scan will populate it',
+    });
   }
 
   // `index=all` — snapshot-aggregate path (Phase 4l W1). `force=1` skips

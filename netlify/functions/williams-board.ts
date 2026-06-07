@@ -22,6 +22,49 @@ const LIVE_SCAN_CAP = 200;
 const fallbackCache = new Map<string, { data: any; at: number }>();
 const FALLBACK_CACHE_TTL_MS = 5 * 60 * 1000;
 
+// Large universes NEVER inline-scan (mirrors target-board Phase 4h): a live
+// partial scan only reaches ~200 of the 1928-name Russell before its budget
+// and mislabels coverage. These always serve the latest snapshot, stale-
+// flagged when past the freshness budget (e.g. a weekday-only scan over a
+// weekend), instead of falling into runLiveAndRespond.
+const SNAPSHOT_ONLY_UNIVERSES = new Set<UniverseKey>(['russell2k', 'sp500']);
+
+function williamsSnapshotResponse(
+  snap: any,
+  indexFilter: WilliamsUniverseKey,
+  side: 'long' | 'short' | 'both',
+  limit: number,
+  source: 'snapshot' | 'snapshot-stale',
+  ageMs: number,
+  stale: boolean,
+) {
+  const all = snap.results as any[];
+  const filtered = side === 'both' ? all : all.filter((r) => r.side === side);
+  return json(200, {
+    ok: true,
+    index: indexFilter,
+    side,
+    generatedAt: snap.generatedAt,
+    source,
+    cached: true,
+    ...(stale ? { stale: true } : {}),
+    ageMs,
+    modelVersion: snap.modelVersion,
+    universeSize: snap.universeChecked,
+    scanned: snap.universeChecked ?? all.length,
+    scored: all.length,
+    count: Math.min(limit, filtered.length),
+    candidates: filtered.slice(0, limit),
+    ...(stale
+      ? {
+          warning: `snapshot is older than the freshness budget (${Math.round(
+            ageMs / 60_000,
+          )} min); next scheduled scan will refresh it`,
+        }
+      : {}),
+  });
+}
+
 export const handler: Handler = async (event) => {
   const qs = event.queryStringParameters ?? {};
   const indexFilter = (qs.index as WilliamsUniverseKey) ?? 'all';
@@ -32,39 +75,50 @@ export const handler: Handler = async (event) => {
   const log = logger.child({ fn: 'williams-board', index: indexFilter, force });
 
   // 'all' isn't a valid snapshot universe key; only board-specific indexes are.
-  // For 'all' or invalid index, just run the live scan path.
   const snapshotUniverse: UniverseKey | null =
     indexFilter === 'all' ? null : (indexFilter as UniverseKey);
 
-  if (!force && snapshotUniverse) {
+  let snap: any = null;
+  if (snapshotUniverse) {
     try {
-      const snap = await latestSnapshot('williams', snapshotUniverse);
-      if (snap && isSnapshotFresh(snap)) {
-        const ageMs = snapshotAgeMs(snap);
-        log.info('snapshot_hit', { ageMs, modelVersion: snap.modelVersion });
-        const all = snap.results as any[];
-        const filtered = side === 'both' ? all : all.filter((r) => r.side === side);
-        return json(200, {
-          ok: true,
-          index: indexFilter,
-          side,
-          generatedAt: snap.generatedAt,
-          source: 'snapshot',
-          cached: true,
-          ageMs,
-          modelVersion: snap.modelVersion,
-          universeSize: snap.universeChecked,
-          scanned: snap.universeChecked ?? all.length,
-          scored: all.length,
-          count: Math.min(limit, filtered.length),
-          candidates: filtered.slice(0, limit),
-        });
-      }
-      if (snap) log.warn('snapshot_stale', { ageMs: snapshotAgeMs(snap) });
-      else log.warn('snapshot_missing');
+      snap = await latestSnapshot('williams', snapshotUniverse);
     } catch (err: any) {
       log.error('snapshot_read_failed', { err: String(err?.message ?? err) });
+      snap = null;
     }
+  }
+
+  // Fresh snapshot (non-forced).
+  if (snap && !force && isSnapshotFresh(snap)) {
+    const ageMs = snapshotAgeMs(snap);
+    log.info('snapshot_hit', { ageMs, modelVersion: snap.modelVersion });
+    return williamsSnapshotResponse(snap, indexFilter, side, limit, 'snapshot', ageMs, false);
+  }
+
+  // Large universes: never live-scan — serve the snapshot (stale-flagged) or empty.
+  if (snapshotUniverse && SNAPSHOT_ONLY_UNIVERSES.has(snapshotUniverse)) {
+    if (snap) {
+      const ageMs = snapshotAgeMs(snap);
+      log.warn('snapshot_stale_serving_stale', { ageMs });
+      return williamsSnapshotResponse(snap, indexFilter, side, limit, 'snapshot-stale', ageMs, true);
+    }
+    log.warn('snapshot_missing_no_inline_scan', { universe: snapshotUniverse });
+    return json(200, {
+      ok: true,
+      index: indexFilter,
+      side,
+      generatedAt: new Date().toISOString(),
+      source: 'snapshot-missing',
+      cached: false,
+      ageMs: 0,
+      modelVersion: MODEL_VERSION,
+      universeSize: 0,
+      scanned: 0,
+      scored: 0,
+      count: 0,
+      candidates: [],
+      warning: 'no snapshot built yet for this universe; next scheduled scan will populate it',
+    });
   }
 
   return runLiveAndRespond(indexFilter, side, limit, force ? 'forced-partial' : 'fallback-partial', log);

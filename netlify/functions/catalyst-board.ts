@@ -34,6 +34,45 @@ const LIVE_SCAN_CAP = 100;
 const fallbackCache = new Map<string, { data: any; at: number }>();
 const FALLBACK_CACHE_TTL_MS = 5 * 60 * 1000;
 
+// Large universes NEVER inline-scan (mirrors target-board Phase 4h) — they
+// serve the latest snapshot, stale-flagged when past the freshness budget,
+// instead of a live partial scan that only reaches a fraction of the universe.
+const SNAPSHOT_ONLY_UNIVERSES = new Set<UniverseKey>(['russell2k', 'sp500']);
+
+function catalystSnapshotResponse(
+  snap: any,
+  filter: Filter,
+  minConviction: MinConviction,
+  limit: number,
+  source: 'snapshot' | 'snapshot-stale',
+  ageMs: number,
+  stale: boolean,
+) {
+  const all = snap.results as CatalystPick[];
+  const filtered = filterCatalystPicks(all, filter, minConviction);
+  return json(200, {
+    ok: true,
+    picks: filtered.slice(0, limit),
+    universeChecked: snap.universeChecked,
+    matched: filtered.length,
+    filter,
+    minConviction,
+    cached: true,
+    ...(stale ? { stale: true } : {}),
+    generatedAt: snap.generatedAt,
+    source,
+    ageMs,
+    modelVersion: snap.modelVersion,
+    ...(stale
+      ? {
+          warning: `snapshot is older than the freshness budget (${Math.round(
+            ageMs / 60_000,
+          )} min); next scheduled scan will refresh it`,
+        }
+      : {}),
+  });
+}
+
 export const handler: Handler = async (event) => {
   const qs = event.queryStringParameters ?? {};
   const indexFilter = (qs.index as CatalystUniverseKey) ?? 'all';
@@ -53,33 +92,43 @@ export const handler: Handler = async (event) => {
   const snapshotUniverse: UniverseKey | null =
     indexFilter === 'all' ? null : (indexFilter as UniverseKey);
 
-  if (!force && snapshotUniverse) {
+  let snap: any = null;
+  if (snapshotUniverse) {
     try {
-      const snap = await latestSnapshot('catalyst', snapshotUniverse);
-      if (snap && isSnapshotFresh(snap)) {
-        const ageMs = snapshotAgeMs(snap);
-        log.info('snapshot_hit', { ageMs, modelVersion: snap.modelVersion });
-        const all = snap.results as CatalystPick[];
-        const filtered = filterCatalystPicks(all, filter, minConviction);
-        return json(200, {
-          ok: true,
-          picks: filtered.slice(0, limit),
-          universeChecked: snap.universeChecked,
-          matched: filtered.length,
-          filter,
-          minConviction,
-          cached: true,
-          generatedAt: snap.generatedAt,
-          source: 'snapshot',
-          ageMs,
-          modelVersion: snap.modelVersion,
-        });
-      }
-      if (snap) log.warn('snapshot_stale', { ageMs: snapshotAgeMs(snap) });
-      else log.warn('snapshot_missing');
+      snap = await latestSnapshot('catalyst', snapshotUniverse);
     } catch (err: any) {
       log.error('snapshot_read_failed', { err: String(err?.message ?? err) });
+      snap = null;
     }
+  }
+
+  if (snap && !force && isSnapshotFresh(snap)) {
+    const ageMs = snapshotAgeMs(snap);
+    log.info('snapshot_hit', { ageMs, modelVersion: snap.modelVersion });
+    return catalystSnapshotResponse(snap, filter, minConviction, limit, 'snapshot', ageMs, false);
+  }
+
+  if (snapshotUniverse && SNAPSHOT_ONLY_UNIVERSES.has(snapshotUniverse)) {
+    if (snap) {
+      const ageMs = snapshotAgeMs(snap);
+      log.warn('snapshot_stale_serving_stale', { ageMs });
+      return catalystSnapshotResponse(snap, filter, minConviction, limit, 'snapshot-stale', ageMs, true);
+    }
+    log.warn('snapshot_missing_no_inline_scan', { universe: snapshotUniverse });
+    return json(200, {
+      ok: true,
+      picks: [],
+      universeChecked: 0,
+      matched: 0,
+      filter,
+      minConviction,
+      cached: false,
+      generatedAt: new Date().toISOString(),
+      source: 'snapshot-missing',
+      ageMs: 0,
+      modelVersion: MODEL_VERSION,
+      warning: 'no snapshot built yet for this universe; next scheduled scan will populate it',
+    });
   }
 
   return runLiveAndRespond(
