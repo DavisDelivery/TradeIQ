@@ -442,7 +442,17 @@ export function snapshotAgeMs(snapshot: BoardSnapshot, now: number = Date.now())
 }
 
 export function isSnapshotFresh(snapshot: BoardSnapshot, now: number = Date.now()): boolean {
-  return snapshotAgeMs(snapshot, now) < snapshot.freshnessBudgetMs;
+  // Prefer the CURRENT per-board freshness budget over the value baked into
+  // the snapshot doc at write time. Without this, a freshness-budget change
+  // (e.g. widening williams/catalyst 30min → 26h) only takes effect once
+  // every snapshot is rewritten — so an existing snapshot keeps falling into
+  // the live `fallback-partial` path until the next scheduled scan (which on
+  // a weekend is days away). The stored value is the fallback for any
+  // snapshot that doesn't carry its board (older docs / tests).
+  const board = (snapshot as BoardSnapshot & { board?: BoardName }).board;
+  const budget =
+    (board && FRESHNESS_BUDGETS_MS[board]) ?? snapshot.freshnessBudgetMs;
+  return snapshotAgeMs(snapshot, now) < budget;
 }
 
 /**
