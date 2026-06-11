@@ -16,19 +16,32 @@ export function runTechnical(bars: Bar[]): AnalystOutput {
   const roc20 = pct(closes, 20);
   const roc60 = pct(closes, 60);
   const bb = bollinger(closes, 20, 2);
-  const bbPos = bb ? (latest - bb.mid) / (bb.upper - bb.mid) : 0;
+  // Flat tape (σ=0) makes (upper − mid) zero — treat as neutral (at the
+  // mid) instead of letting 0/0 = NaN leak into the score/signals.
+  const bbPos = bb && bb.upper > bb.mid ? (latest - bb.mid) / (bb.upper - bb.mid) : 0;
 
   const avgVol20 = avg(vols.slice(-20));
   const recentVol5 = avg(vols.slice(-5));
   const volRatio = avgVol20 > 0 ? recentVol5 / avgVol20 : 1;
 
+  // Each EMA comparison only scores when both sides exist. The standard
+  // 220-calendar-day fetch yields ~150 trading bars, so ema200 is null on
+  // every live scan — the old `xs.at(-1)` fallback degraded ema200 to the
+  // latest close and sign-inverted the trend term (CR-4): `ema50 > ema200`
+  // became `ema50 > price`, +10 when price was BELOW its 50-EMA.
   let raw = 0;
-  if (latest > ema20) raw += 15;
-  else raw -= 15;
-  if (ema20 > ema50) raw += 10;
-  else raw -= 10;
-  if (ema50 > ema200) raw += 10;
-  else raw -= 10;
+  if (ema20 !== null) {
+    if (latest > ema20) raw += 15;
+    else raw -= 15;
+  }
+  if (ema20 !== null && ema50 !== null) {
+    if (ema20 > ema50) raw += 10;
+    else raw -= 10;
+  }
+  if (ema50 !== null && ema200 !== null) {
+    if (ema50 > ema200) raw += 10;
+    else raw -= 10;
+  }
   raw += clamp(roc20 * 150, -20, 20);
   raw += clamp(roc60 * 50, -10, 10);
   if (Math.abs(bbPos) > 0.9) raw -= Math.sign(bbPos) * 8;
@@ -40,8 +53,10 @@ export function runTechnical(bars: Bar[]): AnalystOutput {
   const score = Math.round(50 + raw / 2);
 
   const parts: string[] = [];
-  if (latest > ema20 && ema20 > ema50 && ema50 > ema200) parts.push('uptrend intact');
-  else if (latest < ema20 && ema20 < ema50) parts.push('downtrend');
+  // Trend rationale requires every EMA in the chain — no claim either way
+  // when ema200 (or any shorter EMA) is unavailable.
+  if (ema20 !== null && ema50 !== null && ema200 !== null && latest > ema20 && ema20 > ema50 && ema50 > ema200) parts.push('uptrend intact');
+  else if (ema20 !== null && ema50 !== null && latest < ema20 && ema20 < ema50) parts.push('downtrend');
   if (Math.abs(roc20) > 0.05) parts.push(`${roc20 > 0 ? '+' : ''}${(roc20 * 100).toFixed(1)}% 20d`);
   if (bbPos > 0.9) parts.push('stretched upper band');
   else if (bbPos < -0.9) parts.push('oversold lower band');
@@ -64,8 +79,11 @@ export function runTechnical(bars: Bar[]): AnalystOutput {
   };
 }
 
-function ema(xs: number[], period: number): number {
-  if (xs.length < period) return xs.at(-1) ?? 0;
+// Returns null when there aren't enough bars for the period — callers skip
+// the term. (The old fallback to `xs.at(-1)` silently substituted the latest
+// close for ema200 on every live scan — see CR-4 in the trend-term block.)
+function ema(xs: number[], period: number): number | null {
+  if (xs.length < period) return null;
   const k = 2 / (period + 1);
   let e = avg(xs.slice(0, period));
   for (let i = period; i < xs.length; i++) e = xs[i] * k + e * (1 - k);
@@ -84,4 +102,4 @@ function bollinger(xs: number[], p: number, m: number) {
 }
 function avg(xs: number[]): number { return xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0; }
 function clamp(x: number, lo: number, hi: number): number { return Math.max(lo, Math.min(hi, x)); }
-function round(x: number): number { return +x.toFixed(2); }
+function round(x: number | null): number | null { return x === null ? null : +x.toFixed(2); }
