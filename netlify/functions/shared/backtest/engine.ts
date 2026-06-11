@@ -321,6 +321,10 @@ export async function runBacktest(
     let tickerFailureTotal = 0;
     let tickerAttemptTotal = 0;
     const FAILURE_SAMPLE_CAP = 20;
+    // CR-2 — candidates scored for pool tickers outside the current
+    // universe seed (delisted/acquired historical members). Counted so
+    // the run surfaces how much of the result comes from non-survivors.
+    let scoredOutsideUniverseTotal = 0;
 
     // Pre-fetch benchmark bars once
     const benchTicker = BENCHMARK_BY_UNIVERSE[config.universe];
@@ -385,12 +389,13 @@ export async function runBacktest(
               config.board !== 'prophet' &&
               config.board !== 'williams' &&
               config.board !== 'lynch' &&
+              config.board !== 'target' &&
               !nonProphetBoardWarned
             ) {
               nonProphetBoardWarned = true;
               warnings.push(
                 `Board "${config.board}" has no PIT scoring path; ` +
-                  `prophet/williams/lynch are the supported boards. All candidates null.`,
+                  `prophet/williams/lynch/target are the supported boards. All candidates null.`,
               );
             }
             if (result) scored.push(result);
@@ -426,6 +431,12 @@ export async function runBacktest(
             `(sample: ${rebalanceFailures.slice(0, 3).map((f) => `${f.ticker}: ${f.message.slice(0, 80)}`).join('; ')})`,
         );
       }
+
+      // CR-2 metric: how many of this rebalance's candidates came from
+      // outside the current universe seed (scored with degraded metadata).
+      scoredOutsideUniverseTotal += scored.filter(
+        (c) => c.metadata?.outsideCurrentUniverse === true,
+      ).length;
 
       // 4. Portfolio target
       const target = buildPortfolio(scored, config.portfolio);
@@ -607,6 +618,17 @@ export async function runBacktest(
       );
     }
 
+    // CR-2 — informational: non-zero means the survivorship correction is
+    // actually reaching non-survivors (scored with degraded name/sector).
+    if (scoredOutsideUniverseTotal > 0) {
+      warnings.push(
+        `${scoredOutsideUniverseTotal} candidate scores came from tickers outside the ` +
+          `current universe seed (historical index members, e.g. delisted/acquired ` +
+          `names). These score with degraded name/sector metadata — see ` +
+          `score-at-date.ts (CR-2).`,
+      );
+    }
+
     const metrics = computeMetrics({
       dailyEquity,
       trades,
@@ -637,6 +659,7 @@ export async function runBacktest(
         failureRatePct: +(failureRate * 100).toFixed(2),
         sample: tickerFailureSample,
       },
+      scoredOutsideCurrentUniverse: scoredOutsideUniverseTotal,
       completedAt: new Date().toISOString(),
       benchmark: {
         ticker: benchTicker,

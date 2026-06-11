@@ -87,6 +87,13 @@ export interface RegularBacktestState {
   warningRowCount: number;
   /** Sticky flag: did we already warn about survivorship for this run? */
   survivorshipWarned: boolean;
+  /**
+   * CR-2 — cumulative count of candidates scored for pool tickers outside
+   * the current universe seed (delisted/acquired historical members).
+   * Optional with `?? 0` defaulting on resume: cursors persisted before
+   * the fix predate the field.
+   */
+  scoredOutsideUniverseTotal?: number;
 }
 
 export interface ProcessBatchOptions {
@@ -158,6 +165,7 @@ export function initialRegularState(
     attributionRowCount: 0,
     warningRowCount: 0,
     survivorshipWarned: false,
+    scoredOutsideUniverseTotal: 0,
   };
 }
 
@@ -224,6 +232,8 @@ export async function processRegularBatch(
     ...opts.state,
     portfolio: opts.state.portfolio.map((p) => ({ ...p })),
     tickerFailureSample: opts.state.tickerFailureSample.slice(),
+    // Cursors persisted before the CR-2 fix lack the counter — default it.
+    scoredOutsideUniverseTotal: opts.state.scoredOutsideUniverseTotal ?? 0,
   };
 
   // Per-batch outputs — flushed to subcollections by the worker after
@@ -313,12 +323,13 @@ export async function processRegularBatch(
             config.board !== 'prophet' &&
             config.board !== 'williams' &&
             config.board !== 'lynch' &&
+            config.board !== 'target' &&
             !nonProphetBoardWarned
           ) {
             nonProphetBoardWarned = true;
             batchWarnings.push(
               `Board "${config.board}" has no PIT scoring path; ` +
-                `prophet/williams/lynch are the supported boards. All candidates null.`,
+                `prophet/williams/lynch/target are the supported boards. All candidates null.`,
             );
           }
           if (result) scored.push(result);
@@ -346,6 +357,12 @@ export async function processRegularBatch(
           `(sample: ${rebalanceFailures.slice(0, 3).map((f) => `${f.ticker}: ${f.message.slice(0, 80)}`).join('; ')})`,
       );
     }
+
+    // CR-2 metric: candidates from outside the current universe seed
+    // (scored with degraded metadata). Must mirror engine.ts.
+    state.scoredOutsideUniverseTotal =
+      (state.scoredOutsideUniverseTotal ?? 0) +
+      scored.filter((c) => c.metadata?.outsideCurrentUniverse === true).length;
 
     // 4. Portfolio target
     const target = buildPortfolio(scored, config.portfolio);
@@ -548,6 +565,17 @@ export function finalizeRegularBacktest(opts: FinalizeOptions): BacktestResult {
   } = opts;
   const warnings = allWarnings.slice();
 
+  // CR-2 — informational warning; must mirror engine.ts.
+  const scoredOutsideUniverseTotal = state.scoredOutsideUniverseTotal ?? 0;
+  if (scoredOutsideUniverseTotal > 0) {
+    warnings.push(
+      `${scoredOutsideUniverseTotal} candidate scores came from tickers outside the ` +
+        `current universe seed (historical index members, e.g. delisted/acquired ` +
+        `names). These score with degraded name/sector metadata — see ` +
+        `score-at-date.ts (CR-2).`,
+    );
+  }
+
   const failureRate =
     state.tickerAttemptTotal > 0
       ? state.tickerFailureTotal / state.tickerAttemptTotal
@@ -599,6 +627,7 @@ export function finalizeRegularBacktest(opts: FinalizeOptions): BacktestResult {
       failureRatePct: +(failureRate * 100).toFixed(2),
       sample: state.tickerFailureSample,
     },
+    scoredOutsideCurrentUniverse: scoredOutsideUniverseTotal,
     completedAt: new Date().toISOString(),
     benchmark: {
       ticker: benchTicker,

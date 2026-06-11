@@ -337,16 +337,43 @@ describe('scoreTickerAtDate — target board PIT', () => {
     }
   });
 
-  it('returns null when the universe does not contain the ticker', async () => {
+  it('scores tickers OUTSIDE the current universe seed with degraded metadata (CR-2)', async () => {
+    // CR-2 (2026-06 review): historical pool tickers missing from the
+    // current 2026 seed (delisted/acquired names) must still score —
+    // dropping them re-introduced the survivorship bias the PIT pool
+    // exists to remove. The degraded entry drops ONLY the sub-signals
+    // that genuinely require the missing fields: the patent search
+    // (needs a company name) is skipped; sector-relative inputs fall
+    // back to their no-sector neutral branches.
     const asOfDate = '2024-01-15';
     const ctx = await buildMarketContextAtDate(asOfDate);
+    patentCalls.length = 0;
     const result = await scoreTickerAtDate(
       'NOT_A_REAL_TICKER_AAA',
       asOfDate,
       'target',
       ctx,
     );
-    expect(result).toBeNull();
+    expect(result).not.toBeNull();
+    expect(result!.ticker).toBe('NOT_A_REAL_TICKER_AAA');
+    expect(typeof result!.composite).toBe('number');
+    expect(result!.sector).toBeNull();
+    expect(result!.metadata.outsideCurrentUniverse).toBe(true);
+    // No company name → the patent fetch must be skipped entirely
+    // (never called with a fabricated name like the bare ticker).
+    expect(
+      patentCalls.filter((c) => c.ticker === 'NOT_A_REAL_TICKER_AAA'),
+    ).toHaveLength(0);
+    // All ten layer scores still present (patents via the no-data branch).
+    expect(Object.keys(result!.layers)).toHaveLength(10);
+  });
+
+  it('does NOT flag in-universe tickers as outsideCurrentUniverse', async () => {
+    const asOfDate = '2024-01-15';
+    const ctx = await buildMarketContextAtDate(asOfDate);
+    const result = await scoreTickerAtDate('AAPL', asOfDate, 'target', ctx);
+    expect(result).not.toBeNull();
+    expect(result!.metadata.outsideCurrentUniverse).toBeUndefined();
   });
 
   it('does NOT use the raw getPoliticalActivity (live path) — uses the STOCK-Act-shifted backtest helper instead', async () => {

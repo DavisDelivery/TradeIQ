@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
 import {
   hashKey,
   pitCacheGet,
@@ -169,6 +169,116 @@ describe('pit-cache', () => {
       await pitCacheWrap(key, fetcher);
       await pitCacheWrap(key, fetcher);
       expect(fetcher).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  describe('maturity (M1 — future-window truncation guard)', () => {
+    // M1 (2026-06 review): engines cache bars for forward windows (e.g.
+    // asOfDate+400d for ML forward returns) under the window's END date.
+    // A fetch made before that date returns a TRUNCATED bar array; if
+    // the cache honors it forever, forward 60d/252d returns stay null
+    // permanently. An entry is mature only when the day it was WRITTEN
+    // is strictly after the key's asOfDate; immature entries read as
+    // misses so the fetcher re-runs until the window has fully elapsed.
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it('re-fetches when the cached entry was written before its asOfDate elapsed', async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date('2026-06-11T14:00:00Z'));
+      // ML-row shape: window ends ~400 calendar days in the future.
+      const key: PitCacheKey = {
+        provider: 'polygon',
+        dataClass: 'bars',
+        ticker: 'AAPL',
+        asOfDate: '2027-07-16',
+        extra: 'from=2026-05-12',
+      };
+      // The provider can only return bars through "today" — truncated.
+      const fetcher = vi.fn(async () => [{ t: 1, c: 100 }]);
+      await pitCacheWrap(key, fetcher);
+      const again = await pitCacheWrap(key, fetcher);
+      expect(again).toEqual([{ t: 1, c: 100 }]);
+      // Pre-fix behavior: 1 call (truncated array cached forever).
+      expect(fetcher).toHaveBeenCalledTimes(2);
+    });
+
+    it('treats an entry written ON its asOfDate as immature (intraday fetch may be partial)', async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date('2026-06-11T14:00:00Z'));
+      const key: PitCacheKey = {
+        provider: 'polygon',
+        dataClass: 'bars',
+        ticker: 'SPY',
+        asOfDate: '2026-06-11',
+        extra: 'from=2026-01-01:engine-benchmark',
+      };
+      const fetcher = vi.fn(async () => [{ t: 1, c: 500 }]);
+      await pitCacheWrap(key, fetcher);
+      await pitCacheWrap(key, fetcher);
+      expect(fetcher).toHaveBeenCalledTimes(2);
+    });
+
+    it('becomes a durable hit once re-written after the window has elapsed', async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date('2026-06-11T14:00:00Z'));
+      const key: PitCacheKey = {
+        provider: 'polygon',
+        dataClass: 'bars',
+        ticker: 'MSFT',
+        asOfDate: '2026-06-20',
+        extra: 'from=2026-05-12',
+      };
+      const fetcher = vi.fn(async () => [{ t: 1, c: 400 }]);
+      // Immature write today...
+      await pitCacheWrap(key, fetcher);
+      // ...the window elapses...
+      vi.setSystemTime(new Date('2026-06-21T14:00:00Z'));
+      // ...next read misses, re-fetches, and persists a mature entry...
+      await pitCacheWrap(key, fetcher);
+      expect(fetcher).toHaveBeenCalledTimes(2);
+      // ...which is a hit from then on.
+      await pitCacheWrap(key, fetcher);
+      expect(fetcher).toHaveBeenCalledTimes(2);
+    });
+
+    it('past-window entries hit exactly as before', async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date('2026-06-11T14:00:00Z'));
+      const key: PitCacheKey = {
+        provider: 'polygon',
+        dataClass: 'bars',
+        ticker: 'NVDA',
+        asOfDate: '2024-03-01',
+        extra: 'from=2023-05-06',
+      };
+      const fetcher = vi.fn(async () => [{ t: 1, c: 90 }]);
+      await pitCacheWrap(key, fetcher);
+      await pitCacheWrap(key, fetcher);
+      expect(fetcher).toHaveBeenCalledTimes(1);
+    });
+
+    it('pitCacheGetMany reports immature entries as misses', async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date('2026-06-11T14:00:00Z'));
+      const mature: PitCacheKey = {
+        provider: 'polygon',
+        dataClass: 'bars',
+        ticker: 'A',
+        asOfDate: '2024-01-01',
+      };
+      const immature: PitCacheKey = {
+        provider: 'polygon',
+        dataClass: 'bars',
+        ticker: 'B',
+        asOfDate: '2027-01-01',
+      };
+      await pitCacheSet(mature, 'complete');
+      await pitCacheSet(immature, 'truncated');
+      const got = await pitCacheGetMany<string>([mature, immature]);
+      expect(got.get(hashKey(mature))).toEqual({ hit: true, value: 'complete' });
+      expect(got.get(hashKey(immature))).toEqual({ hit: false, value: null });
     });
   });
 

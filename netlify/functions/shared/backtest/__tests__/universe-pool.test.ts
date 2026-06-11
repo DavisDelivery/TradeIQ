@@ -76,6 +76,31 @@ describe('universe-pool', () => {
     });
   });
 
+  describe('universePoolForDate — no duplicate tickers (M5)', () => {
+    it('previously-affected snapshot dates produce duplicate-free pools', () => {
+      // These (universe, date) pairs resolved to snapshots that carried
+      // literal duplicates ("ADRO","ADRO"; "JPM","JPM"; …) before the
+      // 2026-06 data fix. The pool must be duplicate-free for all of
+      // them — both via the corrected data and the defensive dedupe.
+      const cases: Array<['sp500' | 'russell2k', string]> = [
+        ['russell2k', '2025-10-31'],
+        ['russell2k', '2025-06-30'],
+        ['russell2k', '2024-05-31'],
+        ['russell2k', '2022-12-31'],
+        ['russell2k', '2022-03-31'],
+        ['sp500', '2025-09-30'],
+      ];
+      for (const [universe, date] of cases) {
+        const r = universePoolForDate(universe, date);
+        expect(r.tickers.length).toBeGreaterThan(0);
+        expect(
+          new Set(r.tickers).size,
+          `${universe} ${date} pool has duplicates`,
+        ).toBe(r.tickers.length);
+      }
+    });
+  });
+
   describe('windowSurvivorshipCorrected', () => {
     it('Dow window entirely inside coverage → corrected', () => {
       const result = windowSurvivorshipCorrected('dow', [

@@ -176,7 +176,12 @@ describe('compositeRankingSignal.rankAtDate (wiring)', () => {
     expect(r[0].ticker).toBe('FROM_BEFORE');
   });
 
-  it('falls back to latestSnapshot when no prior snapshot exists', async () => {
+  it('returns [] when no prior snapshot exists, even if a live snapshot does (PIT-strict, no look-ahead)', async () => {
+    // CR-1 (2026-06 review): the old behavior fell back to the LIVE
+    // snapshot for historical dates without a stored snapshot — i.e.
+    // it traded today's board against 2018-2025 prices (look-ahead +
+    // survivorship bias in every rolling-window result). PIT-strict
+    // means: no snapshot at-or-before asOfDate ⇒ no ranking, period.
     snapshotState.before = null;
     snapshotState.latest = snap([makePick('LIVE', 75, true)]);
     const r = await compositeRankingSignal.rankAtDate({
@@ -184,7 +189,7 @@ describe('compositeRankingSignal.rankAtDate (wiring)', () => {
       asOfDate: '2024-01-08',
       topN: 5,
     });
-    expect(r[0].ticker).toBe('LIVE');
+    expect(r).toEqual([]);
   });
 
   it('exports a stable signal id', () => {
