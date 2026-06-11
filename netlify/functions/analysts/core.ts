@@ -131,12 +131,24 @@ export function runEarnings(upcoming: UpcomingEarning | null, history: EarningsS
   let upcomingContributed = false;
   let historyContributed = false;
 
+  // Imminent earnings is EVENT RISK, not a direction (M7). The old
+  // encoding (raw -= 30 inside 5d, -= 10 inside 10d) turned a coherent
+  // bullish name with a near print into a phantom 'short' vote, inflating
+  // conflictLevel and capping tiers. Timing now contributes ZERO raw
+  // score: it flags event risk in the rationale/signals and halves the
+  // analyst's confidence inside the 5d window. Directional score is
+  // reserved for the beats-history component below.
+  let eventRisk = false;
   if (upcoming?.date) {
     const days = Math.round((new Date(upcoming.date).getTime() - Date.now()) / 86400000);
     s.daysUntilEarnings = days;
     s.earningsDate = upcoming.date;
-    if (days >= 0 && days <= 5) { raw -= 30; parts.push(`earnings in ${days}d, de-rated`); upcomingContributed = true; }
-    else if (days >= 0 && days <= 10) { raw -= 10; upcomingContributed = true; }
+    if (days >= 0 && days <= 5) {
+      eventRisk = true;
+      s.eventRisk = true;
+      parts.push(`earnings in ${days}d — event risk`);
+      upcomingContributed = true;
+    }
     else if (days >= 0 && days <= 21) { parts.push(`earnings in ${days}d`); upcomingContributed = true; }
   }
   if (history.length >= 2) {
@@ -162,10 +174,14 @@ export function runEarnings(upcoming: UpcomingEarning | null, history: EarningsS
 
   raw = clamp(raw, -100, 100);
   const direction: Direction = raw > 5 ? 'long' : raw < -5 ? 'short' : 'neutral';
+  // Event risk halves confidence: any directional read (from beats
+  // history) is less reliable into a binary event, but it stays a
+  // direction-neutral discount rather than a bearish vote.
+  const baseConfidence = history.length >= 2 ? 0.7 : 0.4;
   return {
     score: Math.round(50 + raw / 2),
     direction,
-    confidence: history.length >= 2 ? 0.7 : 0.4,
+    confidence: eventRisk ? baseConfidence * 0.5 : baseConfidence,
     rationale: parts.join(', ') || 'no earnings catalyst',
     signals: s,
   };

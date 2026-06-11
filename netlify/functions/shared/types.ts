@@ -166,12 +166,25 @@ export interface EarningsSetup {
   bias: 'sell_premium' | 'buy_premium' | 'neutral';
   strategy: string;
   composite: number;
+  /** Realized-vol rank 0-100: current 20d RV vs trailing 20d-chunk RV range.
+   *  NOT implied vol — real IV needs the Polygon options snapshot
+   *  (institutional-flow/), the planned upgrade. */
+  rvRank: number;
+  /** @deprecated Alias of rvRank — the value was always a realized-vol rank,
+   *  never IV. Kept because the frontend (EarningsView table + journal log)
+   *  reads `ivr`. */
   ivr: number;
+  /** Event-window (2-trading-day) expected move in %, comparable to
+   *  avgPriorMove. Invariant to daysUntil. */
   expectedMove: number;
   avgPriorMove: number | null;
   rationale: string;
   // v0.7.21+ pro-grade play fields (all optional for backward compat)
   playType?: EarningsPlayType;
+  /** Trade side for direction-bearing plays. For 'reversal' this is the fade
+   *  side: 'short' fades a gap-up-on-miss, 'long' fades a gap-down-on-beat.
+   *  Unset for vol plays / skip. */
+  direction?: 'long' | 'short';
   moveRatio?: number | null;
   triggers?: PlayTriggers;
   historicalEdge?: HistoricalEdge | null;

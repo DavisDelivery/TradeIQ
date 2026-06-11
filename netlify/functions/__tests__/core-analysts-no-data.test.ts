@@ -117,8 +117,14 @@ describe('runEarnings — _noData repair (Phase 4f-finish)', () => {
     };
     const out = runEarnings(upcoming, []);
     expect(out.signals._noData).toBeUndefined();
-    // Within ≤5 days, raw -= 30 → score < 50
-    expect(out.score).toBeLessThan(50);
+    // Wave 3C (M7): this assertion previously pinned the BUGGY behavior
+    // (raw -= 30 inside 5d → score < 50 → phantom 'short' vote). Imminence
+    // is event risk, not direction: score stays neutral, the rationale
+    // flags the risk, and confidence is halved.
+    expect(out.score).toBe(50);
+    expect(out.direction).toBe('neutral');
+    expect(out.rationale).toContain('event risk');
+    expect(out.signals.eventRisk).toBe(true);
   });
 
   it('does NOT mark _noData when history is rich enough to contribute', () => {
