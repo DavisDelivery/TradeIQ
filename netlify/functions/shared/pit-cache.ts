@@ -10,7 +10,13 @@
 // Why it's safe:
 //   Point-in-time data is immutable by definition — the answer to
 //   "what did fundamentals look like for AAPL as of 2023-06-30?" never
-//   changes. So cache entries have no TTL: a hit is always correct.
+//   changes. So cache entries have no TTL: a hit is always correct...
+//   PROVIDED the key's asOfDate had fully elapsed when the entry was
+//   written. Engines cache forward windows (e.g. bars through
+//   asOfDate+400d for ML forward returns) under the window's END date;
+//   a fetch made before that date returns a TRUNCATED answer that is
+//   NOT immutable. See `isMatureEntry` — immature entries are treated
+//   as misses on read (M1, 2026-06 review).
 //
 // Bypass:
 //   Set env `PIT_CACHE_BYPASS=1` to force re-fetch and overwrite. Use when
@@ -93,6 +99,31 @@ function db(): Firestore {
  */
 const CACHE_MISS = Symbol('pit-cache:miss');
 
+/**
+ * M1 (2026-06 review) — a cache entry is only trustworthy once the
+ * wall-clock day it was written on is strictly AFTER the key's asOfDate
+ * (the window's end anchor). An entry written on or before its asOfDate
+ * was fetched before the window had fully elapsed — for bars windows
+ * that means a truncated array (bars only through "today") which, if
+ * honored forever, permanently nulls the forward 60d/252d returns for
+ * that key. Such "immature" entries are treated as misses: the fetcher
+ * re-runs and overwrites until a write lands on a day after asOfDate,
+ * at which point the entry is genuinely immutable. Comparing the key's
+ * asOfDate against the STORED createdAt (both already on every doc)
+ * also self-heals entries poisoned before this rule existed.
+ */
+function isMatureEntry(data: {
+  key?: { asOfDate?: string };
+  createdAt?: string;
+}): boolean {
+  const asOf = data.key?.asOfDate;
+  const createdDay = data.createdAt?.slice(0, 10);
+  // Docs missing key/createdAt metadata carry nothing to compare —
+  // preserve the historical hit behavior (every writer stamps both).
+  if (!asOf || !createdDay) return true;
+  return createdDay > asOf;
+}
+
 async function pitCacheGetRaw<T = unknown>(
   key: PitCacheKey,
 ): Promise<T | typeof CACHE_MISS> {
@@ -102,6 +133,7 @@ async function pitCacheGetRaw<T = unknown>(
   if (!snap.exists) return CACHE_MISS;
   const data = snap.data();
   if (!data) return CACHE_MISS;
+  if (!isMatureEntry(data)) return CACHE_MISS;
   // `value` may legitimately be null and we must preserve that distinction.
   return (data.value as T) ?? (null as T);
 }
@@ -186,9 +218,12 @@ export async function pitCacheGetMany<T = unknown>(
       const id = slice[j].id;
       const exists = snaps[j].exists;
       const data = exists ? snaps[j].data() : null;
+      // M1 — immature entries (written before their asOfDate elapsed)
+      // count as misses, same as the single-doc read path.
+      const mature = data != null && isMatureEntry(data);
       out.set(id, {
-        hit: exists,
-        value: data ? ((data.value as T) ?? null) : null,
+        hit: exists && mature,
+        value: data && mature ? ((data.value as T) ?? null) : null,
       });
     }
   }

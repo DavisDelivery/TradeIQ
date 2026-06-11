@@ -163,6 +163,51 @@ export async function buildMarketContextAtDate(
   return { asOfDate, spyBars, sectorEtfCache, sectorRank, regime, macroBias };
 }
 
+// ---------------------------------------------------------------------------
+// Ticker metadata resolution (CR-2, 2026-06 review)
+// ---------------------------------------------------------------------------
+//
+// Scoring must NOT be gated on membership in the CURRENT universe seed.
+// The PIT pool (universe-history) correctly includes delisted/acquired
+// names (DWDP, BBBY, ATVI, …); the previous `if (!UNIVERSE.find(...))
+// return null` gate silently dropped 27-41% of historical index members
+// — disproportionately the non-survivors — re-introducing exactly the
+// survivorship bias the pool was built to remove, while runs stayed
+// stamped `survivorshipCorrected: true`.
+//
+// UNIVERSE is now a metadata lookup only: company name (needed for the
+// patent-activity search) and sector (sector-relative signals). Tickers
+// outside the seed score with a degraded entry — the patent fetch is
+// skipped (it genuinely requires a company name) and sector-relative
+// inputs fall back to their existing no-sector branches. Such candidates
+// carry `metadata.outsideCurrentUniverse = true` so the engines surface
+// a `scoredOutsideCurrentUniverse` metric per run.
+
+interface ScoringEntry {
+  ticker: string;
+  name: string | null;
+  sector: string | null;
+  inCurrentUniverse: boolean;
+}
+
+function resolveScoringEntry(ticker: string): ScoringEntry {
+  const entry = UNIVERSE.find((u) => u.ticker === ticker);
+  if (entry) {
+    return {
+      ticker,
+      name: entry.name,
+      sector: entry.sector,
+      inCurrentUniverse: true,
+    };
+  }
+  return { ticker, name: null, sector: null, inCurrentUniverse: false };
+}
+
+/** metadata fragment marking a degraded (outside-current-universe) score. */
+function universeFlag(entry: ScoringEntry): Record<string, unknown> {
+  return entry.inCurrentUniverse ? {} : { outsideCurrentUniverse: true };
+}
+
 /**
  * Score a single ticker at a given asOfDate using the prophet board's
  * scoring math. PIT-correct: every data fetch threads asOfDate.
@@ -174,8 +219,7 @@ async function scoreProphetAtDate(
   asOfDate: string,
   ctx: MarketContextAtDate,
 ): Promise<ScoredCandidate | null> {
-  const entry = UNIVERSE.find((u) => u.ticker === ticker);
-  if (!entry) return null;
+  const entry = resolveScoringEntry(ticker);
 
   const to = asOfDate;
   const from = addDays(asOfDate, -CONTEXT_WINDOW_DAYS);
@@ -213,10 +257,15 @@ async function scoreProphetAtDate(
       { provider: 'quiver', dataClass: 'contracts', ticker, asOfDate, extra: 'lb=180' },
       () => getGovContractActivity(ticker, 180, { asOfDate }).catch(() => null),
     ).then((v) => v as Awaited<ReturnType<typeof getGovContractActivity>> | null),
-    pitCacheWrap<unknown>(
-      { provider: 'quiver', dataClass: 'patents', ticker, asOfDate, extra: `lb=180:${entry.name}` },
-      () => getPatentActivity(ticker, entry.name, 180, { asOfDate }).catch(() => null),
-    ).then((v) => v as Awaited<ReturnType<typeof getPatentActivity>> | null),
+    // Patent search requires a company name; outside-current-universe
+    // tickers have none, so the patent sub-signal is dropped (null →
+    // the existing no-patent-data path) rather than the whole score.
+    entry.name === null
+      ? Promise.resolve(null as Awaited<ReturnType<typeof getPatentActivity>> | null)
+      : pitCacheWrap<unknown>(
+          { provider: 'quiver', dataClass: 'patents', ticker, asOfDate, extra: `lb=180:${entry.name}` },
+          () => getPatentActivity(ticker, entry.name!, 180, { asOfDate }).catch(() => null),
+        ).then((v) => v as Awaited<ReturnType<typeof getPatentActivity>> | null),
   ]);
 
   const latestBar = bars[bars.length - 1];
@@ -257,7 +306,7 @@ async function scoreProphetAtDate(
     daysUntilEarnings,
     postEarningsDrift: intel?.postEarningsDrift,
     macroBias: ctx.macroBias,
-    sectorRank: ctx.sectorRank[entry.sector] ?? 6,
+    sectorRank: entry.sector ? (ctx.sectorRank[entry.sector] ?? 6) : 6,
   };
 
   const layers = {
@@ -268,7 +317,7 @@ async function scoreProphetAtDate(
     relativeStrength: layerRelativeStrength(
       bars,
       ctx.spyBars,
-      ctx.sectorEtfCache[entry.sector] ?? null,
+      (entry.sector ? ctx.sectorEtfCache[entry.sector] : null) ?? null,
     ),
     fundamental: layerFundamental(fundInput),
     catalyst: layerCatalyst(catInput),
@@ -298,6 +347,7 @@ async function scoreProphetAtDate(
       direction: composed.direction,
       regime: ctx.regime?.regime ?? null,
       daysUntilEarnings: daysUntilEarnings ?? undefined,
+      ...universeFlag(entry),
     },
   };
 }
@@ -326,8 +376,7 @@ async function scoreWilliamsAtDate(
   asOfDate: string,
   opts: { discreteSignalOnly?: boolean } = {},
 ): Promise<ScoredCandidate | null> {
-  const entry = UNIVERSE.find((u) => u.ticker === ticker);
-  if (!entry) return null;
+  const entry = resolveScoringEntry(ticker);
 
   const to = asOfDate;
   // 180 calendar-day lookback gives ~125 trading bars — comfortably above
@@ -370,6 +419,7 @@ async function scoreWilliamsAtDate(
       target: signal.target,
       atr: signal.atr,
       rationale: analyst.rationale,
+      ...universeFlag(entry),
     },
   };
 }
@@ -412,8 +462,7 @@ async function scoreLynchAtDate(
   asOfDate: string,
   opts: { discreteSignalOnly?: boolean } = {},
 ): Promise<ScoredCandidate | null> {
-  const entry = UNIVERSE.find((u) => u.ticker === ticker);
-  if (!entry) return null;
+  const entry = resolveScoringEntry(ticker);
 
   const to = asOfDate;
   const from = addDays(asOfDate, -90);
@@ -457,7 +506,7 @@ async function scoreLynchAtDate(
     earningsHistory: earnings,
     marketCapUsd: undefined,
     recentReturnPct: undefined,
-    sector: entry.sector,
+    sector: entry.sector ?? undefined,
   });
 
   const signal: LynchSignal = deriveLynchSignalFromAnalyst(
@@ -484,6 +533,7 @@ async function scoreLynchAtDate(
       // Surfaced for the 4n report — a flag set when the data layer
       // could not provide PIT-correct fundamentals for this date.
       pitCaveat: 'restatement-risk: Polygon may serve restated fundamentals',
+      ...universeFlag(entry),
     },
   };
 }
@@ -526,8 +576,7 @@ async function scoreTargetAtDate(
   asOfDate: string,
   ctx: MarketContextAtDate,
 ): Promise<ScoredCandidate | null> {
-  const entry = UNIVERSE.find((u) => u.ticker === ticker);
-  if (!entry) return null;
+  const entry = resolveScoringEntry(ticker);
 
   const to = asOfDate;
   const from = addDays(asOfDate, -CONTEXT_WINDOW_DAYS);
@@ -583,10 +632,14 @@ async function scoreTargetAtDate(
       { provider: 'finnhub', dataClass: 'insider', ticker, asOfDate, extra: 'lb=90' },
       () => getInsiderActivity(ticker, 90, { asOfDate }).catch(() => null),
     ).then((v) => v as Awaited<ReturnType<typeof getInsiderActivity>> | null),
-    pitCacheWrap<unknown>(
-      { provider: 'quiver', dataClass: 'patents', ticker, asOfDate, extra: `lb=180:${entry.name}` },
-      () => getPatentActivity(ticker, entry.name, 180, { asOfDate }).catch(() => null),
-    ).then((v) => v as Awaited<ReturnType<typeof getPatentActivity>> | null),
+    // Patent search requires a company name (see scoreProphetAtDate);
+    // outside-current-universe tickers drop the patent sub-signal only.
+    entry.name === null
+      ? Promise.resolve(null as Awaited<ReturnType<typeof getPatentActivity>> | null)
+      : pitCacheWrap<unknown>(
+          { provider: 'quiver', dataClass: 'patents', ticker, asOfDate, extra: `lb=180:${entry.name}` },
+          () => getPatentActivity(ticker, entry.name!, 180, { asOfDate }).catch(() => null),
+        ).then((v) => v as Awaited<ReturnType<typeof getPatentActivity>> | null),
     pitCacheWrap<unknown>(
       { provider: 'quiver', dataClass: 'political', ticker, asOfDate, extra: 'lb=180:stockact-shifted' },
       () => getPoliticalActivityForBacktest(ticker, 180, asOfDate).catch(() => null),
@@ -598,14 +651,16 @@ async function scoreTargetAtDate(
   ]);
 
   // Shared bars from the rebalance context (PIT-clipped at build time).
-  const sectorBars = ctx.sectorEtfCache[entry.sector] ?? [];
+  // Unknown sector (outside-current-universe ticker) → empty sector bars
+  // → runSectorRotation's existing insufficient-history neutral branch.
+  const sectorBars = (entry.sector ? ctx.sectorEtfCache[entry.sector] : null) ?? [];
   const spyBars = ctx.spyBars;
 
   // Run the analysts — same wiring as runAnalystsForTicker, including
   // the no-data fallbacks for insider/patents/political that emit
   // _noData so composeTarget can rescale the surviving weights.
   const tech = runTechnical(bars);
-  const sec = runSectorRotation(bars, sectorBars, spyBars, entry.sector);
+  const sec = runSectorRotation(bars, sectorBars, spyBars, entry.sector ?? 'Unknown');
   const fun = runFundamental(fundamentals);
   const flow = runFlow(bars);
   const earn = runEarnings(upcoming, history);
@@ -721,6 +776,7 @@ async function scoreTargetAtDate(
       pitCaveat:
         'restatement-risk: Polygon may serve restated fundamentals + EPS-actual; ' +
         'news-coverage density lower in 2018',
+      ...universeFlag(entry),
     },
   };
 }

@@ -9,7 +9,6 @@
 // signals is a one-line config change — no refactor.
 
 import {
-  latestSnapshot,
   snapshotBeforeDate,
   type BoardSnapshot,
   type UniverseKey,
@@ -102,12 +101,16 @@ export const compositeRankingSignal: RankingSignal = {
 
   async rankAtDate({ universe, asOfDate, topN, minComposite = 50 }) {
     const snapUniverse = snapshotUniverseFor(universe);
-    // Backtest paths use snapshotBeforeDate; live paths can pass today's
-    // date and effectively get the same answer (snapshotBeforeDate is
-    // inclusive of end-of-day UTC on asOfDate).
-    const snap =
-      (await snapshotBeforeDate('prophet', snapUniverse, asOfDate)) ??
-      (await latestSnapshot('prophet', snapUniverse));
+    // PIT-strict: only a snapshot stored at-or-before asOfDate may rank
+    // that date. There is deliberately NO latestSnapshot fallback —
+    // ranking a historical date with the LIVE board injects look-ahead
+    // bias (today's scores traded against past prices) and survivorship
+    // bias (today's board only contains today's winners) at once. Dates
+    // that predate the first stored snapshot return [] and the backtest
+    // harness records an empty rebalance instead of a fabricated one.
+    // Live paths pass today's date and resolve normally —
+    // snapshotBeforeDate is inclusive of end-of-day UTC on asOfDate.
+    const snap = await snapshotBeforeDate('prophet', snapUniverse, asOfDate);
     if (!snap) return [];
     return pickFromSnapshot(snap, {
       topN,

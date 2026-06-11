@@ -213,6 +213,15 @@ export interface BacktestResult {
     failureRatePct: number;
     sample: TickerFailure[]; // first 20 across the run
   };
+  /**
+   * CR-2 (2026-06 review): count of candidate scores produced for tickers
+   * in the PIT pool but OUTSIDE the current universe seed (historical
+   * index members — typically delisted/acquired names). These used to be
+   * silently dropped, re-introducing survivorship bias; now they score
+   * with degraded name/sector metadata and are counted here. Optional:
+   * results persisted before the fix predate the field.
+   */
+  scoredOutsideCurrentUniverse?: number;
   completedAt: string;
   benchmark: {
     ticker: string;

@@ -57,13 +57,13 @@ export function universePoolForDate(
   universe: BacktestUniverse,
   asOfDate: string,
 ): UniversePoolResult {
-  const tickers = tickersInIndexOnDate(universe, asOfDate);
+  const rawTickers = tickersInIndexOnDate(universe, asOfDate);
   const coverage = universeHistoryCoverage();
   const cov = coverage[universe];
 
   // tickersInIndexOnDate returns null if no snapshot is ≤ asOfDate.
   // That's a real data gap — refuse to silently substitute current.
-  if (tickers === null) {
+  if (rawTickers === null) {
     return {
       tickers: [],
       survivorshipCorrected: false,
@@ -72,6 +72,15 @@ export function universePoolForDate(
       coverageEnd: cov.lastDate,
     };
   }
+
+  // M5 (2026-06 review): UNIVERSE_HISTORY is generated data and has
+  // carried literal duplicate tickers (e.g. "ADRO","ADRO" in russell2k
+  // snapshots). A duplicate flows pool → scored twice → two full-weight
+  // positions, silently doubling that name's portfolio weight. The data
+  // has been fixed; dedupe defensively here so a generator regression
+  // can never corrupt weights again. Set preserves insertion order, so
+  // the snapshot's alphabetical sorting survives.
+  const tickers = Array.from(new Set(rawTickers));
 
   const snapshotDate = findSnapshotDateForDate(universe, asOfDate);
   return {

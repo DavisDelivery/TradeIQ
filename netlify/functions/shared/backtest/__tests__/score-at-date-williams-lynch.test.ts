@@ -133,7 +133,12 @@ describe('scoreTickerAtDate — Williams PIT', () => {
     }
   });
 
-  it('returns null when the universe does not contain the ticker', async () => {
+  it('scores tickers OUTSIDE the current universe seed (CR-2: no survivorship gate)', async () => {
+    // CR-2 (2026-06 review): the old `if (!UNIVERSE.find(...)) return
+    // null` gate silently dropped every historical pool ticker missing
+    // from the 2026 seed — disproportionately delisted/acquired names —
+    // re-introducing survivorship bias. Scoring must proceed with a
+    // degraded entry (no name/sector) and flag the candidate.
     const ctx = await buildMarketContextAtDate('2024-01-15');
     const result = await scoreTickerAtDate(
       'NOT_A_REAL_TICKER_AAA',
@@ -141,7 +146,18 @@ describe('scoreTickerAtDate — Williams PIT', () => {
       'williams',
       ctx,
     );
-    expect(result).toBeNull();
+    expect(result).not.toBeNull();
+    expect(result!.ticker).toBe('NOT_A_REAL_TICKER_AAA');
+    expect(typeof result!.composite).toBe('number');
+    expect(result!.sector).toBeNull();
+    expect(result!.metadata.outsideCurrentUniverse).toBe(true);
+  });
+
+  it('does NOT flag in-universe tickers as outsideCurrentUniverse', async () => {
+    const ctx = await buildMarketContextAtDate('2024-01-15');
+    const result = await scoreTickerAtDate('AAPL', '2024-01-15', 'williams', ctx);
+    expect(result).not.toBeNull();
+    expect(result!.metadata.outsideCurrentUniverse).toBeUndefined();
   });
 });
 

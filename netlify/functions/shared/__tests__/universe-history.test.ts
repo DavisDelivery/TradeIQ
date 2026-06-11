@@ -117,3 +117,42 @@ describe('universe-history — coverage report', () => {
     expect(cov.sp500.lastDate! >= '2026-04-30').toBe(true);
   });
 });
+
+describe('universe-history — data integrity (M5)', () => {
+  // M5 (2026-06 review): generated snapshots carried literal duplicate
+  // tickers (e.g. "ADRO","ADRO" in russell2k 2023-08 onwards, "JPM",
+  // "JPM" in sp500 2025-08..10). A duplicate doubles that name's
+  // portfolio weight in the backtest engine. The data has been fixed;
+  // this test pins it so a generator re-run can't regress silently.
+  it('no snapshot contains duplicate tickers', () => {
+    const offenders: string[] = [];
+    for (const snap of UNIVERSE_HISTORY) {
+      const seen = new Set<string>();
+      for (const t of snap.tickers) {
+        if (seen.has(t)) offenders.push(`${snap.index} ${snap.date}: ${t}`);
+        seen.add(t);
+      }
+    }
+    expect(offenders).toEqual([]);
+  });
+
+  it('previously-affected snapshots retain their members exactly once', () => {
+    // The duplicates documented in the 2026-06 review — assert each
+    // ticker is still present (dedup must not have dropped names).
+    const cases: Array<[index: 'sp500' | 'russell2k', date: string, ticker: string]> = [
+      ['russell2k', '2025-10-31', 'ADRO'],
+      ['russell2k', '2025-06-30', 'HNVR'],
+      ['russell2k', '2024-05-31', 'PLSE'],
+      ['russell2k', '2024-05-31', 'DNMR'],
+      ['russell2k', '2022-12-31', 'PLBY'],
+      ['russell2k', '2022-03-31', 'QMCO'],
+      ['sp500', '2025-09-30', 'JPM'],
+    ];
+    for (const [index, date, ticker] of cases) {
+      const snap = UNIVERSE_HISTORY.find((s) => s.index === index && s.date === date);
+      expect(snap, `${index} ${date}`).toBeDefined();
+      const count = snap!.tickers.filter((t) => t === ticker).length;
+      expect(count, `${index} ${date} ${ticker}`).toBe(1);
+    }
+  });
+});
