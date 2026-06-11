@@ -231,11 +231,18 @@ export const handler: Handler = async (event) => {
     // dividendYield — every metric the brief enumerated.
     const pe = fund?.valuation?.pe
       ?? (fund?.ttmEps && fund.ttmEps > 0 && price ? round(price / fund.ttmEps, 1) : null);
+    // UNIT CONTRACT (code-review-2026-06 M3): every ratio in
+    // metrics.profitability (grossMargin/opMargin/netMargin/roe/roa) is
+    // PERCENT-scaled in the response (44.1 = 44.1%). data-provider.ts
+    // computes the Phase-4w `fund.profitability` group as FRACTIONS
+    // (grossProfit/revenue ≈ 0.44), same as the legacy top-level
+    // fund.grossMargin — both paths are ×100 here. The UI (pct1) and
+    // sector medians (sector-medians.ts already ×100) consume percent.
     const grossMargin = fund?.profitability?.grossMargin !== undefined && fund?.profitability?.grossMargin !== null
-      ? fund.profitability.grossMargin
+      ? round(fund.profitability.grossMargin * 100, 1)
       : fund?.grossMargin !== undefined ? round(fund.grossMargin * 100, 1) : null;
     const opMargin = fund?.profitability?.operatingMargin !== undefined && fund?.profitability?.operatingMargin !== null
-      ? fund.profitability.operatingMargin
+      ? round(fund.profitability.operatingMargin * 100, 1)
       : fund?.operatingMargin !== undefined ? round(fund.operatingMargin * 100, 1) : null;
     const debtEquity = fund?.leverage?.debtToEquity !== undefined && fund?.leverage?.debtToEquity !== null
       ? fund.leverage.debtToEquity

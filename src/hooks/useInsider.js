@@ -11,7 +11,10 @@ export function useInsider(universe, windowDays = 90) {
     `/api/insider-board?days=${windowDays}&index=${universe}&limit=120${force ? '&force=1' : ''}`;
 
   const query = useQuery({
-    queryKey: queryKeys.insider(universe),
+    // Key carries windowDays: the server windows on `days=`, so each
+    // (universe, windowDays) combination is a distinct payload and must be
+    // a distinct cache entry (M2).
+    queryKey: queryKeys.insider(universe, windowDays),
     queryFn: async ({ signal }) => {
       const r = await fetchWithRetry(url(false), { signal });
       const json = await r.json();
@@ -26,7 +29,7 @@ export function useInsider(universe, windowDays = 90) {
     const json = await r.json();
     if (!r.ok || json.error) throw new Error(json.error || `HTTP ${r.status}`);
     const validated = validate(json, SHAPES.insiderBoard, 'insider-board');
-    qc.setQueryData(queryKeys.insider(universe), validated);
+    qc.setQueryData(queryKeys.insider(universe, windowDays), validated);
     return validated;
   };
 

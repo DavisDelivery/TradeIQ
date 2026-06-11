@@ -15,6 +15,9 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import React from 'react';
 import { FundamentalsStrip } from '../FundamentalsStrip.jsx';
 
+// Handler-realistic fixture: metrics.profitability ratios are uniformly
+// PERCENT-scaled in /api/stock-detail's response (M3 unit contract) —
+// roe 153.5 here is the ×100 of data-provider's 1.535 fraction.
 const fullBody = {
   ok: true, ticker: 'AAPL',
   metrics: {

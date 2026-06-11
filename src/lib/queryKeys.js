@@ -18,8 +18,18 @@ export const queryKeys = {
   targetBoard: (universe) => ['tradeiq', 'targetBoard', universe],
   prophet: (universe, conviction) =>
     ['tradeiq', 'prophet', universe, conviction ?? 'all'],
-  catalyst: (universe) => ['tradeiq', 'catalyst', universe],
-  insider: (universe) => ['tradeiq', 'insider', universe],
+  // Catalyst is server-filtered (catalyst-board.ts reads `filter` +
+  // `minConviction`), so the key MUST carry both — otherwise switching
+  // filters is a cache no-op within staleTime and AlertsView's
+  // filter=all/minConviction=low payload cross-pollutes CatalystView
+  // (code-review-2026-06 M1).
+  catalyst: (universe, filter, minConviction) =>
+    ['tradeiq', 'catalyst', universe, filter ?? 'all', minConviction ?? 'all'],
+  // Insider is server-windowed (`days=`), so the key carries windowDays —
+  // otherwise the 30/60/90/180d selector silently serves the previous
+  // window's rows within staleTime (code-review-2026-06 M2).
+  insider: (universe, windowDays) =>
+    ['tradeiq', 'insider', universe, windowDays ?? 90],
   williams: (universe) => ['tradeiq', 'williams', universe],
   lynch: (universe) => ['tradeiq', 'lynch', universe],
   earnings: (windowDays, universe) =>

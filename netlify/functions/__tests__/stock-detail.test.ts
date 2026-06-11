@@ -156,6 +156,47 @@ describe('GET /api/stock-detail', () => {
     expect(b.relativeStrength.vsSpy.length).toBeGreaterThan(0);
   });
 
+  // -----------------------------------------------------------------------
+  // code-review-2026-06 M3 — percent-vs-fraction unit contract.
+  //
+  // data-provider.ts computes the Phase-4w `fund.profitability` group as
+  // FRACTIONS (grossProfit/revenue ≈ 0.441). The handler's contract is that
+  // EVERY ratio in metrics.profitability is percent-scaled (44.1 = 44.1%):
+  // the UI formats them all with pct1, and sector medians are already
+  // percent (sector-medians.ts does *100). Pre-fix, gross/operating margin
+  // passed through as fractions while roe/roa/netMargin on adjacent lines
+  // were ×100 — Gross Margin rendered "0.4%" and the favorability dot
+  // compared 0.44 vs a percent-scale median (permanently unfavorable).
+  // Verified to FAIL against the pre-fix handler (0.441 emitted verbatim).
+  // -----------------------------------------------------------------------
+  it('scales the Phase-4w fractional profitability group to percent (M3)', async () => {
+    getFundamentalsMock.mockResolvedValue({
+      ticker: 'AAPL',
+      ttmEps: 6,
+      statements: [],
+      profitability: {
+        grossMargin: 0.441,      // fractions, exactly as data-provider emits
+        operatingMargin: 0.302,
+        netMargin: 0.25,
+        roe: 1.535,
+        roa: 0.282,
+        eps: 1.64,
+      },
+    });
+    const res = await handler(evt({ ticker: 'AAPL' }), {} as any, () => {});
+    expect((res as any).statusCode).toBe(200);
+    const b = JSON.parse((res as any).body);
+    // Uniform percent scale across the whole profitability group.
+    expect(b.metrics.profitability.grossMargin).toBe(44.1);
+    expect(b.metrics.profitability.opMargin).toBe(30.2);
+    expect(b.metrics.profitability.netMargin).toBe(25);
+    expect(b.metrics.profitability.roe).toBe(153.5);
+    expect(b.metrics.profitability.roa).toBe(28.2);
+    // Percent-scale stock value vs percent-scale sector median: the
+    // favorability comparison is now apples-to-apples (44.1 vs 40).
+    expect(b.sectorMedians.profitability.grossMargin).toBe(40);
+  });
+
   it('marks metrics no-data when fundamentals are unavailable (no fabricated zeros)', async () => {
     getFundamentalsMock.mockResolvedValue(null);
     const res = await handler(evt({ ticker: 'AAPL' }), {} as any, () => {});

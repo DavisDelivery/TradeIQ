@@ -7,7 +7,7 @@ import { useBreakpoint } from './hooks/useBreakpoint.js';
 import { MasterDetail } from './layout/MasterDetail.jsx';
 import { StockDetailPanel } from './components/detail/StockDetailPanel.jsx';
 import { FundamentalsStrip } from './components/detail/FundamentalsStrip.jsx';
-import { useStockDetailsFanout } from './hooks/useStockDetailsFanout.js';
+import { useStockDetailsFanout, FANOUT_METRIC_FIELDS } from './hooks/useStockDetailsFanout.js';
 import { fmtMcap, fmtNum1, fmtNum2, fmtPct1 } from './lib/formatters.jsx';
 
 const SIDE_OPTIONS = [
@@ -56,7 +56,12 @@ export const WilliamsView = ({ universe = 'sp500' }) => {
   // shares query keys with FundamentalsStrip (one ticker = one fetch
   // across both the per-row strip and the sortable columns).
   const tickers = baseRows.map((c) => c.ticker);
-  const { metricsByTicker } = useStockDetailsFanout(tickers);
+  // M6 — eager fan-out is capped (FANOUT_EAGER_ROWS); rows further down
+  // are filled by FundamentalsStrip's in-viewport fetch (shared cache).
+  // Sorting on a fan-out column lifts the cap so the sort sees every row.
+  const { metricsByTicker } = useStockDetailsFanout(tickers, {
+    eagerCount: FANOUT_METRIC_FIELDS.includes(sortKey) ? Infinity : undefined,
+  });
   const rows = baseRows.map((c) => {
     const m = metricsByTicker[c.ticker];
     return {
