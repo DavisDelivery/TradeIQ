@@ -129,6 +129,59 @@ describe('computeMetrics — synthetic equity curves', () => {
     expect(m.profitFactor).toBeCloseTo(0.17 / 0.04, 4);
   });
 
+  // Wave 4D (track-3 minor 1) — Sortino downside deviation must follow the
+  // standard formula sqrt( Σ min(r,0)² / N_all ), not an RMS over only the
+  // negative returns with n−1. Hand-computed fixture:
+  //   daily returns: [+0.10, −0.05, +0.02, −0.01], rf = 0
+  //   mean = 0.06 / 4 = 0.015
+  //   downside² sum = 0.05² + 0.01² = 0.0026 → /4 → sqrt = 0.0254951
+  //   sortino = 0.015 / 0.0254951 × √252 = 9.33974…
+  // The pre-fix formula (RMS over the 2 negatives, n−1=1) gave 4.66987 —
+  // verified to FAIL before the fix.
+  it('Sortino uses sqrt(Σ min(r,0)² / N_all) — hand-computed fixture', () => {
+    const eq: DailyEquityPoint[] = [
+      { date: '2024-01-01', value: 100 },
+      { date: '2024-01-02', value: 110 }, // +10%
+      { date: '2024-01-03', value: 104.5 }, // −5%
+      { date: '2024-01-04', value: 106.59 }, // +2%
+      { date: '2024-01-05', value: 105.5241 }, // −1%
+    ];
+    const m = computeMetrics({ ...emptyInputs, dailyEquity: eq });
+    expect(m.sortino).toBeCloseTo(9.3397, 3);
+  });
+
+  it('Sortino is 0 when there are no negative excess returns', () => {
+    const m = computeMetrics({
+      ...emptyInputs,
+      dailyEquity: risingEquity(30, 100, 0.001),
+    });
+    expect(m.sortino).toBe(0);
+  });
+
+  // Wave 4D (track-3 minor 2) — per-regime cross-sectional segment returns
+  // must NOT be annualized into a fake "Sharpe" (√(252/20) over
+  // cross-sectional dispersion is meaningless). The honest replacement is
+  // the un-annualized average 20d segment return, in percent.
+  it('perRegime reports avgSegmentReturnPct (un-annualized), not a fake sharpe', () => {
+    const att: AttributionRecord[] = [
+      { rebalanceDate: '2024-01-01', ticker: 'A', weight: 0.5, segmentReturn: 0.04, contribution: 0.02, layers: {}, composite: 60, regime: 'risk_on' },
+      { rebalanceDate: '2024-01-01', ticker: 'B', weight: 0.5, segmentReturn: -0.02, contribution: -0.01, layers: {}, composite: 60, regime: 'risk_on' },
+      { rebalanceDate: '2024-02-01', ticker: 'C', weight: 1, segmentReturn: 0.03, contribution: 0.03, layers: {}, composite: 60, regime: 'risk_off' },
+    ];
+    const m = computeMetrics({
+      ...emptyInputs,
+      dailyEquity: flatEquity(30),
+      attribution: att,
+    });
+    // risk_on: mean(0.04, −0.02) = 0.01 → 1%
+    expect(m.perRegime.risk_on.avgSegmentReturnPct).toBeCloseTo(1, 4);
+    expect(m.perRegime.risk_on.rebalanceCount).toBe(1);
+    // risk_off: single 3% segment
+    expect(m.perRegime.risk_off.avgSegmentReturnPct).toBeCloseTo(3, 4);
+    // the meaningless annualized field is gone
+    expect(m.perRegime.risk_on).not.toHaveProperty('sharpe');
+  });
+
   it('IC: composite ranks perfectly predict forward returns → IC=1', () => {
     const ml: MLTrainingRow[] = [
       { runId: 'x', ticker: 'A', asOfDate: '2024-01-01', composite: 90, layers: {}, regime: null, sector: null, marketCapBucket: null, inPortfolio: true, entryPrice: null, exitPrice: null, holdDays: null, forward5dReturn: null, forward20dReturn: 0.10, forward60dReturn: null, forward252dReturn: null, realizedPnl: null },

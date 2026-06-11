@@ -127,9 +127,14 @@ export const handler: Handler = async (event) => {
   const config: BacktestConfig = { ...rawBody };
   delete (config as any).allowParallel;
 
-  // --- Validate shape (reuse engine's own validator)
+  // --- Validate shape (reuse engine's own validator). Wave 4D (track-3
+  // minor 10): pass today's date so a future endDate is clamped in place
+  // (with a warning surfaced in the response) instead of silently running
+  // a flat-equity tail. The wall-clock read lives HERE, not in the engine,
+  // which must stay clock-free per the walk-forward integrity invariant.
+  let configWarnings: string[] = [];
   try {
-    validateConfig(config);
+    configWarnings = validateConfig(config, new Date().toISOString().slice(0, 10));
   } catch (e: any) {
     log.warn('config_invalid', { err: String(e?.message ?? e) });
     return {
@@ -137,6 +142,9 @@ export const handler: Handler = async (event) => {
       headers,
       body: JSON.stringify({ ok: false, error: String(e?.message ?? e) }),
     };
+  }
+  if (configWarnings.length > 0) {
+    log.warn('config_normalized', { warnings: configWarnings });
   }
 
   // --- Supported-board enforcement
@@ -319,6 +327,14 @@ export const handler: Handler = async (event) => {
   return {
     statusCode: 202,
     headers,
-    body: JSON.stringify({ ok: true, runId, allowParallel, dispatchOk }),
+    body: JSON.stringify({
+      ok: true,
+      runId,
+      allowParallel,
+      dispatchOk,
+      // Wave 4D — config normalizations (e.g. future endDate clamped to
+      // today). Empty array when the config passed through untouched.
+      warnings: configWarnings,
+    }),
   };
 };

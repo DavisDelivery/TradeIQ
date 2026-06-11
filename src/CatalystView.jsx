@@ -135,34 +135,42 @@ const CatalystRow = ({ pick, expanded, onToggle }) => {
   const changeColor = pick.priceChangePct >= 0 ? 'text-emerald-400' : 'text-rose-400';
   return (
     <div className="border border-neutral-800 bg-neutral-950/40 hover:border-neutral-700 transition-colors">
-      <button onClick={onToggle} className="w-full text-left p-3 sm:p-4 flex items-start gap-3">
-        <div className="flex-shrink-0 w-12 flex flex-col items-center">
-          <div className={`text-xl font-bold ${dirColor}`}>{pick.composite}</div>
-          <div className="text-[9px] text-neutral-500 uppercase tracking-wider mt-0.5">{pick.conviction}</div>
-        </div>
-        <div className="flex-1 min-w-0">
-          <div className="flex items-baseline justify-between gap-3 mb-1">
-            <div className="flex items-baseline gap-2 min-w-0">
-              <span className="text-[15px] font-bold text-neutral-100">{pick.ticker}</span>
-              <span className="text-[11px] text-neutral-500 truncate">{pick.name}</span>
-            </div>
-            <div className="text-right flex-shrink-0">
-              <div className="text-[13px] text-neutral-200 font-mono">${pick.price?.toFixed(2)}</div>
-              <div className={`text-[10px] font-mono ${changeColor}`}>
-                {pick.priceChangePct >= 0 ? '+' : ''}{pick.priceChangePct?.toFixed(2)}%
+      {/* code-review-2026-06 m11 — FundamentalsStrip carries role="button" +
+          tabIndex=0, so it must NOT render inside the row's <button> (invalid
+          nested interactive elements; keyboard activation fired both). The
+          button covers only the clickable header; the strip is a sibling,
+          left-padded to stay aligned with the content column (w-12 score
+          column + gap-3 = 60px). */}
+      <div className="p-3 sm:p-4">
+        <button onClick={onToggle} className="w-full text-left flex items-start gap-3">
+          <div className="flex-shrink-0 w-12 flex flex-col items-center">
+            <div className={`text-xl font-bold ${dirColor}`}>{pick.composite}</div>
+            <div className="text-[9px] text-neutral-500 uppercase tracking-wider mt-0.5">{pick.conviction}</div>
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="flex items-baseline justify-between gap-3 mb-1">
+              <div className="flex items-baseline gap-2 min-w-0">
+                <span className="text-[15px] font-bold text-neutral-100">{pick.ticker}</span>
+                <span className="text-[11px] text-neutral-500 truncate">{pick.name}</span>
+              </div>
+              <div className="text-right flex-shrink-0">
+                <div className="text-[13px] text-neutral-200 font-mono">${pick.price?.toFixed(2)}</div>
+                <div className={`text-[10px] font-mono ${changeColor}`}>
+                  {pick.priceChangePct >= 0 ? '+' : ''}{pick.priceChangePct?.toFixed(2)}%
+                </div>
               </div>
             </div>
+            <div className="mb-1.5"><CatalystBadges catalyst={pick} max={5} /></div>
+            <p className="text-[11px] text-neutral-400 leading-relaxed line-clamp-2">{pick.rationale}</p>
           </div>
-          <div className="mb-1.5"><CatalystBadges catalyst={pick} max={5} /></div>
-          <p className="text-[11px] text-neutral-400 leading-relaxed line-clamp-2">{pick.rationale}</p>
-          {/* Phase 6 PR-G — fundamentals strip inline beneath the row content.
-              Same hook as everywhere else; lazy-fetched via intersection
-              observer. */}
-          <div className="mt-2 pt-2 border-t border-neutral-800/60">
-            <FundamentalsStrip ticker={pick.ticker} showExpandIcon={false} />
-          </div>
+        </button>
+        {/* Phase 6 PR-G — fundamentals strip inline beneath the row content.
+            Same hook as everywhere else; lazy-fetched via intersection
+            observer. */}
+        <div className="mt-2 pt-2 border-t border-neutral-800/60 ml-[60px]">
+          <FundamentalsStrip ticker={pick.ticker} showExpandIcon={false} />
         </div>
-      </button>
+      </div>
       {expanded && <CatalystDetail pick={pick} />}
     </div>
   );

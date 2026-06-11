@@ -88,4 +88,26 @@ describe('CatalystView (data loaded)', () => {
     fireEvent.click(screen.getByText('refresh'));
     expect(forceRescan).toHaveBeenCalledTimes(1);
   });
+
+  // Wave 4D (code-review-2026-06 m11) — FundamentalsStrip carries
+  // role="button" + tabIndex=0 and used to render INSIDE the row's
+  // <button>: invalid nested interactive elements, double-activation on
+  // keyboard. It must be a sibling of the row toggle button, never a
+  // descendant.
+  it('does not nest FundamentalsStrip inside the row toggle button', () => {
+    renderWith({ picks: [makePick('NVDA')] });
+    const strip = screen.getByTestId('fundamentals-strip');
+    expect(strip.closest('button')).toBeNull();
+  });
+
+  it('row toggle button still expands the detail panel', () => {
+    renderWith({ picks: [makePick('NVDA')] });
+    // The row header (ticker) lives inside the toggle button.
+    const toggle = screen.getByText('NVDA').closest('button');
+    expect(toggle).not.toBeNull();
+    fireEvent.click(toggle);
+    // CatalystDetail renders the per-component breakdown sections.
+    expect(screen.getByText('Insider')).toBeInTheDocument();
+    expect(screen.getByText('Patents')).toBeInTheDocument();
+  });
 });
