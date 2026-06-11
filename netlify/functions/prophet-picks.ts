@@ -76,6 +76,7 @@ export const handler: Handler = async (event) => {
       ok: true,
       universe,
       universeSize: 0,
+      universeChecked: 0,
       partial: false,
       qualified: 0,
       picks: [],
@@ -115,7 +116,14 @@ export const handler: Handler = async (event) => {
   return json(200, {
     ok: true,
     universe,
-    universeSize: snap.universeChecked,
+    // Wave 4A (M8) — honest coverage. universeSize is the full universe
+    // at scan start; universeChecked is the count actually scored
+    // (Stage 1's scored count for sieve snapshots — smaller when the
+    // stage hit its budget). Pre-Wave-4A snapshots stored the universe
+    // size in universeChecked and lack universeSize, so both fall back
+    // to the same value there.
+    universeSize: snap.universeSize ?? snap.universeChecked,
+    universeChecked: snap.universeChecked,
     partial: false,
     generatedAt: snap.generatedAt,
     source: fresh ? 'snapshot' : 'snapshot-stale',

@@ -25,6 +25,7 @@
 
 import { Timestamp } from 'firebase-admin/firestore';
 import { getAdminDb } from './firebase-admin';
+import { isMarketClosed } from './us-market-holidays';
 
 export type BoardName =
   | 'target-board'
@@ -51,8 +52,17 @@ export interface BoardSnapshot {
   generatedAt: string;
   /** Wall-clock duration of the scan that produced this snapshot. */
   scanDurationMs: number;
-  /** How many tickers the scan considered (full universe size, not survivors). */
+  /** Wave 4A (M8) — how many tickers the scan ACTUALLY scored. For most
+   *  boards this equals the universe size; for the Russell sieve it is
+   *  Stage 1's scored count, which can be smaller when Stage 1 hits its
+   *  budget. Pre-Wave-4A docs stored the universe size here
+   *  unconditionally — read coverage as `universeChecked / (universeSize
+   *  ?? universeChecked)`. */
   universeChecked: number;
+  /** Wave 4A (M8) — total universe size at scan start (entries fed in).
+   *  Optional: older docs lack it; consumers fall back to
+   *  `universeChecked`. */
+  universeSize?: number;
   /** Full raw result set in board-specific shape — never trimmed. */
   results: unknown[];
   /** ms after generatedAt during which this snapshot is considered fresh. */
@@ -463,6 +473,118 @@ export function snapshotAgeMs(snapshot: BoardSnapshot, now: number = Date.now())
   return now - new Date(snapshot.generatedAt).getTime();
 }
 
+// ====================================================================
+// Wave 4A (M2) — schedule-aware freshness
+// ====================================================================
+//
+// A constant age budget cannot model the scan calendar. The daily
+// after-close boards scan once per WEEKDAY (skipping NYSE holidays), so
+// the Friday-close → Monday-close gap is ~74h and a holiday Monday
+// pushes it to ~98h — with a 26h constant, every weekend the snapshot
+// is "stale" by construction, and the constants kept getting widened
+// (#67/#70/#71 history) to paper over it. The schedule-aware predicate
+// replaces that arms race for daily boards:
+//
+//   fresh ⇔ generatedAt >= the last EXPECTED successful scan slot
+//
+// where "expected slot" walks back from `now` to the most recent
+// weekday slot whose date is not an NYSE holiday
+// (us-market-holidays.ts), and a slot only becomes expected once a
+// settle-grace window (2h — a scan takes ~15 min; generous margin for
+// checkpoint-chained workers) has elapsed, so the predicate never
+// demands a snapshot from a scan that is still in flight.
+//
+// CLASSIFICATION (read from the cron expressions in the scan files):
+//
+// Daily after-close (schedule-aware slot below):
+//   prophet/largecap   `0 22 * * 1-5`   scan-prophet-largecap.ts (holiday-guarded dispatcher)
+//   insider/*          `30-45 21 * * 1-5` scan-insider-{sp500,ndx,dow,russell2k}.ts → slot 21:30 (earliest)
+//   lynch/*            `0 22 * * 1-5`   scan-lynch-*.ts
+//   earnings/*         `30 11,21 * * 1-5` scan-earnings.ts — twice daily; the LAST
+//                      (after-close) slot 21:30 is the one the predicate models, so a
+//                      Friday-evening snapshot stays fresh across the weekend.
+//
+// Intraday / budget-based (constant budget kept as the freshness rule):
+//   prophet/russell2k, prophet/all  `0,30 13-21 * * 1-5`  scan-prophet-{russell,all}.ts
+//   catalyst/*                      `0,30 13-21 * * 1-5`  scan-catalyst-*.ts
+//   williams/*                      `0,30 13-21 * * 1-5`  scan-williams-*.ts
+//   target-board/dow, /ndx          `0,30 13-21 * * 1-5`  scan-target-board-{dow,ndx}.ts
+//   target-board/sp500, /russell2k  `0 23 * * *` (fires 7 days/week, so the 26h
+//                                   budget never gaps across weekends)
+//
+// The per-board budget constants remain in force as a FALLBACK FLOOR for
+// every board: any snapshot younger than its budget is fresh regardless
+// of the calendar (this is what keeps the intraday boards' semantics
+// unchanged, and what keeps manual/off-slot scans fresh on daily boards).
+
+/** A scan must land within this window after its slot before the slot
+ *  counts as "expected" (scan ~15 min + EOD-settle margin). */
+export const SCAN_SETTLE_GRACE_MS = 2 * 60 * 60_000;
+
+export interface DailyScanSlot {
+  hourUtc: number;
+  minuteUtc: number;
+}
+
+/** Default daily after-close slot (the 22:00 UTC scan calendar). */
+export const DEFAULT_DAILY_SCAN_SLOT: DailyScanSlot = { hourUtc: 22, minuteUtc: 0 };
+
+const DAILY_CLOSE_SLOTS: Partial<
+  Record<BoardName, { slot: DailyScanSlot; universes?: UniverseKey[] }>
+> = {
+  // Only largecap scans daily; russell2k/all run the intraday sieve crons.
+  prophet: { slot: { hourUtc: 22, minuteUtc: 0 }, universes: ['largecap'] },
+  insider: { slot: { hourUtc: 21, minuteUtc: 30 } },
+  lynch: { slot: { hourUtc: 22, minuteUtc: 0 } },
+  earnings: { slot: { hourUtc: 21, minuteUtc: 30 } },
+};
+
+/**
+ * The daily after-close slot for (board, universe), or null when the
+ * board/universe is intraday (budget-based freshness only). A daily
+ * board whose snapshot doesn't carry its universe is treated as daily
+ * only when the board's cadence is daily for ALL universes.
+ */
+export function dailyScanSlotFor(
+  board?: BoardName,
+  universe?: UniverseKey,
+): DailyScanSlot | null {
+  if (!board) return null;
+  const entry = DAILY_CLOSE_SLOTS[board];
+  if (!entry) return null;
+  if (entry.universes) {
+    if (!universe || !entry.universes.includes(universe)) return null;
+  }
+  return entry.slot;
+}
+
+/**
+ * Walk back from `now` to the most recent EXPECTED scan slot: a
+ * weekday-`slot`-UTC time whose date is not an NYSE holiday, and which
+ * is at least `graceMs` in the past (a younger slot's scan may still be
+ * in flight, so it isn't expected yet). Returns null if no expected
+ * slot exists within the 30-day lookback (defensive bound — callers
+ * fall back to budget-based freshness).
+ */
+export function lastExpectedScanSlot(
+  now: Date | number,
+  slot: DailyScanSlot = DEFAULT_DAILY_SCAN_SLOT,
+  graceMs: number = SCAN_SETTLE_GRACE_MS,
+): Date | null {
+  const nowMs = typeof now === 'number' ? now : now.getTime();
+  const sameDaySlot = new Date(nowMs);
+  sameDaySlot.setUTCHours(slot.hourUtc, slot.minuteUtc, 0, 0);
+  // Pure UTC arithmetic — no DST. 30-day bound comfortably covers any
+  // weekend + holiday cluster.
+  for (let daysBack = 0; daysBack < 30; daysBack++) {
+    const candidate = new Date(sameDaySlot.getTime() - daysBack * 86_400_000);
+    if (candidate.getTime() + graceMs > nowMs) continue; // not yet expected
+    if (isMarketClosed(candidate)) continue; // weekend/holiday — no scan scheduled
+    return candidate;
+  }
+  return null;
+}
+
 export function isSnapshotFresh(snapshot: BoardSnapshot, now: number = Date.now()): boolean {
   // Prefer the CURRENT per-board freshness budget over the value baked into
   // the snapshot doc at write time. Without this, a freshness-budget change
@@ -471,18 +593,66 @@ export function isSnapshotFresh(snapshot: BoardSnapshot, now: number = Date.now(
   // the live `fallback-partial` path until the next scheduled scan (which on
   // a weekend is days away). The stored value is the fallback for any
   // snapshot that doesn't carry its board (older docs / tests).
-  const board = (snapshot as BoardSnapshot & { board?: BoardName }).board;
+  const stamped = snapshot as BoardSnapshot & { board?: BoardName; universe?: UniverseKey };
   const budget =
-    (board && FRESHNESS_BUDGETS_MS[board]) ?? snapshot.freshnessBudgetMs;
-  return snapshotAgeMs(snapshot, now) < budget;
+    (stamped.board && FRESHNESS_BUDGETS_MS[stamped.board]) ?? snapshot.freshnessBudgetMs;
+  // Budget floor — any snapshot younger than its board budget is fresh.
+  if (snapshotAgeMs(snapshot, now) < budget) return true;
+
+  // Wave 4A (M2) — schedule-aware predicate for the daily after-close
+  // boards: fresh ⇔ generatedAt >= the last expected scan slot. This is
+  // what keeps a Friday-22:05 snapshot fresh on Sunday and across a
+  // holiday Monday, while still flagging it stale on a normal Tuesday
+  // after a missed Monday scan. Intraday boards (no slot) keep pure
+  // budget-based freshness.
+  const slot = dailyScanSlotFor(stamped.board, stamped.universe);
+  if (!slot) return false;
+  const expected = lastExpectedScanSlot(now, slot);
+  if (!expected) return false;
+  return new Date(snapshot.generatedAt).getTime() >= expected.getTime();
+}
+
+/**
+ * Wave 4A — keep-daily-close retention policy. The Prophet russell/all
+ * workers write a snapshot every 30 min in market hours (up to ~36/day
+ * at up to 800KB each) and nothing ever pruned them — runs/ grew
+ * unbounded. But the daily after-close snapshots are the backtest
+ * substrate (snapshotBeforeDate / PIT reads depend on history), so a
+ * simple keep-N would eventually eat it. This mode keeps recent history
+ * verbatim and degrades old history to one snapshot per day:
+ *
+ *   - docs newer than `horizonDays` (default 30): untouched;
+ *   - docs older: keep ONE per UTC calendar day — the day's last
+ *     (highest generatedAt) non-partial snapshot, falling back to the
+ *     day's last doc when the day produced only partials — and delete
+ *     the rest (the intraday extras).
+ *
+ * Pre-horizon PIT reads (snapshotBeforeDate) therefore resolve to the
+ * kept daily-close snapshot for that calendar day. Preferring the
+ * non-partial doc keeps the M3 status filter satisfiable: deleting a
+ * day's only complete snapshot while keeping a later partial would
+ * silently shift backtests onto the previous day.
+ */
+export interface PruneKeepDailyCloseOpts {
+  mode: 'keep-daily-close';
+  /** Days of full intraday history to keep verbatim (default 30). */
+  horizonDays?: number;
+  /** Test seam — "now" in epoch ms. */
+  now?: number;
 }
 
 /**
  * Phase 4h W1 — retention. After a successful scan publishes a fresh
- * snapshot, prune the universe's `runs/` history to the most recent
- * `keep` docs (default 30) so the collection doesn't grow without
- * limit. The `_latest` pointer is untouched — it's a per-universe doc
- * in `_latest/`, not in `runs/`.
+ * snapshot, prune the universe's `runs/` history. Two policies:
+ *
+ *   - `keep` as a number (default 30): keep the most recent N docs,
+ *     delete the rest (the original Phase 4h behavior — insider/target
+ *     boards, which have no backtest dependency on deep history);
+ *   - `keep` as `{ mode: 'keep-daily-close', ... }`: Wave 4A policy for
+ *     the Prophet runs/ history — see PruneKeepDailyCloseOpts above.
+ *
+ * The `_latest` pointer is untouched — it's a per-universe doc in
+ * `_latest/`, not in `runs/`.
  *
  * Deletes are batched in chunks of 100 (well under Firestore's 500-op
  * batch ceiling) so a one-time backlog of hundreds of stale docs is
@@ -491,7 +661,7 @@ export function isSnapshotFresh(snapshot: BoardSnapshot, now: number = Date.now(
 export async function pruneOldSnapshots(
   board: BoardName,
   universe: UniverseKey,
-  keep: number = 30,
+  keep: number | PruneKeepDailyCloseOpts = 30,
 ): Promise<{ deleted: number; kept: number }> {
   const db = getAdminDb();
   const all = await db
@@ -502,9 +672,44 @@ export async function pruneOldSnapshots(
     .orderBy('generatedAt', 'desc')
     .get();
 
-  if (all.size <= keep) return { deleted: 0, kept: all.size };
+  let toDelete: FirebaseFirestore.QueryDocumentSnapshot[];
+  let kept: number;
 
-  const toDelete = all.docs.slice(keep);
+  if (typeof keep === 'number') {
+    if (all.size <= keep) return { deleted: 0, kept: all.size };
+    toDelete = all.docs.slice(keep);
+    kept = keep;
+  } else {
+    const horizonDays = keep.horizonDays ?? 30;
+    const now = keep.now ?? Date.now();
+    const cutoffIso = new Date(now - horizonDays * 86_400_000).toISOString();
+
+    // Docs arrive newest-first. Group pre-horizon docs by UTC calendar
+    // day; per day keep the first (= latest) non-partial doc — or, if
+    // the day has only partials, its first doc — and mark the rest.
+    toDelete = [];
+    const keeperByDay = new Map<string, { isPartial: boolean; doc: FirebaseFirestore.QueryDocumentSnapshot }>();
+    for (const doc of all.docs) {
+      const data = doc.data() as { generatedAt?: string; status?: string };
+      const generatedAt = data.generatedAt;
+      if (typeof generatedAt !== 'string' || generatedAt >= cutoffIso) continue; // within horizon — untouched
+      const day = generatedAt.slice(0, 10);
+      const isPartial = data.status === 'partial';
+      const current = keeperByDay.get(day);
+      if (!current) {
+        keeperByDay.set(day, { isPartial, doc });
+      } else if (current.isPartial && !isPartial) {
+        // Found the day's latest non-partial; demote the partial keeper.
+        toDelete.push(current.doc);
+        keeperByDay.set(day, { isPartial, doc });
+      } else {
+        toDelete.push(doc);
+      }
+    }
+    kept = all.size - toDelete.length;
+    if (toDelete.length === 0) return { deleted: 0, kept };
+  }
+
   let deleted = 0;
   const CHUNK = 100;
   for (let i = 0; i < toDelete.length; i += CHUNK) {
@@ -514,7 +719,7 @@ export async function pruneOldSnapshots(
     await batch.commit();
     deleted += slice.length;
   }
-  return { deleted, kept: keep };
+  return { deleted, kept };
 }
 
 /**

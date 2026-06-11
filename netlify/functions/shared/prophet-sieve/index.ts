@@ -25,6 +25,12 @@ import type { SieveMeta, StageMeta } from './types';
 export interface SieveResult {
   picks: ProphetPick[];
   meta: SieveMeta;
+  /** Wave 4A (M8) — total universe size at scan start (entries fed in). */
+  universeSize: number;
+  /** Wave 4A (M8) — TRUE coverage: how many tickers Stage 1 actually
+   *  scored before its budget. Previously this reported entries.length
+   *  unconditionally, so a budget-truncated Stage 1 (e.g. 1,200 of
+   *  1,928 scored) still claimed full-universe coverage. */
   universeChecked: number;
   scanDurationMs: number;
   warnings: string[];
@@ -144,7 +150,8 @@ export async function runProphetSieve(opts: RunSieveOpts): Promise<SieveResult> 
   return {
     picks,
     meta,
-    universeChecked: opts.entries.length,
+    universeSize: opts.entries.length,
+    universeChecked: s1.meta.scored,
     scanDurationMs,
     warnings,
   };

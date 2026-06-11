@@ -148,6 +148,28 @@ describe.each(['largecap', 'russell', 'all'] as const)(
   },
 );
 
+describe('prophet-picks — honest coverage (Wave 4A M8)', () => {
+  it('serves universeSize (full universe) and universeChecked (actually scored) separately', async () => {
+    mocks.latestReturn.value = {
+      ...snapshot({ ageMs: 60 * 60_000 }),
+      universeSize: 1930,
+      universeChecked: 1200, // Stage 1 hit its budget
+    };
+    const res = (await handler(evt({ universe: 'russell' }), {} as any, () => {})) as any;
+    const body = JSON.parse(res.body);
+    expect(body.universeSize).toBe(1930);
+    expect(body.universeChecked).toBe(1200);
+  });
+
+  it('pre-Wave-4A snapshots (no universeSize) fall back to universeChecked for both fields', async () => {
+    mocks.latestReturn.value = snapshot({ ageMs: 60 * 60_000 }); // universeChecked: 508, no universeSize
+    const res = (await handler(evt({ universe: 'largecap' }), {} as any, () => {})) as any;
+    const body = JSON.parse(res.body);
+    expect(body.universeSize).toBe(508);
+    expect(body.universeChecked).toBe(508);
+  });
+});
+
 describe('prophet-picks — sieve telemetry + narration backfill', () => {
   it('passes sieve telemetry through for russell snapshots', async () => {
     mocks.latestReturn.value = snapshot({

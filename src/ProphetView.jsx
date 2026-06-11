@@ -97,7 +97,7 @@ export const ProphetView = () => {
           <div className="flex items-center gap-2 text-neutral-500">
             <span>
               <span className="text-neutral-300">{data.universe === 'largecap' ? 'Large Cap' : data.universe === 'russell' ? 'Russell 2K' : 'All Indices'}:</span>{' '}
-              {data.qualified ?? data.picks?.length ?? 0} qualified / {data.tickersScanned ?? data.universeSize} scanned
+              {data.qualified ?? data.picks?.length ?? 0} qualified / {data.universeChecked ?? data.tickersScanned ?? data.universeSize} scanned
             </span>
             {data.cached && !data.stale && <span className="text-neutral-600">· cached</span>}
             {data.partial && <span className="text-amber-500">· partial</span>}
@@ -111,11 +111,16 @@ export const ProphetView = () => {
       )}
 
       {/* 4c-2: Sieve coverage strip — only renders when sieve metadata is present
-          (Russell snapshots produced by the 3-stage sieve). The ladder makes it
-          clear that the system actually scored the full universe, not just the
-          ~600 that the pre-4c-2 single-pass scan reached. */}
+          (Russell snapshots produced by the 3-stage sieve). Wave 4A (M8): the
+          strip reports TRUE coverage — universeChecked is the count Stage 1
+          actually scored, shown as scored/universe when the stage hit its
+          budget instead of implying full-universe coverage. */}
       {data?.sieve && (
-        <SieveCoverageStrip sieve={data.sieve} universeSize={data.universeSize} />
+        <SieveCoverageStrip
+          sieve={data.sieve}
+          universeSize={data.universeSize}
+          universeChecked={data.universeChecked}
+        />
       )}
 
       {/* Warning banner for stale/partial */}

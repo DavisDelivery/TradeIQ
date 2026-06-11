@@ -28,6 +28,7 @@ import { runProphetScan, type ProphetUniverseKey } from './shared/scan-prophet';
 import {
   writeSnapshot,
   assessSnapshotPublish,
+  pruneOldSnapshots,
   FRESHNESS_BUDGETS_MS,
   type UniverseKey,
 } from './shared/snapshot-store';
@@ -106,7 +107,12 @@ export const handler: Handler = async (event) => {
       modelVersion: MODEL_VERSION,
       generatedAt: new Date().toISOString(),
       scanDurationMs: scan.scanDurationMs,
+      // runProphetScan's universeChecked is the universe size; the
+      // single-pass scan has no separate scored count (a truncated run
+      // is stamped status:'partial' instead). Stamp universeSize so
+      // consumers read a consistent shape across Prophet universes.
       universeChecked: scan.universeChecked,
+      universeSize: scan.universeChecked,
       results: scan.picks,
       freshnessBudgetMs: FRESHNESS_BUDGETS_MS.prophet,
       warnings,
@@ -127,6 +133,19 @@ export const handler: Handler = async (event) => {
       scanDurationMs: scan.scanDurationMs,
       overallDurationMs: Date.now() - overallStart,
     });
+
+    // Wave 4A — keep-daily-close retention. The 'all' cron fires every
+    // 30 min in market hours; beyond the 30-day horizon only each day's
+    // last snapshot (the backtest substrate snapshotBeforeDate reads) is
+    // kept. Best-effort: a prune failure must never fail a successful scan.
+    try {
+      const { deleted, kept } = await pruneOldSnapshots('prophet', STORE_KEY, {
+        mode: 'keep-daily-close',
+      });
+      log.info('snapshot_retention_pruned', { universe: STORE_KEY, deleted, kept });
+    } catch (err: any) {
+      log.warn('snapshot_retention_prune_failed', { err: String(err?.message ?? err) });
+    }
 
     // The response body is discarded by Netlify for background functions;
     // the payload below surfaces only in function logs/tests.

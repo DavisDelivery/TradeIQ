@@ -29,6 +29,7 @@ import type { Handler } from '@netlify/functions';
 import {
   writeSnapshot,
   assessSnapshotPublish,
+  pruneOldSnapshots,
   FRESHNESS_BUDGETS_MS,
   type UniverseKey,
 } from './shared/snapshot-store';
@@ -92,7 +93,10 @@ export const handler: Handler = async (event) => {
     if (status === 'complete') {
       const decision = assessSnapshotPublish({
         resultCount: sieveResult.picks.length,
-        universeChecked: sieveResult.universeChecked,
+        // Wave 4A (M8) — the guard's denominator is "universe size at
+        // scan start" (the Bug-A empty-over-large-universe check), not
+        // the scored count, which is what universeChecked now carries.
+        universeChecked: sieveResult.universeSize,
       });
       if (decision.action === 'skip') {
         log.warn('publish_guard_skip', { reason: decision.reason });
@@ -109,7 +113,10 @@ export const handler: Handler = async (event) => {
       modelVersion: MODEL_VERSION,
       generatedAt: new Date().toISOString(),
       scanDurationMs: sieveResult.scanDurationMs,
+      // Wave 4A (M8) — honest coverage: universeChecked is Stage 1's
+      // actually-scored count; universeSize is the full universe.
       universeChecked: sieveResult.universeChecked,
+      universeSize: sieveResult.universeSize,
       results: sieveResult.picks,
       freshnessBudgetMs: FRESHNESS_BUDGETS_MS.prophet,
       warnings,
@@ -149,9 +156,25 @@ export const handler: Handler = async (event) => {
       picks: count,
       narrated: narratedCount,
       universeChecked: sieveResult.universeChecked,
+      universeSize: sieveResult.universeSize,
       scanDurationMs: sieveResult.scanDurationMs,
       overallDurationMs: Date.now() - overallStart,
     });
+
+    // Wave 4A — keep-daily-close retention. The russell cron fires every
+    // 30 min in market hours, so runs/ accumulates up to ~18 snapshots a
+    // day at up to 800KB; beyond the 30-day horizon only each day's last
+    // snapshot (the backtest substrate snapshotBeforeDate reads) is kept.
+    // Best-effort, mirroring the insider/target workers: a prune failure
+    // must never fail a successful scan.
+    try {
+      const { deleted, kept } = await pruneOldSnapshots('prophet', STORE_KEY, {
+        mode: 'keep-daily-close',
+      });
+      log.info('snapshot_retention_pruned', { universe: STORE_KEY, deleted, kept });
+    } catch (err: any) {
+      log.warn('snapshot_retention_prune_failed', { err: String(err?.message ?? err) });
+    }
 
     // The response body is discarded by Netlify for background functions;
     // the payload below surfaces only in function logs/tests.
@@ -167,6 +190,7 @@ export const handler: Handler = async (event) => {
         picks: count,
         narrated: narratedCount,
         universeChecked: sieveResult.universeChecked,
+        universeSize: sieveResult.universeSize,
         scanDurationMs: sieveResult.scanDurationMs,
         sieve: sieveResult.meta,
         warnings,

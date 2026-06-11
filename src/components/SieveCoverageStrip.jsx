@@ -7,6 +7,13 @@ import { Filter } from 'lucide-react';
 //   2037 names → s1 survivors → s2 survivors → final qualified
 // If any stage stamped `partial: true`, the strip turns amber and the
 // PARTIAL marker calls out which stage ran out of budget.
+//
+// Wave 4A (M8): the first rung reports TRUE coverage. When Stage 1 hit
+// its budget and scored fewer names than the universe holds, the rung
+// reads "scored/universe names" (e.g. "1,200/2,037 names") instead of
+// implying the whole universe was checked. `universeChecked` comes from
+// the API response (stage1.scored); when absent (older payloads) it
+// falls back to the sieve metadata itself.
 
 function fmt(n) {
   if (n == null || !Number.isFinite(n)) return '—';
@@ -20,10 +27,13 @@ function whichPartial(sieve) {
   return null;
 }
 
-export const SieveCoverageStrip = ({ sieve, universeSize }) => {
+export const SieveCoverageStrip = ({ sieve, universeSize, universeChecked }) => {
   if (!sieve) return null;
 
   const partial = whichPartial(sieve);
+  const scored = universeChecked ?? sieve.stage1?.scored;
+  const partialCoverage =
+    Number.isFinite(scored) && Number.isFinite(universeSize) && scored < universeSize;
   const tone = partial
     ? 'border-amber-500/30 bg-amber-500/5 text-amber-300'
     : 'border-neutral-800 bg-neutral-950/60 text-neutral-400';
@@ -39,9 +49,18 @@ export const SieveCoverageStrip = ({ sieve, universeSize }) => {
         <Filter className="h-3 w-3 flex-shrink-0" />
         <span className="uppercase tracking-widest text-[9px] opacity-70 hidden sm:inline">Sieve</span>
         <div className="flex items-baseline gap-1.5 flex-wrap">
-          <span className={numberTone} title="Tickers fed into Stage 1">
-            {fmt(universeSize)} names
-          </span>
+          {partialCoverage ? (
+            <span
+              className={numberTone}
+              title={`Stage 1 scored ${fmt(scored)} of the ${fmt(universeSize)}-name universe before its budget`}
+            >
+              {fmt(scored)}/{fmt(universeSize)} names
+            </span>
+          ) : (
+            <span className={numberTone} title="Tickers fed into Stage 1">
+              {fmt(universeSize)} names
+            </span>
+          )}
           <span className={arrowTone}>→</span>
           <span className={numberTone} title={`Stage 1 survivors${sieve.stage1.thresholdScore != null ? ` (≥${sieve.stage1.thresholdScore})` : ''}`}>
             s1: {fmt(sieve.stage1.survived)}
