@@ -26,19 +26,22 @@ beforeEach(() => {
 });
 
 describe('cost estimation', () => {
-  it('estimateCostUsd uses Opus 4.7 pricing ($15/M in, $75/M out)', () => {
-    // 1M output tokens = $75
-    expect(estimateCostUsd(1_000_000, 0)).toBeCloseTo(75, 5);
-    // 1M input tokens = $15
-    expect(estimateCostUsd(0, 1_000_000)).toBeCloseTo(15, 5);
-    // 1k out + 4k in = $0.075 + $0.060 = $0.135
-    expect(estimateCostUsd(1000, 4000)).toBeCloseTo(0.135, 5);
+  it('estimateCostUsd uses real Opus-tier pricing ($5/M in, $25/M out)', () => {
+    // The previous assertions pinned $15/$75 — 3x the real Opus 4.7/4.8
+    // price — which locked in a budget cap that tripped at 1/3 of the
+    // intended daily spend (code-review-2026-06, infra #3).
+    // 1M output tokens = $25
+    expect(estimateCostUsd(1_000_000, 0)).toBeCloseTo(25, 5);
+    // 1M input tokens = $5
+    expect(estimateCostUsd(0, 1_000_000)).toBeCloseTo(5, 5);
+    // 1k out + 4k in = $0.025 + $0.020 = $0.045
+    expect(estimateCostUsd(1000, 4000)).toBeCloseTo(0.045, 5);
   });
 
   it('actualCostUsd handles missing token counts as 0', () => {
     expect(actualCostUsd({})).toBe(0);
-    expect(actualCostUsd({ input_tokens: 1000 })).toBeCloseTo(0.015, 5);
-    expect(actualCostUsd({ output_tokens: 1000 })).toBeCloseTo(0.075, 5);
+    expect(actualCostUsd({ input_tokens: 1000 })).toBeCloseTo(0.005, 5);
+    expect(actualCostUsd({ output_tokens: 1000 })).toBeCloseTo(0.025, 5);
   });
 });
 
@@ -57,7 +60,7 @@ describe('daily spend cap', () => {
     process.env.ANTHROPIC_DAILY_BUDGET_USD = '0.20';
 
     await preflightBudget(0.05);
-    await recordSpend({ input_tokens: 5_000, output_tokens: 2_000 });  // ~$0.225
+    await recordSpend({ input_tokens: 15_000, output_tokens: 6_000 });  // ~$0.225
 
     // Now over budget — even a $0.001 call should be rejected.
     await expect(preflightBudget(0.001)).rejects.toBeInstanceOf(BudgetExhaustedError);
@@ -80,8 +83,8 @@ describe('daily spend cap', () => {
     await recordSpend({ input_tokens: 1000, output_tokens: 500 });
     const s = await getSpendToday();
     expect(s.calls).toBe(2);
-    // 2 * (15*1000/1e6 + 75*500/1e6) = 2 * (0.015 + 0.0375) = 0.105
-    expect(s.totalUsd).toBeCloseTo(0.105, 5);
+    // 2 * (5*1000/1e6 + 25*500/1e6) = 2 * (0.005 + 0.0125) = 0.035
+    expect(s.totalUsd).toBeCloseTo(0.035, 5);
   });
 });
 

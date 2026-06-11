@@ -11,3 +11,6 @@ backups/
 .secrets/
 data/backfill-log.jsonl
 data/cache/
+
+# Claude Code harness state (agent worktrees etc.)
+.claude/
