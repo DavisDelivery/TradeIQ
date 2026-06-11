@@ -8,13 +8,31 @@ export type PortfolioUniverse = 'largecap' | 'russell2k';
 
 export interface PortfolioPosition {
   ticker: string;
+  /** COSMETIC, entry-time record (Wave 3A / CR-5). Captured at entry for
+   *  display + swap-event bookkeeping only. NEVER used for valuation:
+   *  Polygon closes are split-adjusted, so a fixed share count × today's
+   *  adjusted close misreads every split as a price move. Valuation is
+   *  `marketValue`, chained from daily adjusted-close returns. */
   shares: number;
   entryDate: string; // YYYY-MM-DD
+  /** Cosmetic entry-time record — in the adjusted basis at entry time;
+   *  NOT comparable to currentPrice across later splits. */
   entryPrice: number;
+  /** Latest adjusted close observed for display. Cosmetic — splits make
+   *  it discontinuous with entryPrice; do not derive value from it. */
   currentPrice: number;
-  marketValue: number; // shares * currentPrice
+  /** Position value, chained from entry: compounded daily by
+   *  todayAdjClose/prevAdjClose − 1 with both closes from the SAME bar
+   *  fetch (split-consistent basis), so splits have ~0 equity impact.
+   *  Price-only: Polygon adjusted=true is splits-only, dividends are NOT
+   *  credited (the SPY benchmark column is price-only too — consistent). */
+  marketValue: number;
   weight: number; // marketValue / totalEquity, 0..1
   sector: string;
+  /** Bar date (YYYY-MM-DD) `marketValue` is marked to. Absent on rows
+   *  persisted before Wave 3A — recomputeMarks migrates those by seeding
+   *  the chain from the legacy shares×price marketValue at state.asOfDate. */
+  lastMarkDate?: string;
 }
 
 export interface PortfolioState {
@@ -80,10 +98,17 @@ export interface SwapEvent {
 }
 
 export interface EquityCurvePoint {
+  /** The BAR date the marks belong to (latest settled session), NOT the
+   *  wall-clock date the cron ran (Wave 3A / M9) — so holidays/weekends
+   *  never produce duplicate or misdated points. */
   date: string;
   equity: number;
   cash: number;
   holdingsValue: number;
+  /** Return since the previous written point. Normally one session; if
+   *  the cron missed sessions it spans them (multi-session, still keyed
+   *  to bar dates). Price-only — splits-only adjusted closes on both the
+   *  portfolio and the benchmark columns; dividends excluded on both. */
   dailyReturn: number;
   spyClose: number | null;
   qqqClose: number | null;
@@ -91,6 +116,15 @@ export interface EquityCurvePoint {
 }
 
 export type DecisionAction = 'ADD' | 'EXIT' | 'HOLD_IN' | 'HOLD_OUT';
+
+/** Lifecycle of a row's forward-return labels (Wave 3A / M5):
+ *  - 'pending'   — windows still maturing or unfilled; populator picks it up.
+ *  - 'complete'  — all three windows populated.
+ *  - 'exhausted' — populator failed MAX_FWD_RETURN_ATTEMPTS times on
+ *    matured windows (delisted ticker, no bars, …); unfilled windows are
+ *    written as explicit nulls and the row is excluded from future
+ *    batches so it can't starve younger rows out of the oldest-first query. */
+export type FwdReturnsStatus = 'pending' | 'complete' | 'exhausted';
 
 export interface DecisionLogRow {
   decisionDate: string;
@@ -105,6 +139,10 @@ export interface DecisionLogRow {
   forwardReturn30d?: number | null;
   forwardReturn60d?: number | null;
   forwardReturn90d?: number | null;
+  /** Wave 3A / M5 — see FwdReturnsStatus. Stamped 'pending' at write. */
+  fwdReturnsStatus?: FwdReturnsStatus;
+  /** Runs where a matured window stayed unfilled after an attempt. */
+  fwdReturnAttempts?: number;
 }
 
 // --- Ranking signal interface (W2) ------------------------------------------

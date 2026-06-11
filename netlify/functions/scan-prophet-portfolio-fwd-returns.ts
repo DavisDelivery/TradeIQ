@@ -14,6 +14,17 @@
 // This function lands dormant pre-W5 — decisionLog is empty until the
 // rebalance scheduled function ships and starts writing rows. Until
 // then this scan is a no-op each day.
+//
+// Wave 3A / M5 — starvation fix: listDecisionLogRowsOlderThan returns
+// the OLDEST ≤200 pending rows. Rows that can never resolve (delisted
+// ticker → no bars; exit bar forever past the data) used to be retried
+// and pile up at the head of that window until no younger row was ever
+// batched again. Now each failed attempt on a matured window increments
+// `fwdReturnAttempts`; after MAX_FWD_RETURN_ATTEMPTS the row is marked
+// `fwdReturnsStatus: 'exhausted'` with explicit nulls for its unfilled
+// windows, and rows whose three windows all fill get
+// `fwdReturnsStatus: 'complete'` — both states drop out of the
+// pending-only query (see state.ts) so younger rows keep flowing.
 
 import { schedule } from '@netlify/functions';
 import { getDailyBars } from './shared/data-provider';
@@ -32,6 +43,16 @@ import type {
 } from './shared/prophet-portfolio/types';
 
 const UNIVERSES: PortfolioUniverse[] = ['largecap'];
+
+/** Wave 3A / M5 — after this many runs where a MATURED window stayed
+ *  unfilled (no bars / unresolvable exit), the row is written off as
+ *  'exhausted' (explicit nulls) so it stops occupying the oldest-first
+ *  query head. In practice a ticker whose matured 30d window fails N
+ *  consecutive daily runs has stopped trading — later windows are dead
+ *  too, so the whole row is closed out rather than aged to 95d. */
+export const MAX_FWD_RETURN_ATTEMPTS = 5;
+
+const ALL_WINDOWS = [30, 60, 90] as const;
 
 function daysBetweenStrings(a: string, b: string): number {
   const ams = Date.parse(`${a}T00:00:00Z`);
@@ -78,6 +99,7 @@ async function fetchBars(
 export interface PopulateResult {
   rowsConsidered: number;
   rowsUpdated: number;
+  rowsExhausted: number;
   warnings: string[];
 }
 
@@ -94,9 +116,24 @@ export async function populateForwardReturns(
     .slice(0, 10);
   const rows = await listDecisionLogRowsOlderThan(universe, cutoff, batchLimit);
   let updated = 0;
+  let exhausted = 0;
   for (const row of rows) {
+    // Defensive: the pending-only query already excludes these; skip in
+    // case a caller hands us rows from another source.
+    if (row.fwdReturnsStatus === 'exhausted' || row.fwdReturnsStatus === 'complete') {
+      continue;
+    }
     const windows = maturedWindowsFor(row, today);
-    if (windows.length === 0) continue;
+    if (windows.length === 0) {
+      // Nothing matured AND nothing missing? Then every window is filled
+      // — close the row out so it leaves the pending query.
+      if (ALL_WINDOWS.every((w) => row[`forwardReturn${w}d`] != null)) {
+        await updateDecisionLogForwardReturns(universe, row.ticker, row.decisionDate, {
+          fwdReturnsStatus: 'complete',
+        });
+      }
+      continue;
+    }
     const maxWindow = Math.max(...windows);
     const fromDate = row.decisionDate;
     const toDate = new Date(
@@ -106,16 +143,48 @@ export async function populateForwardReturns(
       .toISOString()
       .slice(0, 10);
     const bars = await fetchBars(row.ticker, fromDate, toDate);
-    if (bars.length === 0) {
-      warnings.push(`no bars for ${row.ticker} ${row.decisionDate}..${toDate}`);
-      continue;
-    }
-    const ret = computeForwardReturns(row.decisionDate, bars, windows);
-    const patch: Record<string, number | null> = {};
+    const ret =
+      bars.length > 0
+        ? computeForwardReturns(row.decisionDate, bars, windows)
+        : ({} as Record<string, number | null>);
+    const patch: Record<string, number | null | string> = {};
+    const unresolved: number[] = [];
     for (const w of windows) {
       const key = `forwardReturn${w}d`;
       if (ret[key] != null) patch[key] = ret[key];
+      else unresolved.push(w);
     }
+    if (bars.length === 0) {
+      warnings.push(`no bars for ${row.ticker} ${row.decisionDate}..${toDate}`);
+    }
+
+    if (unresolved.length > 0) {
+      // M5 — a matured window stayed unfilled: count the attempt; at the
+      // cap, write the row off with explicit nulls so it stops blocking
+      // the oldest-first batch window.
+      const attempts = (row.fwdReturnAttempts ?? 0) + 1;
+      patch.fwdReturnAttempts = attempts;
+      if (attempts >= MAX_FWD_RETURN_ATTEMPTS) {
+        for (const w of ALL_WINDOWS) {
+          const key = `forwardReturn${w}d` as const;
+          if (row[key] == null && patch[key] === undefined) {
+            patch[key] = null;
+          }
+        }
+        patch.fwdReturnsStatus = 'exhausted';
+        exhausted++;
+        warnings.push(
+          `exhausted ${row.ticker} ${row.decisionDate} after ${attempts} attempts (windows ${unresolved.join('/')} unresolved)`,
+        );
+      }
+    } else if (
+      ALL_WINDOWS.every(
+        (w) => patch[`forwardReturn${w}d`] != null || row[`forwardReturn${w}d`] != null,
+      )
+    ) {
+      patch.fwdReturnsStatus = 'complete';
+    }
+
     if (Object.keys(patch).length > 0) {
       await updateDecisionLogForwardReturns(
         universe,
@@ -126,7 +195,12 @@ export async function populateForwardReturns(
       updated++;
     }
   }
-  return { rowsConsidered: rows.length, rowsUpdated: updated, warnings };
+  return {
+    rowsConsidered: rows.length,
+    rowsUpdated: updated,
+    rowsExhausted: exhausted,
+    warnings,
+  };
 }
 
 export const handler = schedule('0 21 * * *', async () => {
@@ -140,6 +214,7 @@ export const handler = schedule('0 21 * * *', async () => {
         universe: u,
         rowsConsidered: summary[u].rowsConsidered,
         rowsUpdated: summary[u].rowsUpdated,
+        rowsExhausted: summary[u].rowsExhausted,
       });
     }
     return {
