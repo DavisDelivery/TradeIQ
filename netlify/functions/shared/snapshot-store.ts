@@ -386,14 +386,35 @@ export async function writeSnapshot(
     .collection('_latest')
     .doc(universe);
 
+  // Wave 2D (M4) — promotion-race guard. Scans overlap in production
+  // (russell crons fire every 30 min while a sieve run takes ~15 min;
+  // the manual largecap trigger can overlap the 22:00 cron). A blind
+  // pointer set would let a scan that STARTED earlier but FINISHED later
+  // move _latest backwards onto older data. So inside the transaction we
+  // read the current pointer and only promote when this snapshot's
+  // generatedAt is strictly newer than the one already promoted.
+  let promotedToLatest = false;
   await db.runTransaction(async (tx) => {
+    let canPromote = !isPartial;
+    if (canPromote) {
+      const current = await tx.get(latestDoc);
+      const currentGeneratedAt = current.exists
+        ? (current.data() as { generatedAt?: string } | undefined)?.generatedAt
+        : undefined;
+      if (
+        typeof currentGeneratedAt === 'string' &&
+        new Date(safeSnapshot.generatedAt).getTime() <= new Date(currentGeneratedAt).getTime()
+      ) {
+        canPromote = false;
+      }
+    }
     tx.set(runDoc, {
       ...safeSnapshot,
       universe,
       board,
       writtenAt: Timestamp.now(),
     });
-    if (!isPartial) {
+    if (canPromote) {
       tx.set(latestDoc, {
         snapshotId,
         generatedAt: safeSnapshot.generatedAt,
@@ -403,9 +424,10 @@ export async function writeSnapshot(
         writtenAt: Timestamp.now(),
       });
     }
+    promotedToLatest = canPromote;
   });
 
-  return { snapshotId, promotedToLatest: !isPartial };
+  return { snapshotId, promotedToLatest };
 }
 
 /**
@@ -636,18 +658,41 @@ export async function snapshotBeforeDate(
   // End-of-day UTC ceiling — anything generated up to and including
   // 23:59:59.999 on asOfDate counts as "on or before."
   const cutoffIso = `${asOfDate}T23:59:59.999Z`;
-  const snap = await db
+  const base = db
     .collection('boardSnapshots')
     .doc(board)
     .collection('runs')
     .where('universe', '==', universe)
     .where('generatedAt', '<=', cutoffIso)
-    .orderBy('generatedAt', 'desc')
-    .limit(1)
-    .get();
-  if (snap.empty) return null;
-  const data = snap.docs[0].data() as BoardSnapshot;
-  return data;
+    .orderBy('generatedAt', 'desc');
+
+  // Wave 2D (M3) — status filter. Partial snapshots are deliberately
+  // written to runs/ for diagnostics and NEVER promoted to _latest (the
+  // writeSnapshot guard). PIT reads and the backtest ranking signal must
+  // honor the same canon: skip status:'partial' docs and return the most
+  // recent non-partial snapshot ≤ asOfDate. Degraded snapshots stay
+  // eligible — the promotion guard publishes those (status:'complete',
+  // degraded:true), so they ARE canonical.
+  //
+  // Walked in pages rather than a where('status','!=',…) clause because
+  // Firestore disallows an inequality on status alongside the
+  // generatedAt range + orderBy. Page size 10 covers the common case
+  // (zero or few partials) in one read.
+  const PAGE = 10;
+  let cursor: FirebaseFirestore.QueryDocumentSnapshot | null = null;
+  for (;;) {
+    const query: FirebaseFirestore.Query = cursor
+      ? base.startAfter(cursor).limit(PAGE)
+      : base.limit(PAGE);
+    const snap: FirebaseFirestore.QuerySnapshot = await query.get();
+    if (snap.empty) return null;
+    for (const doc of snap.docs) {
+      const data = doc.data() as BoardSnapshot;
+      if (data.status !== 'partial') return data;
+    }
+    if (snap.docs.length < PAGE) return null;
+    cursor = snap.docs[snap.docs.length - 1];
+  }
 }
 
 /**

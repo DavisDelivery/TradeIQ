@@ -16,6 +16,7 @@
 import { runProphetScan, type ProphetUniverseKey } from './scan-prophet';
 import {
   writeSnapshot,
+  assessSnapshotPublish,
   FRESHNESS_BUDGETS_MS,
   type UniverseKey,
   type BoardSnapshot,
@@ -75,8 +76,34 @@ export async function runProphetSnapshot(
       logger: log,
     });
 
-    const status: 'complete' | 'partial' =
+    let status: 'complete' | 'partial' =
       opts.forcePartial || scan.budgetExceeded ? 'partial' : 'complete';
+    const warnings = [...(scan.warnings ?? [])];
+    let degraded: boolean | undefined;
+    let degradedReason: string | undefined;
+
+    // Wave 2D (CR-8) — publish guard on the Prophet publish path. A scan
+    // that "completed" but assembled a hollow result (e.g. a data-provider
+    // outage yielding 0 picks over a 500+-name universe) must not swap
+    // _latest. We demote it to status:'partial' so it still lands in
+    // runs/ for diagnostics but the prior good snapshot stays canonical —
+    // the same discipline the insider/target workers enforce via
+    // assessSnapshotPublish before their terminal write.
+    if (status === 'complete') {
+      const decision = assessSnapshotPublish({
+        resultCount: scan.picks.length,
+        universeChecked: scan.universeChecked,
+      });
+      if (decision.action === 'skip') {
+        log.warn('publish_guard_skip', { reason: decision.reason });
+        status = 'partial';
+        warnings.push(`publish guard: ${decision.reason}`);
+      } else if (decision.action === 'publish-degraded') {
+        log.warn('publish_guard_degraded', { reason: decision.reason });
+        degraded = true;
+        degradedReason = decision.reason;
+      }
+    }
 
     const snapshot: BoardSnapshot = {
       modelVersion: MODEL_VERSION,
@@ -85,7 +112,9 @@ export async function runProphetSnapshot(
       universeChecked: scan.universeChecked,
       results: scan.picks,
       freshnessBudgetMs: FRESHNESS_BUDGETS_MS.prophet,
-      warnings: scan.warnings,
+      warnings,
+      degraded,
+      degradedReason,
       status,
     };
 
@@ -110,7 +139,7 @@ export async function runProphetSnapshot(
       universeChecked: scan.universeChecked,
       scanDurationMs: scan.scanDurationMs,
       overallDurationMs: Date.now() - overallStart,
-      warnings: scan.warnings,
+      warnings,
     };
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);

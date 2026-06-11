@@ -14,9 +14,10 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // vi.mock factories hoist above const declarations, so we use vi.hoisted to
 // share spies between the mock factories and the test bodies.
-const { writeSnapshotMock, runProphetScanMock, narrateAllSpy, narrateTopNSpy, generateNarrativeSpy } = vi.hoisted(() => ({
+const { writeSnapshotMock, runProphetScanMock, assessPublishMock, narrateAllSpy, narrateTopNSpy, generateNarrativeSpy } = vi.hoisted(() => ({
   writeSnapshotMock: vi.fn(),
   runProphetScanMock: vi.fn(),
+  assessPublishMock: vi.fn(),
   narrateAllSpy: vi.fn(),
   narrateTopNSpy: vi.fn(),
   generateNarrativeSpy: vi.fn(),
@@ -24,6 +25,7 @@ const { writeSnapshotMock, runProphetScanMock, narrateAllSpy, narrateTopNSpy, ge
 
 vi.mock('../snapshot-store', () => ({
   writeSnapshot: writeSnapshotMock,
+  assessSnapshotPublish: assessPublishMock,
   FRESHNESS_BUDGETS_MS: { prophet: 1000 },
 }));
 vi.mock('../scan-prophet', () => ({
@@ -47,6 +49,8 @@ import { runProphetSnapshot } from '../prophet-snapshot-runner';
 beforeEach(() => {
   writeSnapshotMock.mockReset();
   runProphetScanMock.mockReset();
+  assessPublishMock.mockReset();
+  assessPublishMock.mockReturnValue({ action: 'publish' });
   narrateAllSpy.mockReset();
   narrateTopNSpy.mockReset();
   generateNarrativeSpy.mockReset();
@@ -112,6 +116,41 @@ describe('runProphetSnapshot', () => {
     expect(narrateAllSpy).not.toHaveBeenCalled();
     expect(narrateTopNSpy).not.toHaveBeenCalled();
     expect(generateNarrativeSpy).not.toHaveBeenCalled();
+  });
+
+  it('Wave 2D — demotes a hollow "complete" scan to partial when the publish guard says skip', async () => {
+    runProphetScanMock.mockResolvedValue(fakeScan({ picks: [], budgetExceeded: false }));
+    assessPublishMock.mockReturnValue({ action: 'skip', reason: 'empty result over 500-ticker universe' });
+    writeSnapshotMock.mockResolvedValue({ snapshotId: 'snap-5', promotedToLatest: false });
+    const r = await runProphetSnapshot({
+      universe: 'largecap', storeKey: 'largecap', logger: fakeLogger as any,
+    });
+    expect(assessPublishMock).toHaveBeenCalledWith({ resultCount: 0, universeChecked: 500 });
+    expect(r.status).toBe('partial');
+    expect(r.warnings).toContainEqual(expect.stringContaining('publish guard'));
+    expect(writeSnapshotMock.mock.calls[0][2]).toMatchObject({ status: 'partial' });
+  });
+
+  it('Wave 2D — stamps degraded on a publish-degraded guard decision but still publishes complete', async () => {
+    runProphetScanMock.mockResolvedValue(fakeScan());
+    assessPublishMock.mockReturnValue({ action: 'publish-degraded', reason: 'degraded: 2/10 calls failed' });
+    writeSnapshotMock.mockResolvedValue({ snapshotId: 'snap-6', promotedToLatest: true });
+    const r = await runProphetSnapshot({
+      universe: 'largecap', storeKey: 'largecap', logger: fakeLogger as any,
+    });
+    expect(r.status).toBe('complete');
+    expect(writeSnapshotMock.mock.calls[0][2]).toMatchObject({
+      status: 'complete',
+      degraded: true,
+      degradedReason: 'degraded: 2/10 calls failed',
+    });
+  });
+
+  it('Wave 2D — does not consult the publish guard for an already-partial scan', async () => {
+    runProphetScanMock.mockResolvedValue(fakeScan({ budgetExceeded: true }));
+    writeSnapshotMock.mockResolvedValue({ snapshotId: 'snap-7', promotedToLatest: false });
+    await runProphetSnapshot({ universe: 'largecap', storeKey: 'largecap', logger: fakeLogger as any });
+    expect(assessPublishMock).not.toHaveBeenCalled();
   });
 
   it('returns ok:false on an underlying scan throw without writing a snapshot', async () => {
