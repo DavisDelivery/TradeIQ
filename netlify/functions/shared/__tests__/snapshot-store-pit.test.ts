@@ -8,6 +8,7 @@ const queryBuilder = () => {
   let cutoffFilter: string | undefined;
   let order: 'asc' | 'desc' = 'asc';
   let limit = 100;
+  let startAfterId: string | undefined;
 
   const build = () => ({
     where: (field: string, op: string, value: any) => {
@@ -23,6 +24,13 @@ const queryBuilder = () => {
       limit = n;
       return build();
     },
+    // Wave 2D — snapshotBeforeDate now pages with startAfter(doc) while
+    // skipping partial-status snapshots. Mirror Firestore's cursor
+    // semantics: results strictly after the given doc in sort order.
+    startAfter: (doc: { id: string }) => {
+      startAfterId = doc.id;
+      return build();
+    },
     get: async () => {
       let items = [...fakeRuns];
       if (universeFilter) items = items.filter((r) => r.data.universe === universeFilter);
@@ -32,6 +40,10 @@ const queryBuilder = () => {
           ? a.data.generatedAt.localeCompare(b.data.generatedAt)
           : b.data.generatedAt.localeCompare(a.data.generatedAt),
       );
+      if (startAfterId !== undefined) {
+        const idx = items.findIndex((r) => r.id === startAfterId);
+        items = idx >= 0 ? items.slice(idx + 1) : items;
+      }
       items = items.slice(0, limit);
       return {
         empty: items.length === 0,
@@ -59,7 +71,11 @@ beforeEach(() => {
   fakeRuns.length = 0;
 });
 
-function seed(generatedAt: string, results: any[]): void {
+function seed(
+  generatedAt: string,
+  results: any[],
+  extra: Record<string, unknown> = {},
+): void {
   fakeRuns.push({
     id: `sp500-${generatedAt.replace(/[-T:.Z]/g, '').slice(0, 12)}`,
     data: {
@@ -71,6 +87,7 @@ function seed(generatedAt: string, results: any[]): void {
       universeChecked: 1,
       results,
       freshnessBudgetMs: 1,
+      ...extra,
     },
   });
 }
@@ -104,6 +121,54 @@ describe('snapshotBeforeDate', () => {
     seed('2025-01-15T12:00:00.000Z', [{ ticker: 'NVDA' }]);
     const out = await snapshotBeforeDate('catalyst', 'sp500', '2024-01-01');
     expect(out).toBeNull();
+  });
+
+  // Wave 2D (M3) — partial-status snapshots are written to runs/ for
+  // diagnostics but never promoted; PIT reads must honor the same canon.
+  it('skips a partial-status snapshot and returns the prior non-partial one', async () => {
+    seed('2024-03-15T12:00:00.000Z', [{ ticker: 'GOOD' }], { status: 'complete' });
+    seed('2024-03-20T12:00:00.000Z', [{ ticker: 'JUNK' }], { status: 'partial' });
+
+    const out = await snapshotBeforeDate('catalyst', 'sp500', '2024-04-01');
+    expect(out).not.toBeNull();
+    expect((out!.results as any[])[0].ticker).toBe('GOOD');
+  });
+
+  it('still returns degraded complete snapshots (promotion publishes those)', async () => {
+    seed('2024-03-15T12:00:00.000Z', [{ ticker: 'DEGRADED' }], {
+      status: 'complete',
+      degraded: true,
+      degradedReason: 'degraded: 2/10 calls failed',
+    });
+    const out = await snapshotBeforeDate('catalyst', 'sp500', '2024-04-01');
+    expect(out).not.toBeNull();
+    expect((out!.results as any[])[0].ticker).toBe('DEGRADED');
+  });
+
+  it('treats legacy snapshots without a status field as canonical', async () => {
+    seed('2024-03-15T12:00:00.000Z', [{ ticker: 'LEGACY' }]); // no status
+    const out = await snapshotBeforeDate('catalyst', 'sp500', '2024-04-01');
+    expect(out).not.toBeNull();
+    expect((out!.results as any[])[0].ticker).toBe('LEGACY');
+  });
+
+  it('returns null when only partial snapshots exist before asOfDate', async () => {
+    seed('2024-03-15T12:00:00.000Z', [{ ticker: 'JUNK1' }], { status: 'partial' });
+    seed('2024-03-20T12:00:00.000Z', [{ ticker: 'JUNK2' }], { status: 'partial' });
+    const out = await snapshotBeforeDate('catalyst', 'sp500', '2024-04-01');
+    expect(out).toBeNull();
+  });
+
+  it('pages past a long run of partials to find an older complete snapshot', async () => {
+    // 12 partials (more than one page of 10) newer than the lone complete.
+    seed('2024-03-01T12:00:00.000Z', [{ ticker: 'OLD_GOOD' }], { status: 'complete' });
+    for (let i = 0; i < 12; i++) {
+      const day = String(2 + i).padStart(2, '0');
+      seed(`2024-03-${day}T13:00:00.000Z`, [{ ticker: `P${i}` }], { status: 'partial' });
+    }
+    const out = await snapshotBeforeDate('catalyst', 'sp500', '2024-04-01');
+    expect(out).not.toBeNull();
+    expect((out!.results as any[])[0].ticker).toBe('OLD_GOOD');
   });
 });
 

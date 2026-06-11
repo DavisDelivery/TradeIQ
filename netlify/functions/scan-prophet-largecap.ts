@@ -1,4 +1,5 @@
-// Phase 6 PR-H — after-close scheduled Prophet snapshot scan (Large Cap).
+// Phase 6 PR-H / Wave 2D (CR-7) — after-close scheduled Prophet snapshot
+// scan (Large Cap), restructured as a THIN CRON DISPATCHER.
 //
 // CADENCE: weekdays at 22:00 UTC — safely after the 4pm-ET close in both
 // EST and EDT and after EOD data settles. The cron itself skips
@@ -6,65 +7,33 @@
 // Christmas, Good Friday, etc. so we never overwrite a good snapshot
 // with junk data on a closed-market day.
 //
-// SAFETY DISCIPLINE (brief's hard rule):
-//   - NEVER overwrite a good complete snapshot with a failed/empty one.
-//     `writeSnapshot` only promotes the new doc to `_latest/` when
-//     `status: 'complete'`. Partial scans land in `runs/` for diagnostics
-//     and leave the canonical pointer alone.
-//   - NO Claude in the scan. The scan body calls only deterministic
-//     scoring (the existing 7-layer Prophet path). Per-ticker thesis
-//     stays on-demand via `/api/prophet-narrate`, cached per (ticker,
-//     snapshotDate) in Firestore.
+// WHY A DISPATCHER: a scheduled Netlify function runs with synchronous
+// limits (~26s kill ceiling) — only `-background` functions get the
+// 15-min container. The full largecap scan runs ~10 min at concurrency
+// 12, so running it in-handler (the pre-Wave-2D shape of this file)
+// meant the platform killed the cron mid-scan before writeSnapshot ran.
+// This cron now only gates (holiday guard) and POSTs to
+// `scan-prophet-largecap-background`, exactly like the insider/target
+// cron→worker pairs (`scan-insider-russell2k.ts`,
+// `scan-target-board-sp500.ts`).
 //
-// This file is intentionally a thin scheduling shim around
-// `runProphetSnapshot`. The manual-trigger HTTP endpoint
-// (`scan-prophet-largecap-trigger.ts`) invokes the same shared body, so
-// the schedule and the test-run produce identical behaviour.
+// The worker calls the same shared `runProphetSnapshot` body the manual
+// trigger path (`scan-prophet-largecap-trigger*.ts`) uses, so the cron,
+// the trigger, and both workers produce identical snapshots — including
+// the PR-H safety discipline (partial-safe write, NO Claude in the scan).
 
 import { schedule } from '@netlify/functions';
-import { logger } from './shared/logger';
-import { runProphetSnapshot } from './shared/prophet-snapshot-runner';
-import { isMarketClosed } from './shared/us-market-holidays';
+import { makeProphetCronHandler } from './shared/prophet-cron-dispatcher';
 
-export const handler = schedule('0 22 * * 1-5', async () => {
-  const now = new Date();
-  const log = logger.child({ fn: 'scan-prophet-largecap', universe: 'largecap', triggeredAt: now.toISOString() });
+export const CRON = '0 22 * * 1-5';
+export const WORKER_PATH = '/.netlify/functions/scan-prophet-largecap-background';
 
-  if (isMarketClosed(now)) {
-    log.info('scheduled_scan_skipped_market_closed', { date: now.toISOString().slice(0, 10) });
-    return {
-      statusCode: 200,
-      body: JSON.stringify({
-        ok: true,
-        board: 'prophet',
-        universe: 'largecap',
-        skipped: true,
-        reason: 'market_closed',
-        date: now.toISOString().slice(0, 10),
-      }),
-    };
-  }
-
-  const result = await runProphetSnapshot({
+export const handler = schedule(
+  CRON,
+  makeProphetCronHandler({
+    fn: 'scan-prophet-largecap',
     universe: 'largecap',
-    storeKey: 'largecap',
-    logger: log,
-  });
-
-  return {
-    statusCode: result.ok ? 200 : 500,
-    body: JSON.stringify({
-      ok: result.ok,
-      board: 'prophet',
-      universe: 'largecap',
-      snapshotId: result.snapshotId,
-      status: result.status,
-      promotedToLatest: result.promotedToLatest,
-      picks: result.picks,
-      universeChecked: result.universeChecked,
-      scanDurationMs: result.scanDurationMs,
-      warnings: result.warnings,
-      error: result.error,
-    }),
-  };
-});
+    schedule: CRON,
+    workerPath: WORKER_PATH,
+  }),
+);

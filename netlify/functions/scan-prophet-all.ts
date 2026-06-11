@@ -1,99 +1,27 @@
-// Per-universe scheduled scan: prophet board.
-// Prophet has 3 universes (largecap, russell, all) — one function each.
+// Per-universe scheduled scan: prophet board, all — THIN CRON DISPATCHER
+// (Wave 2D, CR-7).
 //
-// Board:    prophet
-// Universe: all (stored as 'all')
-// Schedule: 0,30 13-21 * * 1-5
-//
-// Phase 4c-1 (W4): pre-narrate qualified picks before snapshot write.
+// Prophet has 3 universes (largecap, russell, all) — one cron each.
+// The 'all' scan walks ~2,200 tickers on a 14-min budget plus a 2-min
+// narrate step. A scheduled Netlify function has synchronous limits
+// (~26s kill ceiling), so the pre-Wave-2D shape of this file — scan +
+// narrate in-handler — was killed mid-scan before writeSnapshot ever
+// ran. The scan body now lives in `scan-prophet-all-background.ts`
+// (15-min background container); this cron only guards holidays and
+// dispatches, mirroring the insider/target cron→worker pattern.
 
 import { schedule } from '@netlify/functions';
-import { runProphetScan, type ProphetUniverseKey } from './shared/scan-prophet';
-import { writeSnapshot, FRESHNESS_BUDGETS_MS, type UniverseKey } from './shared/snapshot-store';
-import { MODEL_VERSION } from './shared/model-version';
-import { logger } from './shared/logger';
-import { narrateAll } from './shared/narrative-generator';
+import { makeProphetCronHandler } from './shared/prophet-cron-dispatcher';
 
-const PER_SCAN_BUDGET_MS = 14 * 60_000;
-// 'all' covers ~2200 tickers — scan duration is variable. 2 min narration
-// budget covers most cases without risking the container limit.
-const NARRATE_BUDGET_MS = 2 * 60_000;
-const NARRATE_CONCURRENCY = 4;
+export const CRON = '0,30 13-21 * * 1-5';
+export const WORKER_PATH = '/.netlify/functions/scan-prophet-all-background';
 
-const UNIVERSE: ProphetUniverseKey = 'all';
-const STORE_KEY: UniverseKey = 'all';
-
-export const handler = schedule('0,30 13-21 * * 1-5', async () => {
-  const log = logger.child({ fn: 'scan-prophet-all', universe: UNIVERSE });
-  const overallStart = Date.now();
-  log.info('scheduled_scan_started', { board: 'prophet', universe: UNIVERSE });
-
-  try {
-    const scan = await runProphetScan({
-      universe: UNIVERSE,
-      scanBudgetMs: PER_SCAN_BUDGET_MS,
-      concurrency: 7,
-      sufficientQualified: Infinity,
-      logger: log,
-    });
-
-    if (process.env.ANTHROPIC_API_KEY && scan.picks.length > 0) {
-      const narrateResult = await narrateAll(scan.picks, {
-        concurrency: NARRATE_CONCURRENCY,
-        budgetMs: NARRATE_BUDGET_MS,
-        onWarn: (msg, ticker, err) =>
-          log.warn(msg, { ticker, err: String((err as any)?.message ?? err) }),
-      });
-      log.info('narrate_all_complete', {
-        picks: scan.picks.length,
-        narrated: narrateResult.narrated,
-        failed: narrateResult.failed,
-        skipped: narrateResult.skipped,
-        durationMs: narrateResult.durationMs,
-      });
-    }
-
-    const { snapshotId } = await writeSnapshot('prophet', STORE_KEY, {
-      modelVersion: MODEL_VERSION,
-      generatedAt: new Date().toISOString(),
-      scanDurationMs: scan.scanDurationMs,
-      universeChecked: scan.universeChecked,
-      results: scan.picks,
-      freshnessBudgetMs: FRESHNESS_BUDGETS_MS.prophet,
-      warnings: scan.warnings,
-    });
-
-    const count = scan.picks.length;
-    const narratedCount = scan.picks.filter((p) => p.narrative).length;
-    log.info('snapshot_written', {
-      snapshotId,
-      picks: count,
-      narrated: narratedCount,
-      universeChecked: scan.universeChecked,
-      scanDurationMs: scan.scanDurationMs,
-      overallDurationMs: Date.now() - overallStart,
-    });
-
-    return {
-      statusCode: 200,
-      body: JSON.stringify({
-        ok: true,
-        board: 'prophet',
-        universe: UNIVERSE,
-        snapshotId,
-        picks: count,
-        narrated: narratedCount,
-        universeChecked: scan.universeChecked,
-        scanDurationMs: scan.scanDurationMs,
-        warnings: scan.warnings,
-      }),
-    };
-  } catch (err: any) {
-    const msg = String(err?.message ?? err);
-    log.error('scheduled_scan_failed', { err: msg, universe: UNIVERSE });
-    return {
-      statusCode: 500,
-      body: JSON.stringify({ ok: false, board: 'prophet', universe: UNIVERSE, error: msg }),
-    };
-  }
-});
+export const handler = schedule(
+  CRON,
+  makeProphetCronHandler({
+    fn: 'scan-prophet-all',
+    universe: 'all',
+    schedule: CRON,
+    workerPath: WORKER_PATH,
+  }),
+);

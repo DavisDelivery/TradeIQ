@@ -2,18 +2,31 @@
 //   ?universe=largecap|russell|all (default largecap)
 //   &minConviction=low|medium|high
 //   &limit=30
-//   &narrate=1|0 (default 1 — narrate top 5 from snapshot or live result)
+//   &narrate=1|0 (default 1 — narrate top 5 from the snapshot if missing)
 //   [&force=1]
 //
 // Phase 1: snapshot-first. Snapshot stores ALL scored picks. After Phase 4c-1,
 // scheduled scans pre-narrate the full pick list before snapshot write, so
 // every pick in a fresh snapshot already has a narrative. For older
-// snapshots, or for live partial scans, we narrate the top 5 inline so the
-// most-visible picks always have a thesis.
+// snapshots we narrate the top 5 inline so the most-visible picks always
+// have a thesis.
+//
+// Wave 2D (M1) — SNAPSHOT-ONLY, all universes. Every Prophet universe is
+// far too large to inline-scan inside a 26s request (largecap ~508,
+// russell ~1,930, all ~2,200 names), so this endpoint mirrors
+// target-board's #72 reference behavior exactly:
+//   - fresh snapshot  → serve it (`source: 'snapshot'`);
+//   - stale snapshot  → serve it flagged `stale: true`
+//                       (`source: 'snapshot-stale'`) — NEVER inline-scan;
+//   - no snapshot     → empty response with `source: 'snapshot-missing'`;
+//   - ?force=1        → re-reads the snapshot; the scheduled background
+//                       workers are the only thing that rescans.
+// Snapshots are produced by the scan-prophet-*-background workers
+// (dispatched by the scan-prophet-{largecap,russell,all} crons) and by
+// the manual largecap trigger.
 
 import type { Handler } from '@netlify/functions';
 import {
-  runProphetScan,
   filterProphetByConviction,
   type ProphetUniverseKey,
   type ProphetPick,
@@ -28,12 +41,7 @@ import { logger } from './shared/logger';
 import { MODEL_VERSION } from './shared/model-version';
 import { narrateTopN } from './shared/narrative-generator';
 
-const SCAN_BUDGET_MS = 18_000;
 const NARRATIVE_BUDGET_MS = 3_000;
-
-// Live partial-scan fallback (in-memory).
-const fallbackCache = new Map<string, { data: any; at: number }>();
-const FALLBACK_CACHE_TTL_MS = 5 * 60 * 1000;
 
 export const handler: Handler = async (event) => {
   const qs = event.queryStringParameters ?? {};
@@ -48,144 +56,87 @@ export const handler: Handler = async (event) => {
   const snapshotUniverse: UniverseKey =
     universe === 'russell' ? 'russell2k' : (universe as UniverseKey);
 
-  if (!force) {
-    try {
-      const snap = await latestSnapshot('prophet', snapshotUniverse);
-      if (snap && isSnapshotFresh(snap)) {
-        const ageMs = snapshotAgeMs(snap);
-        log.info('snapshot_hit', { ageMs, modelVersion: snap.modelVersion });
-        const all = snap.results as ProphetPick[];
-        const filtered = filterProphetByConviction(all, minConviction);
-        const sliced = filtered.slice(0, limit);
+  // Forced rescan in the snapshot-first model = re-read the authoritative
+  // latest snapshot (same redirect target-board applies to its
+  // snapshot-only universes). A live scan of any Prophet universe cannot
+  // finish inside the 26s sync ceiling.
+  if (force) log.info('forced_rescan_redirected_to_snapshot', { universe });
 
-        // Snapshots written post-4c-1 pre-narrate all picks. For older
-        // snapshots written before W4 shipped, we still narrate top-N
-        // inline to maintain the previous UX.
-        const needsNarration = sliced.some((p) => !p.narrative);
-        if (narrate && needsNarration && process.env.ANTHROPIC_API_KEY) {
-          await narrateTopN(sliced, 5, NARRATIVE_BUDGET_MS, (msg, ticker, err) => {
-            log.warn(msg, { ticker, err: String((err as any)?.message ?? err) });
-          });
-        }
-
-        return json(200, {
-          ok: true,
-          universe,
-          universeSize: snap.universeChecked,
-          partial: false,
-          generatedAt: snap.generatedAt,
-          source: 'snapshot',
-          cached: true,
-          ageMs,
-          modelVersion: snap.modelVersion,
-          qualified: filtered.length,
-          picks: sliced,
-          // 4c-2: pass through sieve telemetry so the UI can render the
-          // coverage strip (universe → s1 survivors → s2 → final).
-          sieve: snap.sieve ?? undefined,
-        });
-      }
-      if (snap) log.warn('snapshot_stale', { ageMs: snapshotAgeMs(snap) });
-      else log.warn('snapshot_missing');
-    } catch (err: any) {
-      log.error('snapshot_read_failed', { err: String(err?.message ?? err) });
-    }
+  let snap;
+  try {
+    snap = await latestSnapshot('prophet', snapshotUniverse);
+  } catch (err: any) {
+    log.error('snapshot_read_failed', { err: String(err?.message ?? err) });
+    snap = null;
   }
 
-  // Phase 6 PR-H — for the largecap universe a scheduled after-close scan
-  // builds the snapshot every weekday at 22:00 UTC. Russell / All do NOT
-  // yet have a scheduled scan, and a live scan on those reliably exceeds
-  // the function budget → FALLBACK PARTIAL. Per brief: "do NOT silently
-  // live-scan to a timeout." Return an explicit not-built sentinel so the
-  // UI can render an honest "snapshot not yet built for this universe"
-  // state. force=1 still triggers a live scan (manual override).
-  if (!force && universe !== 'largecap') {
-    log.info('snapshot_not_built_for_universe', { universe });
+  if (!snap) {
+    log.warn('snapshot_missing_no_inline_scan', { universe: snapshotUniverse });
     return json(200, {
       ok: true,
       universe,
-      snapshotNotBuilt: true,
-      reason: `${universe} does not yet have a scheduled after-close scan; adding it is a follow-on phase`,
-      hint: 'pass ?force=1 to trigger a live partial scan (may time out)',
-    });
-  }
-
-  return runLiveAndRespond(
-    universe,
-    minConviction,
-    limit,
-    narrate,
-    force ? 'forced-partial' : 'fallback-partial',
-    log,
-  );
-};
-
-async function runLiveAndRespond(
-  universe: ProphetUniverseKey,
-  minConviction: 'low' | 'medium' | 'high',
-  limit: number,
-  narrate: boolean,
-  source: 'forced-partial' | 'fallback-partial',
-  log: ReturnType<typeof logger.child>,
-) {
-  const cacheKey = `${universe}|${minConviction}|${source}`;
-  if (source === 'fallback-partial') {
-    const cached = fallbackCache.get(cacheKey);
-    if (cached && Date.now() - cached.at < FALLBACK_CACHE_TTL_MS) {
-      return json(200, { ...cached.data, cached: true, source });
-    }
-  }
-
-  try {
-    // Live scan honors the legacy capped behavior: tighter budget and
-    // sufficient-qualified early stop, so it returns inside the 26s window.
-    const scan = await runProphetScan({
-      universe,
-      scanBudgetMs: SCAN_BUDGET_MS,
-      concurrency: 7,
-      sufficientQualified: limit * 3,
-      logger: log,
-    });
-
-    const filtered = filterProphetByConviction(scan.picks, minConviction);
-    const sliced = filtered.slice(0, limit);
-
-    if (narrate && process.env.ANTHROPIC_API_KEY) {
-      await narrateTopN(sliced, 5, NARRATIVE_BUDGET_MS, (msg, ticker, err) => {
-        log.warn(msg, { ticker, err: String((err as any)?.message ?? err) });
-      });
-    }
-
-    const response = {
-      ok: true,
-      universe,
-      universeSize: scan.universeChecked,
-      tickersScanned: scan.tickersScanned,
-      qualified: filtered.length,
-      partial: scan.budgetExceeded,
-      regime: scan.regime,
+      universeSize: 0,
+      partial: false,
+      qualified: 0,
+      picks: [],
       generatedAt: new Date().toISOString(),
-      source,
+      source: 'snapshot-missing',
       cached: false,
+      stale: true,
       ageMs: 0,
       modelVersion: MODEL_VERSION,
-      picks: sliced,
       warning:
-        source === 'fallback-partial'
-          ? 'snapshot stale or missing; partial scan'
-          : 'forced partial scan',
-      warnings: scan.warnings,
-    };
-
-    if (source === 'fallback-partial' && filtered.length > 0) {
-      fallbackCache.set(cacheKey, { data: response, at: Date.now() });
-    }
-    return json(200, response);
-  } catch (err: any) {
-    log.error('live_scan_failed', { err: String(err?.message ?? err) });
-    return json(500, { ok: false, error: String(err?.message ?? err) });
+        'no snapshot available yet; the scheduled scan will populate this universe on its next run',
+    });
   }
-}
+
+  const fresh = isSnapshotFresh(snap);
+  const ageMs = snapshotAgeMs(snap);
+  if (fresh) {
+    log.info('snapshot_hit', { ageMs, modelVersion: snap.modelVersion });
+  } else {
+    log.warn('snapshot_stale_serving_stale', { ageMs, budgetMs: snap.freshnessBudgetMs });
+  }
+
+  const all = snap.results as ProphetPick[];
+  const filtered = filterProphetByConviction(all, minConviction);
+  const sliced = filtered.slice(0, limit);
+
+  // Snapshots written post-4c-1 pre-narrate all picks. For older
+  // snapshots written before W4 shipped, we still narrate top-N inline
+  // to maintain the previous UX.
+  const needsNarration = sliced.some((p) => !p.narrative);
+  if (narrate && needsNarration && process.env.ANTHROPIC_API_KEY) {
+    await narrateTopN(sliced, 5, NARRATIVE_BUDGET_MS, (msg, ticker, err) => {
+      log.warn(msg, { ticker, err: String((err as any)?.message ?? err) });
+    });
+  }
+
+  return json(200, {
+    ok: true,
+    universe,
+    universeSize: snap.universeChecked,
+    partial: false,
+    generatedAt: snap.generatedAt,
+    source: fresh ? 'snapshot' : 'snapshot-stale',
+    cached: true,
+    ...(fresh
+      ? {}
+      : {
+          stale: true,
+          warning: `snapshot is older than the freshness budget (${Math.round(
+            ageMs / 60_000,
+          )} min); next scheduled scan will refresh it`,
+        }),
+    ageMs,
+    modelVersion: snap.modelVersion,
+    qualified: filtered.length,
+    picks: sliced,
+    // 4c-2: pass through sieve telemetry so the UI can render the
+    // coverage strip (universe → s1 survivors → s2 → final).
+    sieve: snap.sieve ?? undefined,
+  });
+};
 
 function json(statusCode: number, body: unknown) {
   return {
