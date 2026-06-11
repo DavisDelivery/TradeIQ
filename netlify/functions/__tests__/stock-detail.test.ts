@@ -85,7 +85,7 @@ beforeEach(() => {
     ],
   });
   getEarningsHistoryMock.mockResolvedValue([
-    { date: '2026-01-30', epsActual: 2.4, epsEstimate: 2.2, surprisePct: 9.1 },
+    { period: '2025-12-31', announceDate: '2026-01-30', epsActual: 2.4, epsEstimate: 2.2, surprisePct: 9.1 },
   ]);
   getUpcomingEarningsMock.mockResolvedValue({ date: '2026-06-15', epsEstimate: 2.5 });
   getNewsMock.mockResolvedValue([

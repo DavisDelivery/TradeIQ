@@ -36,9 +36,9 @@ export interface LynchInput {
   revenueGrowthYoY?: number;
   debtToEquity?: number;
   operatingMargin?: number;
-  // From Finnhub history
+  // From Finnhub history (only the EPS fields are read — date semantics
+  // live in the provider's EarningsSurprise: period vs announceDate)
   earningsHistory?: Array<{
-    date: string;
     epsActual: number;
     epsEstimate: number;
   }>;

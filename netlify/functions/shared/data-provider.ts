@@ -837,23 +837,142 @@ export async function getEarningsCalendarRange(
 }
 
 export interface EarningsSurprise {
-  date: string;
+  /**
+   * Fiscal quarter END (Finnhub `period`, e.g. 2025-03-31) — when the
+   * quarter closed, NOT when the market learned the numbers. Never window
+   * price reactions or PIT-filter visibility on this field (CR-3): the
+   * announcement lags it by 2-8 weeks.
+   */
+  period: string;
+  /**
+   * Announcement date — when the report actually hit the tape, joined
+   * from Finnhub's earnings calendar (whose `date` IS the announcement
+   * date) by fiscal (year, quarter) with a period-window fallback.
+   * `null` when the calendar had no matching row OR the caller didn't
+   * request the join. Consumers MUST skip announcement-anchored math
+   * (reaction windows, drift, PIT visibility) for null rows — silently
+   * falling back to `period` is the exact bug this field replaces.
+   */
+  announceDate: string | null;
   epsActual: number;
   epsEstimate: number;
   surprisePct?: number;
 }
 
 /**
+ * Max plausible lag between fiscal period end and the announcement.
+ * Typical lag is 2-8 weeks; annual reports for non-accelerated filers can
+ * stretch to ~90 days. Calendar rows outside (period, period+120d] are
+ * never treated as the announcement for that period.
+ */
+const MAX_ANNOUNCE_LAG_DAYS = 120;
+
+/**
+ * One Finnhub earnings-calendar call covering every surprise period, used
+ * to join announcement dates onto /stock/earnings rows. Paced through the
+ * shared token bucket + 429-aware retry because it adds one Finnhub call
+ * per getEarningsHistory invocation that requests the join.
+ */
+async function fetchAnnouncementCalendar(
+  ticker: string,
+  periods: string[],
+): Promise<Array<{ date: string; year?: number; quarter?: number }>> {
+  const sorted = [...periods].sort();
+  const from = sorted[0];
+  const toMs =
+    Date.parse(`${sorted[sorted.length - 1]}T00:00:00Z`) +
+    MAX_ANNOUNCE_LAG_DAYS * 86400000;
+  const to = new Date(toMs).toISOString().slice(0, 10);
+  await getFinnhubBucket().acquire();
+  const url = `${FINNHUB}/calendar/earnings?from=${from}&to=${to}&symbol=${encodeURIComponent(ticker)}&token=${finnhubKey()}`;
+  const { res } = await fetchWithRateLimit(url, undefined);
+  if (!res.ok) {
+    if (res.status === 429) {
+      console.warn(`[earnings-history] Finnhub 429 exhausted on calendar join for ${ticker}; announceDates stay null`);
+    }
+    return [];
+  }
+  const data = parseOrFallback(
+    FinnhubEarningsCalendarResponseSchema,
+    await res.json(),
+    { provider: 'finnhub', endpoint: 'calendar/earnings/announce-join', ticker },
+    { earningsCalendar: [] },
+  );
+  return (data.earningsCalendar ?? [])
+    .filter((c) => typeof c.date === 'string' && c.date.length >= 10)
+    .map((c) => ({ date: c.date, year: c.year, quarter: c.quarter }));
+}
+
+/** True when `calDate` is a plausible announcement for `period`. */
+function isPlausibleAnnouncement(period: string, calDate: string): boolean {
+  if (calDate <= period) return false;
+  const lagMs = Date.parse(`${calDate}T00:00:00Z`) - Date.parse(`${period}T00:00:00Z`);
+  return lagMs <= MAX_ANNOUNCE_LAG_DAYS * 86400000;
+}
+
+/**
+ * Mutates `rows`, setting `announceDate` from the calendar. Join order:
+ *   1. fiscal (year, quarter) match — authoritative when both feeds carry
+ *      the labels, still constrained to the plausible window;
+ *   2. earliest calendar date in (period, period+120d].
+ * If two periods resolve to the SAME calendar date (a quarter's calendar
+ * row is missing, so an older period grabs the next quarter's print),
+ * only the latest period keeps it — the rest stay null. Conservative by
+ * design: a wrong-but-plausible date is worse than an explicit null.
+ */
+function assignAnnounceDates(
+  rows: Array<{ period: string; yq: string | null; announceDate: string | null }>,
+  calendar: Array<{ date: string; year?: number; quarter?: number }>,
+): void {
+  const calSorted = [...calendar].sort((a, b) => a.date.localeCompare(b.date));
+  const byYq = new Map<string, string>();
+  for (const c of calSorted) {
+    if (c.year !== undefined && c.quarter !== undefined) {
+      const k = `${c.year}q${c.quarter}`;
+      if (!byYq.has(k)) byYq.set(k, c.date);
+    }
+  }
+  const claims = new Map<string, Array<(typeof rows)[number]>>();
+  for (const row of rows) {
+    let match: string | undefined;
+    if (row.yq !== null) {
+      const d = byYq.get(row.yq);
+      if (d !== undefined && isPlausibleAnnouncement(row.period, d)) match = d;
+    }
+    if (match === undefined) {
+      match = calSorted.find((c) => isPlausibleAnnouncement(row.period, c.date))?.date;
+    }
+    if (match !== undefined) {
+      const list = claims.get(match) ?? [];
+      list.push(row);
+      claims.set(match, list);
+    }
+  }
+  for (const [date, claimants] of claims) {
+    const winner = claimants.reduce((a, b) => (a.period >= b.period ? a : b));
+    winner.announceDate = date;
+  }
+}
+
+/**
  * PIT-cacheable: keyed by (ticker, limit, asOfDate).
  *
- * When asOfDate is supplied, drops any report whose period > asOfDate.
- * The provider returns up to `limit` most-recent reports, and a backtest
- * at past date T must not see reports filed after T.
+ * Date semantics (CR-3 fix): each row carries BOTH the fiscal `period`
+ * end and the true `announceDate` (joined from the earnings calendar —
+ * see EarningsSurprise). The join runs when `withAnnounceDates` is set or
+ * whenever `asOfDate` is supplied, and costs one extra Finnhub
+ * calendar/earnings call per invocation.
+ *
+ * When asOfDate is supplied, visibility filters on the ANNOUNCEMENT date:
+ * a backtest at past date T must not see reports announced after T, even
+ * when their fiscal period ended before T. Rows whose announcement date
+ * could not be resolved are EXCLUDED — period-end is never a visibility
+ * proxy.
  */
 export async function getEarningsHistory(
   ticker: string,
   limit = 8,
-  opts: { asOfDate?: string } = {},
+  opts: { asOfDate?: string; withAnnounceDates?: boolean } = {},
 ): Promise<EarningsSurprise[]> {
   try {
     // Fetch extra to absorb post-filter losses when asOfDate is set.
@@ -868,18 +987,34 @@ export async function getEarningsHistory(
       [],
     );
     if (!Array.isArray(data)) return [];
-    let rows = data
+    const internal = data
       .map((r) => ({
-        date: r.period,
+        period: r.period,
+        announceDate: null as string | null,
+        yq: r.year !== undefined && r.quarter !== undefined ? `${r.year}q${r.quarter}` : null,
         epsActual: Number(r.actual),
         epsEstimate: Number(r.estimate),
         surprisePct: r.surprisePercent !== undefined ? Number(r.surprisePercent) : undefined,
       }))
       .filter((r) => Number.isFinite(r.epsActual) && Number.isFinite(r.epsEstimate));
-    if (opts.asOfDate) {
-      rows = rows.filter((r) => r.date <= opts.asOfDate!);
+
+    // Join announcement dates when the caller needs them. asOfDate forces
+    // the join: PIT visibility is meaningless without announcement dates.
+    if ((opts.withAnnounceDates || opts.asOfDate) && internal.length > 0) {
+      const calendar = await fetchAnnouncementCalendar(ticker, internal.map((r) => r.period)).catch(() => []);
+      assignAnnounceDates(internal, calendar);
     }
-    return rows.slice(0, limit);
+
+    let rows: EarningsSurprise[] = internal.map(({ yq: _yq, ...row }) => row);
+    if (opts.asOfDate) {
+      // CR-3 / track-5 #4: a report is visible only once ANNOUNCED. Rows
+      // with an unresolved announcement are conservatively dropped — the
+      // backtest must not guess when the report became public.
+      rows = rows.filter((r) => r.announceDate !== null && r.announceDate <= opts.asOfDate!);
+    }
+    return rows
+      .sort((a, b) => b.period.localeCompare(a.period))
+      .slice(0, limit);
   } catch {
     return [];
   }

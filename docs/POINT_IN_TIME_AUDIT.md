@@ -78,7 +78,7 @@ optional `asOfDate?: string` parameter with the conventions above:
 | `getFundamentals(ticker, { asOfDate })`         | `data-provider.ts`                | `filing_date`       | Server-side `filing_date.lte` filter + in-memory fallback for null filing_dates (estimate as `end_date + 75d`). |
 | `getNews(ticker, { asOfDate })`                 | `data-provider.ts`                | `published_utc`     | Server-side `published_utc.lte=<asOfDate>T23:59:59Z`.                      |
 | `getEarningsCalendarRange({ asOfDate })`        | `data-provider.ts`                | calendar `date`     | `to` query param set to `asOfDate`.                                        |
-| `getEarningsHistory(ticker, { asOfDate })`      | `data-provider.ts`                | `period`            | In-memory `period <= asOfDate`.                                            |
+| `getEarningsHistory(ticker, { asOfDate })`      | `data-provider.ts`                | `announceDate`      | In-memory `announceDate <= asOfDate` (joined from the earnings calendar; rows with unresolved announcement dates are excluded — `period` is the fiscal quarter END and is never used as a visibility proxy). |
 | `getRecommendations(ticker, { asOfDate })`      | `data-provider.ts`                | `period`            | In-memory `period <= asOfDate` on live response (~4 months); fall back to snapshot store for older `asOfDate`. |
 | `getFinnhubInsiderTransactions(ticker, { asOfDate })` | `data-provider.ts`         | `filingDate`        | In-memory `filingDate <= asOfDate`. Used by `getInsiderActivity`.          |
 | `getInsiderActivity(ticker, { asOfDate })`      | `insider-provider.ts`             | `filingDate`        | Filters underlying transactions by `filingDate <= asOfDate`.               |

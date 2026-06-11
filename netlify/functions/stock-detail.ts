@@ -161,7 +161,7 @@ export const handler: Handler = async (event) => {
         ? withTimeoutStatus(getDailyBars(sectorEtf, from, to), DEP_TIMEOUTS.sectorBars, [] as Bar[])
         : Promise.resolve({ value: [] as Bar[], timedOut: false, errored: false } as WithTimeoutResult<Bar[]>),
       withTimeoutStatus(getFundamentals(ticker), DEP_TIMEOUTS.fundamentals, null),
-      withTimeoutStatus(getEarningsHistory(ticker, 8), DEP_TIMEOUTS.earningsHistory, [] as Array<{ date: string; epsActual: number; epsEstimate: number; surprisePct?: number }>),
+      withTimeoutStatus(getEarningsHistory(ticker, 8, { withAnnounceDates: true }), DEP_TIMEOUTS.earningsHistory, [] as Array<{ period: string; announceDate: string | null; epsActual: number; epsEstimate: number; surprisePct?: number }>),
       withTimeoutStatus(getUpcomingEarnings(ticker, 90), DEP_TIMEOUTS.upcomingEarnings, null),
       withTimeoutStatus(getNews(ticker, { limit: 5 }), DEP_TIMEOUTS.news, [] as Array<{ id: string; title: string; description?: string; publishedUtc: string; url: string; tickers: string[]; publisher?: string }>),
       withTimeoutStatus(getInsiderActivity(ticker, 90), DEP_TIMEOUTS.insider, null),
@@ -430,11 +430,11 @@ function returnsByDate(bars: Bar[]): Map<string, number> {
 // ---------------------------------------------------------------------------
 
 function buildLastEarnings(
-  earnings: Array<{ date: string; epsActual: number; epsEstimate: number; surprisePct?: number }>,
+  earnings: Array<{ period: string; announceDate: string | null; epsActual: number; epsEstimate: number; surprisePct?: number }>,
   bars: Bar[],
 ): NonNullable<StockDetailResponse['catalysts']>['lastEarnings'] {
   if (!earnings || earnings.length === 0) return null;
-  const sorted = [...earnings].sort((a, b) => b.date.localeCompare(a.date));
+  const sorted = [...earnings].sort((a, b) => b.period.localeCompare(a.period));
   const e = sorted[0];
   const surprisePct =
     e.surprisePct !== undefined && Number.isFinite(e.surprisePct)
@@ -443,11 +443,15 @@ function buildLastEarnings(
         ? round(((e.epsActual - e.epsEstimate) / Math.abs(e.epsEstimate)) * 100, 1)
         : null;
   return {
-    date: e.date,
+    // Display date: announcement when resolved, fiscal period end
+    // otherwise. The price reaction below is announcement-anchored ONLY —
+    // a period-end window measures a random 2-day move ~a month from the
+    // print (CR-3), so it degrades to null instead.
+    date: e.announceDate ?? e.period,
     epsActual: Number.isFinite(e.epsActual) ? e.epsActual : null,
     epsEstimate: Number.isFinite(e.epsEstimate) ? e.epsEstimate : null,
     surprisePct,
-    priceReactionPct: priceReactionAround(e.date, bars),
+    priceReactionPct: e.announceDate ? priceReactionAround(e.announceDate, bars) : null,
   };
 }
 

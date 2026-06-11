@@ -37,10 +37,10 @@ beforeEach(() => {
 describe('beatsLast4 — full 4-quarter window with all beats', () => {
   it('returns 4/4 when every quarter beat', async () => {
     (getEarningsHistory as any).mockResolvedValue([
-      { date: '2026-04-15', epsActual: 1.10, epsEstimate: 1.00, surprisePct: 10 },
-      { date: '2026-01-15', epsActual: 0.95, epsEstimate: 0.90, surprisePct: 5.6 },
-      { date: '2025-10-15', epsActual: 1.00, epsEstimate: 0.95, surprisePct: 5.3 },
-      { date: '2025-07-15', epsActual: 0.85, epsEstimate: 0.80, surprisePct: 6.3 },
+      { period: '2026-03-31', announceDate: '2026-04-28', epsActual: 1.10, epsEstimate: 1.00, surprisePct: 10 },
+      { period: '2025-12-31', announceDate: '2026-01-28', epsActual: 0.95, epsEstimate: 0.90, surprisePct: 5.6 },
+      { period: '2025-09-30', announceDate: '2025-10-28', epsActual: 1.00, epsEstimate: 0.95, surprisePct: 5.3 },
+      { period: '2025-06-30', announceDate: '2025-07-29', epsActual: 0.85, epsEstimate: 0.80, surprisePct: 6.3 },
     ]);
 
     const intel = await getEarningsIntel('TEST');
@@ -53,10 +53,10 @@ describe('beatsLast4 — full 4-quarter window with all beats', () => {
 describe('beatsLast4 — full 4-quarter window with mixed results', () => {
   it('returns the correct beat count when some are misses', async () => {
     (getEarningsHistory as any).mockResolvedValue([
-      { date: '2026-04-15', epsActual: 1.00, epsEstimate: 1.10, surprisePct: -9.1 },
-      { date: '2026-01-15', epsActual: 0.95, epsEstimate: 0.90, surprisePct: 5.6 },
-      { date: '2025-10-15', epsActual: 1.00, epsEstimate: 1.05, surprisePct: -4.8 },
-      { date: '2025-07-15', epsActual: 0.85, epsEstimate: 0.80, surprisePct: 6.3 },
+      { period: '2026-03-31', announceDate: '2026-04-28', epsActual: 1.00, epsEstimate: 1.10, surprisePct: -9.1 },
+      { period: '2025-12-31', announceDate: '2026-01-28', epsActual: 0.95, epsEstimate: 0.90, surprisePct: 5.6 },
+      { period: '2025-09-30', announceDate: '2025-10-28', epsActual: 1.00, epsEstimate: 1.05, surprisePct: -4.8 },
+      { period: '2025-06-30', announceDate: '2025-07-29', epsActual: 0.85, epsEstimate: 0.80, surprisePct: 6.3 },
     ]);
 
     const intel = await getEarningsIntel('TEST');
@@ -78,8 +78,8 @@ describe('beatsLast4 — no data path (the bug)', () => {
 
   it('returns null when surprises are present but all unparsable', async () => {
     (getEarningsHistory as any).mockResolvedValue([
-      { date: '2026-04-15', epsActual: undefined, epsEstimate: undefined },
-      { date: '2026-01-15', epsActual: NaN, epsEstimate: 1.00 },
+      { period: '2026-03-31', announceDate: '2026-04-28', epsActual: undefined, epsEstimate: undefined },
+      { period: '2025-12-31', announceDate: '2026-01-28', epsActual: NaN, epsEstimate: 1.00 },
     ]);
 
     const intel = await getEarningsIntel('TEST');
@@ -92,8 +92,8 @@ describe('beatsLast4 — partial window (newly public ticker)', () => {
   it('returns a fractional count with quarters denominator when fewer than 4 quarters exist', async () => {
     // Company IPO'd 6 months ago — only 2 quarters of earnings history.
     (getEarningsHistory as any).mockResolvedValue([
-      { date: '2026-04-15', epsActual: 0.50, epsEstimate: 0.45, surprisePct: 11.1 },
-      { date: '2026-01-15', epsActual: 0.30, epsEstimate: 0.40, surprisePct: -25 },
+      { period: '2026-03-31', announceDate: '2026-04-28', epsActual: 0.50, epsEstimate: 0.45, surprisePct: 11.1 },
+      { period: '2025-12-31', announceDate: '2026-01-28', epsActual: 0.30, epsEstimate: 0.40, surprisePct: -25 },
     ]);
 
     const intel = await getEarningsIntel('NEWCO');
@@ -106,10 +106,10 @@ describe('beatsLast4 — falls back to safeSurprise when surprisePct is missing'
   it('computes beats from actual vs estimate when surprisePct is absent', async () => {
     (getEarningsHistory as any).mockResolvedValue([
       // surprisePct missing — should fall through to (actual - estimate) / estimate
-      { date: '2026-04-15', epsActual: 1.10, epsEstimate: 1.00 },
-      { date: '2026-01-15', epsActual: 0.95, epsEstimate: 0.90 },
-      { date: '2025-10-15', epsActual: 1.00, epsEstimate: 1.05 },
-      { date: '2025-07-15', epsActual: 0.85, epsEstimate: 0.80 },
+      { period: '2026-03-31', announceDate: '2026-04-28', epsActual: 1.10, epsEstimate: 1.00 },
+      { period: '2025-12-31', announceDate: '2026-01-28', epsActual: 0.95, epsEstimate: 0.90 },
+      { period: '2025-09-30', announceDate: '2025-10-28', epsActual: 1.00, epsEstimate: 1.05 },
+      { period: '2025-06-30', announceDate: '2025-07-29', epsActual: 0.85, epsEstimate: 0.80 },
     ]);
 
     const intel = await getEarningsIntel('TEST');

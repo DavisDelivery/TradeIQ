@@ -77,10 +77,10 @@ vi.mock('../../data-provider', async () => {
       async (ticker: string, _limit: number, opts: { asOfDate?: string } = {}) => {
         earningsCalls.push({ ticker, asOfDate: opts.asOfDate });
         return [
-          { date: '2024-09-30', epsActual: 1.3, epsEstimate: 1.2, surprisePct: 8.3 },
-          { date: '2024-06-30', epsActual: 1.2, epsEstimate: 1.1, surprisePct: 9.0 },
-          { date: '2024-03-31', epsActual: 1.1, epsEstimate: 1.05, surprisePct: 4.7 },
-          { date: '2023-12-31', epsActual: 1.0, epsEstimate: 0.95, surprisePct: 5.2 },
+          { period: '2024-09-30', announceDate: '2024-10-28', epsActual: 1.3, epsEstimate: 1.2, surprisePct: 8.3 },
+          { period: '2024-06-30', announceDate: '2024-07-29', epsActual: 1.2, epsEstimate: 1.1, surprisePct: 9.0 },
+          { period: '2024-03-31', announceDate: '2024-04-26', epsActual: 1.1, epsEstimate: 1.05, surprisePct: 4.7 },
+          { period: '2023-12-31', announceDate: '2024-01-29', epsActual: 1.0, epsEstimate: 0.95, surprisePct: 5.2 },
         ];
       },
     ),
