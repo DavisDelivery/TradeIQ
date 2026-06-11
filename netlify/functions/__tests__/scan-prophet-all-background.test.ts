@@ -14,6 +14,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 const mocks = vi.hoisted(() => ({
   runProphetScanMock: vi.fn(),
   writeSnapshotMock: vi.fn(),
+  pruneOldSnapshotsMock: vi.fn(),
   narrateAllMock: vi.fn(),
 }));
 
@@ -25,7 +26,11 @@ vi.mock('../shared/scan-prophet', () => ({
 // production thresholds; only the Firestore write is stubbed.
 vi.mock('../shared/snapshot-store', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../shared/snapshot-store')>();
-  return { ...actual, writeSnapshot: mocks.writeSnapshotMock };
+  return {
+    ...actual,
+    writeSnapshot: mocks.writeSnapshotMock,
+    pruneOldSnapshots: mocks.pruneOldSnapshotsMock,
+  };
 });
 
 vi.mock('../shared/narrative-generator', () => ({
@@ -62,6 +67,8 @@ beforeEach(() => {
   mocks.runProphetScanMock.mockReset();
   mocks.writeSnapshotMock.mockReset();
   mocks.writeSnapshotMock.mockResolvedValue({ snapshotId: 'all-2026-06-10-1800', promotedToLatest: true });
+  mocks.pruneOldSnapshotsMock.mockReset();
+  mocks.pruneOldSnapshotsMock.mockResolvedValue({ deleted: 0, kept: 0 });
   mocks.narrateAllMock.mockReset();
   mocks.narrateAllMock.mockResolvedValue({ narrated: 2, failed: 0, skipped: 0, durationMs: 10 });
   process.env.ANTHROPIC_API_KEY = 'test-key';
@@ -131,5 +138,22 @@ describe('scan-prophet-all-background (worker)', () => {
     const res = (await handler(evt(), {} as any, () => {})) as any;
     expect(res.statusCode).toBe(500);
     expect(mocks.writeSnapshotMock).not.toHaveBeenCalled();
+    expect(mocks.pruneOldSnapshotsMock).not.toHaveBeenCalled();
+  });
+
+  it('Wave 4A: prunes the runs/ history in keep-daily-close mode after the write', async () => {
+    mocks.runProphetScanMock.mockResolvedValue(fakeScan());
+    await handler(evt(), {} as any, () => {});
+    expect(mocks.pruneOldSnapshotsMock).toHaveBeenCalledWith('prophet', 'all', {
+      mode: 'keep-daily-close',
+    });
+  });
+
+  it('Wave 4A: a prune failure is best-effort — the worker still returns 200', async () => {
+    mocks.runProphetScanMock.mockResolvedValue(fakeScan());
+    mocks.pruneOldSnapshotsMock.mockRejectedValue(new Error('firestore down'));
+    const res = (await handler(evt(), {} as any, () => {})) as any;
+    expect(res.statusCode).toBe(200);
+    expect(JSON.parse(res.body).ok).toBe(true);
   });
 });

@@ -13,6 +13,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 const mocks = vi.hoisted(() => ({
   runProphetSieveMock: vi.fn(),
   writeSnapshotMock: vi.fn(),
+  pruneOldSnapshotsMock: vi.fn(),
   narrateAllMock: vi.fn(),
 }));
 
@@ -28,7 +29,11 @@ vi.mock('../shared/universe', () => ({
 // production thresholds; only the Firestore write is stubbed.
 vi.mock('../shared/snapshot-store', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../shared/snapshot-store')>();
-  return { ...actual, writeSnapshot: mocks.writeSnapshotMock };
+  return {
+    ...actual,
+    writeSnapshot: mocks.writeSnapshotMock,
+    pruneOldSnapshots: mocks.pruneOldSnapshotsMock,
+  };
 });
 
 vi.mock('../shared/narrative-generator', () => ({
@@ -56,7 +61,10 @@ function fakeSieve(overrides: Record<string, unknown> = {}) {
       { ticker: 'AAPL', composite: 64, conviction: 'medium' },
     ],
     meta: { stage1: stage(), stage2: stage(), stage3: stage() },
-    universeChecked: 1930,
+    // Wave 4A (M8): universeChecked is the Stage-1 scored count (true
+    // coverage); universeSize is the full universe at scan start.
+    universeSize: 1930,
+    universeChecked: 1800,
     scanDurationMs: 1000,
     warnings: [],
     ...overrides,
@@ -70,6 +78,8 @@ beforeEach(() => {
     snapshotId: 'russell2k-2026-06-10-1800',
     promotedToLatest: true,
   });
+  mocks.pruneOldSnapshotsMock.mockReset();
+  mocks.pruneOldSnapshotsMock.mockResolvedValue({ deleted: 0, kept: 0 });
   mocks.narrateAllMock.mockReset();
   mocks.narrateAllMock.mockResolvedValue({ narrated: 2, failed: 0, skipped: 0, durationMs: 10 });
   process.env.ANTHROPIC_API_KEY = 'test-key';
@@ -144,5 +154,43 @@ describe('scan-prophet-russell-background (worker)', () => {
     const res = (await handler(evt(), {} as any, () => {})) as any;
     expect(res.statusCode).toBe(500);
     expect(mocks.writeSnapshotMock).not.toHaveBeenCalled();
+    expect(mocks.pruneOldSnapshotsMock).not.toHaveBeenCalled();
+  });
+
+  it('Wave 4A (M8): writes universeChecked = Stage-1 scored and universeSize = full universe', async () => {
+    mocks.runProphetSieveMock.mockResolvedValue(fakeSieve());
+    const res = (await handler(evt(), {} as any, () => {})) as any;
+    const written = mocks.writeSnapshotMock.mock.calls[0][2];
+    expect(written.universeChecked).toBe(1800);
+    expect(written.universeSize).toBe(1930);
+    const body = JSON.parse(res.body);
+    expect(body.universeChecked).toBe(1800);
+    expect(body.universeSize).toBe(1930);
+  });
+
+  it('Wave 4A (M8): the publish guard denominator stays the universe SIZE, not the scored count', async () => {
+    // 0 picks over a 1,930-name universe must trip the empty-result skip
+    // even though only 1,800 were scored.
+    mocks.runProphetSieveMock.mockResolvedValue(fakeSieve({ picks: [] }));
+    await handler(evt(), {} as any, () => {});
+    const written = mocks.writeSnapshotMock.mock.calls[0][2];
+    expect(written.status).toBe('partial');
+    expect(written.warnings).toContainEqual(expect.stringContaining('1930-ticker universe'));
+  });
+
+  it('Wave 4A: prunes the runs/ history in keep-daily-close mode after the write', async () => {
+    mocks.runProphetSieveMock.mockResolvedValue(fakeSieve());
+    await handler(evt(), {} as any, () => {});
+    expect(mocks.pruneOldSnapshotsMock).toHaveBeenCalledWith('prophet', 'russell2k', {
+      mode: 'keep-daily-close',
+    });
+  });
+
+  it('Wave 4A: a prune failure is best-effort — the worker still returns 200', async () => {
+    mocks.runProphetSieveMock.mockResolvedValue(fakeSieve());
+    mocks.pruneOldSnapshotsMock.mockRejectedValue(new Error('firestore down'));
+    const res = (await handler(evt(), {} as any, () => {})) as any;
+    expect(res.statusCode).toBe(200);
+    expect(JSON.parse(res.body).ok).toBe(true);
   });
 });

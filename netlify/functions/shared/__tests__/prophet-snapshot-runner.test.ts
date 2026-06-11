@@ -14,10 +14,11 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // vi.mock factories hoist above const declarations, so we use vi.hoisted to
 // share spies between the mock factories and the test bodies.
-const { writeSnapshotMock, runProphetScanMock, assessPublishMock, narrateAllSpy, narrateTopNSpy, generateNarrativeSpy } = vi.hoisted(() => ({
+const { writeSnapshotMock, runProphetScanMock, assessPublishMock, pruneOldSnapshotsMock, narrateAllSpy, narrateTopNSpy, generateNarrativeSpy } = vi.hoisted(() => ({
   writeSnapshotMock: vi.fn(),
   runProphetScanMock: vi.fn(),
   assessPublishMock: vi.fn(),
+  pruneOldSnapshotsMock: vi.fn(),
   narrateAllSpy: vi.fn(),
   narrateTopNSpy: vi.fn(),
   generateNarrativeSpy: vi.fn(),
@@ -26,6 +27,7 @@ const { writeSnapshotMock, runProphetScanMock, assessPublishMock, narrateAllSpy,
 vi.mock('../snapshot-store', () => ({
   writeSnapshot: writeSnapshotMock,
   assessSnapshotPublish: assessPublishMock,
+  pruneOldSnapshots: pruneOldSnapshotsMock,
   FRESHNESS_BUDGETS_MS: { prophet: 1000 },
 }));
 vi.mock('../scan-prophet', () => ({
@@ -51,6 +53,8 @@ beforeEach(() => {
   runProphetScanMock.mockReset();
   assessPublishMock.mockReset();
   assessPublishMock.mockReturnValue({ action: 'publish' });
+  pruneOldSnapshotsMock.mockReset();
+  pruneOldSnapshotsMock.mockResolvedValue({ deleted: 0, kept: 0 });
   narrateAllSpy.mockReset();
   narrateTopNSpy.mockReset();
   generateNarrativeSpy.mockReset();
@@ -151,6 +155,39 @@ describe('runProphetSnapshot', () => {
     writeSnapshotMock.mockResolvedValue({ snapshotId: 'snap-7', promotedToLatest: false });
     await runProphetSnapshot({ universe: 'largecap', storeKey: 'largecap', logger: fakeLogger as any });
     expect(assessPublishMock).not.toHaveBeenCalled();
+  });
+
+  it('Wave 4A — prunes the runs/ history in keep-daily-close mode after a successful write', async () => {
+    runProphetScanMock.mockResolvedValue(fakeScan());
+    writeSnapshotMock.mockResolvedValue({ snapshotId: 'snap-8', promotedToLatest: true });
+    const r = await runProphetSnapshot({
+      universe: 'largecap', storeKey: 'largecap', logger: fakeLogger as any,
+    });
+    expect(r.ok).toBe(true);
+    expect(pruneOldSnapshotsMock).toHaveBeenCalledWith('prophet', 'largecap', {
+      mode: 'keep-daily-close',
+    });
+  });
+
+  it('Wave 4A — a prune failure is swallowed (best-effort) and the run still reports ok', async () => {
+    runProphetScanMock.mockResolvedValue(fakeScan());
+    writeSnapshotMock.mockResolvedValue({ snapshotId: 'snap-9', promotedToLatest: true });
+    pruneOldSnapshotsMock.mockRejectedValue(new Error('firestore down'));
+    const r = await runProphetSnapshot({
+      universe: 'largecap', storeKey: 'largecap', logger: fakeLogger as any,
+    });
+    expect(r.ok).toBe(true);
+    expect(r.snapshotId).toBe('snap-9');
+  });
+
+  it('Wave 4A (M8) — stamps universeSize alongside universeChecked on the snapshot', async () => {
+    runProphetScanMock.mockResolvedValue(fakeScan());
+    writeSnapshotMock.mockResolvedValue({ snapshotId: 'snap-10', promotedToLatest: true });
+    await runProphetSnapshot({ universe: 'largecap', storeKey: 'largecap', logger: fakeLogger as any });
+    expect(writeSnapshotMock.mock.calls[0][2]).toMatchObject({
+      universeChecked: 500,
+      universeSize: 500,
+    });
   });
 
   it('returns ok:false on an underlying scan throw without writing a snapshot', async () => {

@@ -60,4 +60,30 @@ describe('SieveCoverageStrip', () => {
     render(<SieveCoverageStrip sieve={fullSieve()} universeSize={undefined} />);
     expect(screen.getByText(/— names/)).toBeInTheDocument();
   });
+
+  // Wave 4A (M8) — the first rung reports TRUE coverage, not the universe
+  // size. A budget-truncated Stage 1 shows scored/universe instead of
+  // implying the whole universe was checked.
+  it('shows scored/universe when Stage 1 scored fewer names than the universe holds', () => {
+    const sieve = fullSieve({
+      stage1: { scored: 1200, survived: 412, thresholdScore: 58, budgetMs: 120000, partial: true },
+    });
+    render(<SieveCoverageStrip sieve={sieve} universeSize={2037} universeChecked={1200} />);
+    expect(screen.getByText(/1,200\/2,037 names/)).toBeInTheDocument();
+    expect(screen.queryByText(/^2,037 names$/)).not.toBeInTheDocument();
+  });
+
+  it('falls back to sieve.stage1.scored for honest coverage when universeChecked is absent (older payloads)', () => {
+    const sieve = fullSieve({
+      stage1: { scored: 1200, survived: 412, thresholdScore: 58, budgetMs: 120000, partial: true },
+    });
+    render(<SieveCoverageStrip sieve={sieve} universeSize={2037} />);
+    expect(screen.getByText(/1,200\/2,037 names/)).toBeInTheDocument();
+  });
+
+  it('shows the plain universe count when coverage is full', () => {
+    render(<SieveCoverageStrip sieve={fullSieve()} universeSize={2037} universeChecked={2037} />);
+    expect(screen.getByText(/2,037 names/)).toBeInTheDocument();
+    expect(screen.queryByText(/\//)).not.toBeInTheDocument();
+  });
 });

@@ -17,6 +17,7 @@ import { runProphetScan, type ProphetUniverseKey } from './scan-prophet';
 import {
   writeSnapshot,
   assessSnapshotPublish,
+  pruneOldSnapshots,
   FRESHNESS_BUDGETS_MS,
   type UniverseKey,
   type BoardSnapshot,
@@ -109,7 +110,12 @@ export async function runProphetSnapshot(
       modelVersion: MODEL_VERSION,
       generatedAt: new Date().toISOString(),
       scanDurationMs: scan.scanDurationMs,
+      // runProphetScan's universeChecked is the universe size; the
+      // single-pass largecap scan has no separate scored count (a
+      // truncated run is stamped status:'partial' instead). Stamp
+      // universeSize so consumers read a consistent shape (Wave 4A M8).
       universeChecked: scan.universeChecked,
+      universeSize: scan.universeChecked,
       results: scan.picks,
       freshnessBudgetMs: FRESHNESS_BUDGETS_MS.prophet,
       warnings,
@@ -129,6 +135,22 @@ export async function runProphetSnapshot(
       scanDurationMs: scan.scanDurationMs,
       overallDurationMs: Date.now() - overallStart,
     });
+
+    // Wave 4A — keep-daily-close retention on the Prophet runs/ history.
+    // The largecap path writes one snapshot per weekday (cron) plus any
+    // manual-trigger runs; beyond the 30-day horizon only each day's
+    // last snapshot survives (the backtest substrate snapshotBeforeDate
+    // reads). Best-effort: a prune failure must never fail the scan.
+    try {
+      const { deleted, kept } = await pruneOldSnapshots('prophet', opts.storeKey, {
+        mode: 'keep-daily-close',
+      });
+      log.info('snapshot_retention_pruned', { universe: opts.storeKey, deleted, kept });
+    } catch (pruneErr: unknown) {
+      log.warn('snapshot_retention_prune_failed', {
+        err: pruneErr instanceof Error ? pruneErr.message : String(pruneErr),
+      });
+    }
 
     return {
       ok: true,
