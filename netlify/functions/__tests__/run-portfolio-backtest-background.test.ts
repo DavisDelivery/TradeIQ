@@ -128,7 +128,8 @@ const fetchSpy = vi.fn(async (..._args: any[]): Promise<{ status: number }> => (
 const originalFetch = globalThis.fetch;
 (globalThis as any).fetch = fetchSpy;
 
-import { handler } from '../run-portfolio-backtest-background';
+import { handler, windowSpec } from '../run-portfolio-backtest-background';
+import { isMarketOpen } from '../shared/backtest/trading-calendar';
 
 function makeEvent(opts: { method?: string; body?: any; headers?: Record<string, string> } = {}): any {
   return {
@@ -259,6 +260,36 @@ function makePartialHarnessResult() {
     batchWarnings: [],
   });
 }
+
+// Wave 3B (track-3 M4) — the worker's windows must mark on TRADING days
+// (the harness annualizes Sharpe with √252) and rebalance every 5th
+// trading day drawn from the same series. Pre-fix: calendar-day marks
+// (~30% structural-zero "daily returns", Sharpe ≈17% understated) and
+// 7-calendar-day rebalances that could land on holidays.
+describe('run-portfolio-backtest-background — windowSpec calendar semantics', () => {
+  it('windowSpec marks on trading days only and rebalances from the same series', () => {
+    for (const label of ['short-demo', 'covid', 'rolling-2024']) {
+      const win = windowSpec(label);
+      expect(win.markDates.length).toBeGreaterThan(0);
+      for (const d of win.markDates) {
+        expect(isMarketOpen(d), `${label}: ${d} must be a trading day`).toBe(true);
+      }
+      const markSet = new Set(win.markDates);
+      for (const r of win.rebalanceDates) {
+        expect(markSet.has(r), `${label}: rebalance ${r} must be a mark date`).toBe(true);
+      }
+      for (let i = 0; i < win.rebalanceDates.length; i++) {
+        expect(win.rebalanceDates[i]).toBe(win.markDates[i * 5]);
+      }
+    }
+    // Spot-check: no weekends/holidays in a window known to span MLK 2024.
+    const demo = windowSpec('short-demo'); // 2024-01-08 → 2024-04-08
+    expect(demo.markDates).not.toContain('2024-01-13'); // Saturday
+    expect(demo.markDates).not.toContain('2024-01-15'); // MLK Day
+    expect(demo.markDates).not.toContain('2024-03-29'); // Good Friday
+    expect(demo.markDates).toContain('2024-01-16');
+  });
+});
 
 describe('run-portfolio-backtest-background — HTTP plumbing', () => {
   it('rejects GET with 405', async () => {

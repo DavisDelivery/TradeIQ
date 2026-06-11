@@ -25,6 +25,51 @@ import type {
   SwapEvent,
 } from './types';
 import { decideRebalance } from './rebalance';
+import { tradingDaysBetween } from '../backtest/trading-calendar';
+
+/**
+ * Wave 3B (track-3 M3) — forced-liquidation gap. A held position whose
+ * price source returns no bar for MORE than this many consecutive mark
+ * dates (mark dates are trading days — see makeTradingDayWindow) is
+ * treated as delisted/halted and force-liquidated at its last traded
+ * close. 10 trading days ≈ 2 calendar weeks: long enough that ordinary
+ * provider hiccups and short halts don't trigger it, short enough that
+ * a bankruptcy doesn't ride the book as a phantom flat hold for months.
+ * Data-free by design — no delisted-status lookups in this wave.
+ */
+export const FORCED_LIQUIDATION_GAP_TRADING_DAYS = 10;
+
+/** Default rebalance cadence: every 5th trading day ≈ weekly. */
+export const REBALANCE_EVERY_TRADING_DAYS = 5;
+
+/**
+ * Wave 3B (track-3 M4) — build a BacktestWindow whose markDates are
+ * NYSE trading days and whose rebalanceDates are drawn from the SAME
+ * series (every `rebalanceEvery`-th trading day ≈ weekly). Pre-fix the
+ * worker marked every CALENDAR day while Sharpe annualized with √252
+ * (≈17% understatement; ~30% of "daily returns" were structural zeros)
+ * and rebalanced every 7 calendar days (drifting on/off weekends).
+ *
+ * Calendar note: the repo currently has TWO divergent holiday
+ * calendars — `shared/backtest/trading-calendar.ts` (2018–2027,
+ * includes the 2025-01-09 Carter closure) and
+ * `shared/us-market-holidays.ts` (2024–2028, MISSING 2025-01-09).
+ * Backtest internals standardize on trading-calendar.ts; consolidating
+ * the two is deferred (code-review-2026-06, track-3 minor 4).
+ */
+export function makeTradingDayWindow(
+  label: string,
+  start: string,
+  end: string,
+  rebalanceEvery: number = REBALANCE_EVERY_TRADING_DAYS,
+): BacktestWindow {
+  const marks = tradingDaysBetween(start, end);
+  const rebalances: string[] = [];
+  for (let i = 0; i < marks.length; i += rebalanceEvery) {
+    rebalances.push(marks[i]);
+  }
+  return { label, start, end, rebalanceDates: rebalances, markDates: marks };
+}
 
 export interface PortfolioBacktestResult {
   windowLabel: string;
@@ -39,10 +84,22 @@ export interface PortfolioBacktestResult {
   spySharpe: number;
   maxDDPct: number;
   spyMaxDDPct: number;
+  /**
+   * Longest stretch below a prior equity peak, counted in MARK DATES.
+   * Wave 3B: production windows mark on TRADING days
+   * (makeTradingDayWindow), so this is trading days — consistent with
+   * the regular engine's `recoveryDays`. Results persisted before
+   * Wave 3B counted calendar days.
+   */
   longestUnderwaterDays: number;
   swapCount: number;
   avgHoldDays: number;
-  turnoverPct: number; // annualized
+  /**
+   * Annualized, standard (buys + sells) / 2 convention (Wave 3B,
+   * track-3 minor 6). Results persisted before Wave 3B double-counted
+   * both legs (~2× this number).
+   */
+  turnoverPct: number;
   costDragPct: number;
   rebalanceCount: number;
   swaps: SwapEvent[];
@@ -148,11 +205,18 @@ async function markEquityAt(
   cash: number,
   date: string,
   prices: PriceSource,
-): Promise<{ equity: number; positions: MutablePosition[] }> {
+): Promise<{ equity: number; positions: MutablePosition[]; missingTickers: string[] }> {
   let holdingsValue = 0;
   const next: MutablePosition[] = [];
+  // Wave 3B (M3) — tickers whose price source returned NO bar for this
+  // date. The caller's daily-mark step feeds these into the per-position
+  // missing-bar streaks that drive forced liquidation. The stale
+  // `p.currentPrice` carry-forward remains the marking fallback for
+  // short gaps (halts < FORCED_LIQUIDATION_GAP_TRADING_DAYS).
+  const missingTickers: string[] = [];
   for (const p of positions) {
     const px = await prices.closeAt(p.ticker, date);
+    if (px == null) missingTickers.push(p.ticker);
     const currentPrice = px ?? p.currentPrice;
     const marketValue = p.shares * currentPrice;
     holdingsValue += marketValue;
@@ -167,7 +231,7 @@ async function markEquityAt(
   if (equity > 0) {
     for (const p of next) p.weight = p.marketValue / equity;
   }
-  return { equity, positions: next };
+  return { equity, positions: next, missingTickers };
 }
 
 export async function runPortfolioBacktest(
@@ -193,10 +257,21 @@ export async function runPortfolioBacktest(
   let totalTurnoverNotional = 0;
   const completedHolds: number[] = []; // hold-days at exit, for avg
 
+  // Wave 3B (M3) — consecutive mark dates with no price bar, per held
+  // ticker. Reset when a bar appears; entry removed when the position
+  // exits. Drives the forced-liquidation sweep below.
+  const missingBarStreaks: Record<string, number> = {};
+
   let rebalanceIdx = 0;
   for (const date of markDates) {
-    // Apply rebalance if today is a rebalance date.
-    if (rebalanceIdx < rebalanceDates.length && date === rebalanceDates[rebalanceIdx]) {
+    // Wave 3B (track-2 M6) — catch-up rebalance. Pre-fix this was a
+    // strict `date === rebalanceDates[rebalanceIdx]`: a rebalance date
+    // absent from markDates (holiday / misaligned calendars) never
+    // matched AND the index never advanced, silently skipping every
+    // later rebalance (the run degraded to buy-and-hold). Now any
+    // rebalance date at or before today fires ONE rebalance at today's
+    // mark, and the index advances past every stale date ≤ today.
+    if (rebalanceIdx < rebalanceDates.length && rebalanceDates[rebalanceIdx] <= date) {
       // 1. Mark to today's close first (so weights/equity are current).
       const marked = await markEquityAt(positions, cash, date, prices);
       positions = marked.positions;
@@ -252,6 +327,7 @@ export async function runPortfolioBacktest(
           reasonCode: e.reason,
         });
         positions = positions.filter((p) => p.ticker !== e.ticker);
+        delete missingBarStreaks[e.ticker];
       }
 
       // 5. Apply additions at target weight = 1/positionCount of equity.
@@ -318,18 +394,72 @@ export async function runPortfolioBacktest(
         });
       }
 
-      rebalanceIdx++;
+      // Advance past every rebalance date at or before today — at most
+      // ONE rebalance executes per mark date; stale (skipped-holiday)
+      // dates collapse into it.
+      while (
+        rebalanceIdx < rebalanceDates.length &&
+        rebalanceDates[rebalanceIdx] <= date
+      ) {
+        rebalanceIdx++;
+      }
     }
 
     // Daily mark
     const marked = await markEquityAt(positions, cash, date, prices);
     positions = marked.positions;
+    let equity = marked.equity;
+
+    // Wave 3B (M3) — delisting/halt sweep. Update the per-position
+    // missing-bar streaks from THIS date's mark (the daily mark is the
+    // single per-date mark; rebalance-step marks don't touch streaks),
+    // then force-liquidate any position with no bar for more than
+    // FORCED_LIQUIDATION_GAP_TRADING_DAYS consecutive mark dates.
+    // Liquidation books at the last traded close with the configured
+    // slippage (a forced sell still crosses the spread); pre-fix the
+    // position rode the book at its frozen last close forever, so a
+    // bankruptcy read as a flat hold.
+    const missingToday = new Set(marked.missingTickers);
+    const survivors: MutablePosition[] = [];
+    for (const p of positions) {
+      const streak = missingToday.has(p.ticker)
+        ? (missingBarStreaks[p.ticker] ?? 0) + 1
+        : 0;
+      if (streak > FORCED_LIQUIDATION_GAP_TRADING_DAYS) {
+        const grossProceeds = p.shares * p.currentPrice;
+        const slippage = (grossProceeds * config.slippageBps) / 10_000;
+        cash += grossProceeds - slippage;
+        totalSlippage += slippage;
+        totalTurnoverNotional += grossProceeds;
+        equity -= slippage; // proceeds replace holdings value; slippage is the only equity hit
+        const holdDays = Math.max(
+          0,
+          Math.round(
+            (Date.parse(`${date}T00:00:00Z`) -
+              Date.parse(`${p.entryDate}T00:00:00Z`)) /
+              86_400_000,
+          ),
+        );
+        completedHolds.push(holdDays);
+        warnings.push(
+          `${date}: ${p.ticker} has no price bar for ${streak} consecutive mark dates — ` +
+            `forced liquidation at last traded close ${p.currentPrice} ` +
+            `(delisting/halt suspected; see FORCED_LIQUIDATION_GAP_TRADING_DAYS)`,
+        );
+        delete missingBarStreaks[p.ticker];
+        continue;
+      }
+      missingBarStreaks[p.ticker] = streak;
+      survivors.push(p);
+    }
+    positions = survivors;
+
     const spy = benchmarks?.spy ? await benchmarks.spy.closeAt('SPY', date) : null;
     const qqq = benchmarks?.qqq ? await benchmarks.qqq.closeAt('QQQ', date) : null;
     const iwf = benchmarks?.iwf ? await benchmarks.iwf.closeAt('IWF', date) : null;
     equityCurve.push({
       date,
-      portfolio: marked.equity,
+      portfolio: equity,
       spy,
       qqq,
       iwf,
@@ -364,9 +494,12 @@ export async function runPortfolioBacktest(
   const yearsInWindow =
     (Date.parse(`${window.end}T00:00:00Z`) - Date.parse(`${window.start}T00:00:00Z`)) /
     (365.25 * 86_400_000);
+  // Wave 3B (track-3 minor 6) — standard turnover convention:
+  // (buys + sells) / 2. totalTurnoverNotional accumulates BOTH legs,
+  // so halve it here. Pre-fix results reported ~2× standard.
   const turnoverPct =
     startVal > 0 && yearsInWindow > 0
-      ? ((totalTurnoverNotional / startVal) / yearsInWindow) * 100
+      ? ((totalTurnoverNotional / 2 / startVal) / yearsInWindow) * 100
       : 0;
 
   const avgHoldDays =

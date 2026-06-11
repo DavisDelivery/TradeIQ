@@ -21,6 +21,9 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 
 const writes: Array<{ collection: string; doc: string; payload: any }> = [];
 const fetchSpy = vi.fn();
+// Wave 3B (M6) — docs returned by the single-flight `status in [...]`
+// query. Tests seed this; default empty (no in-flight runs).
+const inFlightDocs: Array<{ id: string; data: () => any }> = [];
 
 vi.mock('../shared/firebase-admin', () => ({
   getAdminDb: vi.fn(() => ({
@@ -29,6 +32,11 @@ vi.mock('../shared/firebase-admin', () => ({
         set: async (payload: any) => {
           writes.push({ collection: cn, doc: dn, payload });
         },
+      }),
+      where: () => ({
+        limit: () => ({
+          get: async () => ({ docs: inFlightDocs }),
+        }),
       }),
     }),
   })),
@@ -64,6 +72,7 @@ async function invoke(h: any, ev: any): Promise<{ statusCode: number; body: stri
 
 beforeEach(() => {
   writes.length = 0;
+  inFlightDocs.length = 0;
   fetchSpy.mockReset();
 });
 
@@ -91,6 +100,76 @@ describe('portfolio-backtest-trigger — validation', () => {
       const res = await invoke(handler, makeEvent({ body: { window: w } }));
       expect(res.statusCode).toBe(202);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Wave 3B (track-3 M6) — per-window single-flight. A fresh pending/
+// running run of the SAME window blocks a duplicate launch with 409;
+// other windows, stale docs, and allowParallel launches go through.
+// ---------------------------------------------------------------------------
+describe('portfolio-backtest-trigger — single-flight (Wave 3B M6)', () => {
+  function inFlightDoc(window: string, status: string, ageMs: number, extra: any = {}) {
+    const startedAt = new Date(Date.now() - ageMs).toISOString();
+    return {
+      id: `pb-${window}-existing`,
+      data: () => ({ window, status, startedAt, ...extra }),
+    };
+  }
+
+  it('returns 409 (no new run, no dispatch) when a FRESH pending run exists for the window', async () => {
+    inFlightDocs.push(inFlightDoc('short-demo', 'pending', 5 * 60_000));
+    const res = await invoke(handler, makeEvent({ body: { window: 'short-demo' } }));
+    expect(res.statusCode).toBe(409);
+    const body = JSON.parse(res.body);
+    expect(body.ok).toBe(false);
+    expect(body.runId).toBe('pb-short-demo-existing');
+    expect(writes).toHaveLength(0); // no new pending row
+    expect(fetchSpy).not.toHaveBeenCalled(); // no background dispatch
+  });
+
+  it('returns 409 when a running run has a fresh cursor heartbeat', async () => {
+    inFlightDocs.push(
+      inFlightDoc('full', 'running', 6 * 3600_000, {
+        cursor: { lastInvocationStartedAt: new Date(Date.now() - 5 * 60_000).toISOString() },
+      }),
+    );
+    const res = await invoke(handler, makeEvent({ body: { window: 'full' } }));
+    expect(res.statusCode).toBe(409);
+  });
+
+  it('does NOT block a different window (parallel rolling-window seeding stays possible)', async () => {
+    fetchSpy.mockResolvedValue(new Response('', { status: 202 }));
+    inFlightDocs.push(inFlightDoc('full', 'pending', 5 * 60_000));
+    const res = await invoke(handler, makeEvent({ body: { window: 'rolling-2020' } }));
+    expect(res.statusCode).toBe(202);
+  });
+
+  it('does NOT block when the in-flight doc is STALE (re-fire is legitimate)', async () => {
+    fetchSpy.mockResolvedValue(new Response('', { status: 202 }));
+    // Pending for 2 hours: dispatch never landed; recovery territory.
+    inFlightDocs.push(inFlightDoc('short-demo', 'pending', 2 * 3600_000));
+    // Running with a stale heartbeat (4 h since last activity).
+    inFlightDocs.push(
+      inFlightDoc('covid', 'running', 6 * 3600_000, {
+        cursor: { lastInvocationStartedAt: new Date(Date.now() - 4 * 3600_000).toISOString() },
+        updatedAt: new Date(Date.now() - 4 * 3600_000).toISOString(),
+      }),
+    );
+    for (const w of ['short-demo', 'covid']) {
+      const res = await invoke(handler, makeEvent({ body: { window: w } }));
+      expect(res.statusCode).toBe(202);
+    }
+  });
+
+  it('allowParallel bypasses the guard', async () => {
+    fetchSpy.mockResolvedValue(new Response('', { status: 202 }));
+    inFlightDocs.push(inFlightDoc('short-demo', 'pending', 5 * 60_000));
+    const res = await invoke(
+      handler,
+      makeEvent({ body: { window: 'short-demo', allowParallel: true } }),
+    );
+    expect(res.statusCode).toBe(202);
   });
 });
 

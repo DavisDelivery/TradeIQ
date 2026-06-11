@@ -16,8 +16,17 @@ import type { Handler } from '@netlify/functions';
 import { getAdminDb } from './shared/firebase-admin';
 import { Timestamp } from 'firebase-admin/firestore';
 import { logger } from './shared/logger';
+import { STALE_RUN_THRESHOLD_MS } from './shared/backtest-resume/recover';
 
 const headers = { 'Content-Type': 'application/json' };
+
+// Wave 3B (track-3 M6) — single-flight window for *pending* docs (a
+// pending doc has no cursor yet, so freshness comes from startedAt).
+// Mirrors SINGLE_FLIGHT_WINDOW_MS in backtest-runs-trigger.ts: 30 min
+// covers the dispatch→running transition with generous margin; a
+// pending doc older than that means the dispatch never landed and the
+// window is fair game for a re-fire.
+const PENDING_SINGLE_FLIGHT_WINDOW_MS = 30 * 60 * 1000;
 
 const KNOWN_WINDOWS = new Set([
   'full',
@@ -58,6 +67,69 @@ function inferOrigin(event: { headers: Record<string, string | undefined> }): st
   return process.env.URL ?? 'https://tradeiq-alpha.netlify.app';
 }
 
+/** Millis from a Firestore Timestamp, an ISO string, or undefined. The
+ *  doc's `updatedAt` is written as Timestamp.now() by the trigger/worker
+ *  status writes but as an ISO string by writeCursor — accept both. */
+function toMillis(v: unknown): number {
+  if (v == null) return NaN;
+  if (typeof v === 'string') return Date.parse(v);
+  const ts = v as { toMillis?: () => number; _seconds?: number };
+  if (typeof ts.toMillis === 'function') return ts.toMillis();
+  if (typeof ts._seconds === 'number') return ts._seconds * 1000;
+  return NaN;
+}
+
+/**
+ * Wave 3B (track-3 M6) — single-flight guard, per window. Returns the
+ * runId of a FRESH in-flight (pending/running) run for `window`, or
+ * null when none exists. Freshness mirrors the conventions in
+ * backtest-runs-trigger.ts (pending: startedAt within 30 min) and the
+ * scan-resume/recover sweep (running: latest activity — cursor's
+ * lastInvocationStartedAt / updatedAt — within STALE_RUN_THRESHOLD_MS).
+ * Stale docs do NOT block: the recovery sweep in the cron resumes or
+ * fails them, and a re-fire is legitimate.
+ *
+ * Single-field `status in [...]` query (no composite index needed);
+ * window + freshness filtering happens in code. Exported for tests.
+ */
+export async function findInFlightPortfolioRun(
+  window: string,
+  now: number = Date.now(),
+): Promise<string | null> {
+  const db = getAdminDb();
+  const snap = await db
+    .collection('portfolioBacktests')
+    .where('status', 'in', ['pending', 'running'])
+    .limit(20)
+    .get();
+  for (const doc of snap.docs) {
+    const data = doc.data() as {
+      window?: string;
+      status?: string;
+      startedAt?: string;
+      updatedAt?: unknown;
+      cursor?: { lastInvocationStartedAt?: string } | null;
+    };
+    if (data.window !== window) continue;
+    const lastActivityMs = Math.max(
+      ...[
+        toMillis(data.startedAt),
+        toMillis(data.updatedAt),
+        toMillis(data.cursor?.lastInvocationStartedAt),
+      ].filter((m) => Number.isFinite(m)),
+      0,
+    );
+    if (lastActivityMs <= 0) continue;
+    const ageMs = now - lastActivityMs;
+    const threshold =
+      data.status === 'pending'
+        ? PENDING_SINGLE_FLIGHT_WINDOW_MS
+        : STALE_RUN_THRESHOLD_MS;
+    if (ageMs < threshold) return doc.id;
+  }
+  return null;
+}
+
 export const handler: Handler = async (event) => {
   const log = logger.child({ fn: 'portfolio-backtest-trigger' });
   if (event.httpMethod !== 'POST') {
@@ -68,7 +140,7 @@ export const handler: Handler = async (event) => {
     };
   }
 
-  let body: { window?: string };
+  let body: { window?: string; allowParallel?: boolean };
   try {
     body = JSON.parse(event.body ?? '{}');
   } catch (e: any) {
@@ -88,6 +160,43 @@ export const handler: Handler = async (event) => {
         error: `invalid window. valid: full, half-2018, half-2022, covid, rate-hikes, short-demo, rolling-2018..rolling-2025`,
       }),
     };
+  }
+
+  // Wave 3B (track-3 M6) — single-flight per window, mirroring
+  // backtest-runs-trigger.ts. A fresh pending/running run of the SAME
+  // window blocks a duplicate launch (the cron's daily tick must not
+  // stack concurrent runs of a slow multi-batch window); other windows
+  // stay launchable in parallel (the rolling-window seeding pattern).
+  // `allowParallel: true` / `?parallel=1` bypasses, for parity with the
+  // regular trigger.
+  const allowParallel =
+    body.allowParallel === true || event.queryStringParameters?.parallel === '1';
+  if (!allowParallel) {
+    try {
+      const inFlight = await findInFlightPortfolioRun(window);
+      if (inFlight) {
+        log.info('single_flight_blocked', { window, existingRunId: inFlight });
+        return {
+          statusCode: 409,
+          headers,
+          body: JSON.stringify({
+            ok: false,
+            error:
+              `A portfolio backtest for window '${window}' is already in flight ` +
+              `(runId: ${inFlight}). Wait for it to finish, OR re-fire with ` +
+              `\`allowParallel: true\` in the body / \`?parallel=1\` in the query.`,
+            runId: inFlight,
+            window,
+          }),
+        };
+      }
+    } catch (e: any) {
+      // Don't block on a transient single-flight read failure — log and
+      // proceed. The guard is a rail, not a correctness invariant.
+      log.warn('single_flight_check_failed', { window, err: String(e?.message ?? e) });
+    }
+  } else {
+    log.info('single_flight_bypassed', { window, reason: 'allowParallel' });
   }
 
   const runId = generateRunId(window);

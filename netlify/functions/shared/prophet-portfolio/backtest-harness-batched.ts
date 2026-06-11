@@ -28,6 +28,7 @@ import type {
   PortfolioBacktestResult,
   PriceSource,
 } from './backtest-harness';
+import { FORCED_LIQUIDATION_GAP_TRADING_DAYS } from './backtest-harness';
 
 /**
  * Serializable resume payload — *bounded checkpoint only*. Mirrors the
@@ -57,6 +58,14 @@ export interface PortfolioBacktestState {
   swapRowCount: number;
   completedHoldRowCount: number;
   warningRowCount: number;
+  /**
+   * Wave 3B (track-3 M3) — consecutive mark dates with no price bar,
+   * per held ticker. Drives the forced-liquidation sweep; must survive
+   * batch boundaries so a gap spanning a checkpoint still liquidates.
+   * Optional with `?? {}` defaulting on resume: cursors persisted
+   * before Wave 3B predate the field.
+   */
+  missingBarStreaks?: Record<string, number>;
 }
 
 export interface ProcessBatchOptions {
@@ -116,6 +125,8 @@ export function initialPortfolioState(config: PortfolioConfig): PortfolioBacktes
     swapRowCount: 0,
     completedHoldRowCount: 0,
     warningRowCount: 0,
+    // Wave 3B (M3) — forced-liquidation streak tracking.
+    missingBarStreaks: {},
   };
 }
 
@@ -124,11 +135,16 @@ async function markEquityAt(
   cash: number,
   date: string,
   prices: PriceSource,
-): Promise<{ equity: number; positions: PortfolioPosition[] }> {
+): Promise<{ equity: number; positions: PortfolioPosition[]; missingTickers: string[] }> {
   let holdingsValue = 0;
   const next: PortfolioPosition[] = [];
+  // Wave 3B (M3) — mirror of the unbatched harness: report tickers with
+  // no bar for this date so the daily-mark step can drive the
+  // forced-liquidation streaks.
+  const missingTickers: string[] = [];
   for (const p of positions) {
     const px = await prices.closeAt(p.ticker, date);
+    if (px == null) missingTickers.push(p.ticker);
     const currentPrice = px ?? p.currentPrice;
     const marketValue = p.shares * currentPrice;
     holdingsValue += marketValue;
@@ -143,7 +159,7 @@ async function markEquityAt(
   if (equity > 0) {
     for (const p of next) p.weight = p.marketValue / equity;
   }
-  return { equity, positions: next };
+  return { equity, positions: next, missingTickers };
 }
 
 /**
@@ -185,7 +201,10 @@ export async function processPortfolioBatch(
   const state: PortfolioBacktestState = {
     ...opts.state,
     positions: opts.state.positions.map((p) => ({ ...p })),
+    // Wave 3B (M3) — clone; pre-Wave-3B cursors lack the field.
+    missingBarStreaks: { ...(opts.state.missingBarStreaks ?? {}) },
   };
+  const missingBarStreaks = state.missingBarStreaks!;
   const batchEquityCurve: PortfolioBacktestResult['equityCurve'] = [];
   const batchSwaps: SwapEvent[] = [];
   const batchCompletedHolds: number[] = [];
@@ -198,10 +217,16 @@ export async function processPortfolioBatch(
   while (i < markDates.length) {
     const date = markDates[i];
 
-    // Rebalance date?
+    // Rebalance due? Wave 3B (track-2 M6) — catch-up semantics, must
+    // mirror the unbatched harness: pre-fix this was a strict
+    // `date === rebalanceDates[nextRebalanceIdx]`, so a rebalance date
+    // absent from markDates stalled the index and silently skipped all
+    // later rebalances. Now any scheduled date at or before today fires
+    // ONE rebalance at today's mark; the index then advances past every
+    // stale date ≤ today.
     const isRebalanceDate =
       state.nextRebalanceIdx < rebalanceDates.length &&
-      date === rebalanceDates[state.nextRebalanceIdx];
+      rebalanceDates[state.nextRebalanceIdx] <= date;
 
     if (isRebalanceDate) {
       // Have we exhausted this batch's rebalance budget? If so, stop
@@ -280,6 +305,7 @@ export async function processPortfolioBatch(
           reasonCode: e.reason,
         });
         state.positions = state.positions.filter((p) => p.ticker !== e.ticker);
+        delete missingBarStreaks[e.ticker];
       }
 
       // 5. Apply additions at target weight.
@@ -339,19 +365,70 @@ export async function processPortfolioBatch(
         });
       }
 
-      state.nextRebalanceIdx++;
+      // Advance past every rebalance date at or before today — at most
+      // ONE rebalance executes per mark date (mirror of the unbatched
+      // harness's catch-up loop).
+      while (
+        state.nextRebalanceIdx < rebalanceDates.length &&
+        rebalanceDates[state.nextRebalanceIdx] <= date
+      ) {
+        state.nextRebalanceIdx++;
+      }
       rebalancesProcessed++;
     }
 
     // Daily mark (runs on every mark date — rebalance dates included).
     const marked = await markEquityAt(state.positions, state.cash, date, prices);
     state.positions = marked.positions;
+    let equity = marked.equity;
+
+    // Wave 3B (M3) — delisting/halt sweep; must mirror the unbatched
+    // harness exactly (the equivalence suite is the contract). Update
+    // streaks from this date's daily mark, then force-liquidate any
+    // position with no bar for more than
+    // FORCED_LIQUIDATION_GAP_TRADING_DAYS consecutive mark dates, at
+    // the last traded close with the configured slippage.
+    const missingToday = new Set(marked.missingTickers);
+    const survivors: PortfolioPosition[] = [];
+    for (const p of state.positions) {
+      const streak = missingToday.has(p.ticker)
+        ? (missingBarStreaks[p.ticker] ?? 0) + 1
+        : 0;
+      if (streak > FORCED_LIQUIDATION_GAP_TRADING_DAYS) {
+        const grossProceeds = p.shares * p.currentPrice;
+        const slippage = (grossProceeds * config.slippageBps) / 10_000;
+        state.cash += grossProceeds - slippage;
+        state.totalSlippage += slippage;
+        state.totalTurnoverNotional += grossProceeds;
+        equity -= slippage;
+        const holdDays = Math.max(
+          0,
+          Math.round(
+            (Date.parse(`${date}T00:00:00Z`) -
+              Date.parse(`${p.entryDate}T00:00:00Z`)) /
+              86_400_000,
+          ),
+        );
+        batchCompletedHolds.push(holdDays);
+        batchWarnings.push(
+          `${date}: ${p.ticker} has no price bar for ${streak} consecutive mark dates — ` +
+            `forced liquidation at last traded close ${p.currentPrice} ` +
+            `(delisting/halt suspected; see FORCED_LIQUIDATION_GAP_TRADING_DAYS)`,
+        );
+        delete missingBarStreaks[p.ticker];
+        continue;
+      }
+      missingBarStreaks[p.ticker] = streak;
+      survivors.push(p);
+    }
+    state.positions = survivors;
+
     const spy = benchmarks?.spy ? await benchmarks.spy.closeAt('SPY', date) : null;
     const qqq = benchmarks?.qqq ? await benchmarks.qqq.closeAt('QQQ', date) : null;
     const iwf = benchmarks?.iwf ? await benchmarks.iwf.closeAt('IWF', date) : null;
     batchEquityCurve.push({
       date,
-      portfolio: marked.equity,
+      portfolio: equity,
       spy,
       qqq,
       iwf,
@@ -508,9 +585,12 @@ export function finalizePortfolioBacktest(
   const yearsInWindow =
     (Date.parse(`${window.end}T00:00:00Z`) - Date.parse(`${window.start}T00:00:00Z`)) /
     (365.25 * 86_400_000);
+  // Wave 3B (track-3 minor 6) — standard (buys + sells) / 2 turnover
+  // convention; totalTurnoverNotional carries both legs. Mirrors the
+  // unbatched harness.
   const turnoverPct =
     startVal > 0 && yearsInWindow > 0
-      ? ((state.totalTurnoverNotional / startVal) / yearsInWindow) * 100
+      ? ((state.totalTurnoverNotional / 2 / startVal) / yearsInWindow) * 100
       : 0;
 
   const avgHoldDays =

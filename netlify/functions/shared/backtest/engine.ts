@@ -52,6 +52,20 @@ import type {
 } from './types';
 
 const BAR_LOOKBACK_DAYS = 300;
+
+/**
+ * Wave 3B (track-3 M3) — forced-liquidation gap. A held position with no
+ * daily bar for MORE than this many consecutive trading days is treated
+ * as delisted/halted: it is dropped from the carried portfolio (its
+ * weight stops riding as an implicit 0%-return flat hold and no phantom
+ * sell is booked against its stale close at the next rebalance) and a
+ * warning is surfaced per occurrence. 10 trading days ≈ 2 calendar
+ * weeks — beyond any routine halt/provider gap. Data-free by design (no
+ * Polygon delisted-status lookups in this wave); mirrors
+ * FORCED_LIQUIDATION_GAP_TRADING_DAYS in the portfolio harness.
+ */
+const FORCED_LIQUIDATION_GAP_TRADING_DAYS = 10;
+
 const BENCHMARK_BY_UNIVERSE: Record<BacktestConfig['universe'], string> = {
   dow: 'DIA',
   sp500: 'SPY',
@@ -325,6 +339,10 @@ export async function runBacktest(
     // universe seed (delisted/acquired historical members). Counted so
     // the run surfaces how much of the result comes from non-survivors.
     let scoredOutsideUniverseTotal = 0;
+    // Wave 3B (M3) — consecutive trading days with no bar, per held
+    // ticker. Persists across rebalance segments (a halt can span one);
+    // pruned to the current target at each rebalance.
+    const missingBarStreaks: Record<string, number> = {};
 
     // Pre-fetch benchmark bars once
     const benchTicker = BENCHMARK_BY_UNIVERSE[config.universe];
@@ -492,13 +510,41 @@ export async function runBacktest(
         positionReturns.set(p.ticker, rets);
       }
 
+      // Wave 3B (M3) — prune streak entries for tickers no longer held,
+      // then walk the segment tracking per-ticker missing-bar streaks.
+      // A position whose streak exceeds the gap is force-liquidated:
+      // its (already 0%-return) weight stops riding and it is removed
+      // from the carried portfolio below, so the next rebalance's diff
+      // does not book a phantom sell at its stale close. A delisted
+      // name cannot be transacted; the warning surfaces the event.
+      for (const k of Object.keys(missingBarStreaks)) {
+        if (!target.some((p) => p.ticker === k)) delete missingBarStreaks[k];
+      }
+      const forciblyLiquidated = new Set<string>();
+
       const dates = tradingDaysBetween(addDays(asOfDate, 1), nextAsOf);
       for (const date of dates) {
         let portReturn = 0;
         for (const p of target) {
+          if (forciblyLiquidated.has(p.ticker)) continue;
           const rets = positionReturns.get(p.ticker) ?? [];
-          const todayRet = rets.find((r) => r.date === date)?.ret ?? 0;
-          portReturn += p.weight * todayRet;
+          const today = rets.find((r) => r.date === date);
+          if (today) {
+            missingBarStreaks[p.ticker] = 0;
+            portReturn += p.weight * today.ret;
+          } else {
+            const streak = (missingBarStreaks[p.ticker] ?? 0) + 1;
+            missingBarStreaks[p.ticker] = streak;
+            if (streak > FORCED_LIQUIDATION_GAP_TRADING_DAYS) {
+              forciblyLiquidated.add(p.ticker);
+              delete missingBarStreaks[p.ticker];
+              warnings.push(
+                `${date}: ${p.ticker} has no daily bar for ${streak} consecutive trading days — ` +
+                  `forced liquidation at last traded close (delisting/halt suspected; ` +
+                  `see FORCED_LIQUIDATION_GAP_TRADING_DAYS)`,
+              );
+            }
+          }
         }
         nav = nav * (1 + portReturn);
         dailyEquity.push({ date, value: nav });
@@ -590,7 +636,13 @@ export async function runBacktest(
         if (row !== undefined) mlRows.push(row);
       }
 
-      portfolio = target;
+      // Wave 3B (M3) — carry only positions that were not force-
+      // liquidated during the segment; their freed weight is implicitly
+      // cash from here on.
+      portfolio =
+        forciblyLiquidated.size > 0
+          ? target.filter((p) => !forciblyLiquidated.has(p.ticker))
+          : target;
     }
 
     // Benchmark return for IR
@@ -694,4 +746,7 @@ export const _engineInternals = {
   forwardReturn,
   marketCapBucket,
   BENCHMARK_BY_UNIVERSE,
+  // Wave 3B (M3) — shared with engine-batched so both paths liquidate
+  // on the same gap.
+  FORCED_LIQUIDATION_GAP_TRADING_DAYS,
 };
