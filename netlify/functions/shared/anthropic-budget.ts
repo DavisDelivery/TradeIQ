@@ -24,9 +24,13 @@
 
 import { getStore, Store } from '@netlify/blobs';
 
-// Opus 4.7 pricing (2026): $15 / 1M input, $75 / 1M output.
-const OPUS_INPUT_USD_PER_MTOK = 15;
-const OPUS_OUTPUT_USD_PER_MTOK = 75;
+// Opus-tier pricing (verified 2026-06 against platform.claude.com/docs/en/
+// pricing): $5 / 1M input, $25 / 1M output — identical for Opus 4.7 and 4.8,
+// the two models this codebase calls. The previous constants ($15/$75) were
+// 3x actual, so the $25/day cap tripped at ~$8.33 of real spend and all
+// spend telemetry was inflated (code-review-2026-06, infra #3).
+const OPUS_INPUT_USD_PER_MTOK = 5;
+const OPUS_OUTPUT_USD_PER_MTOK = 25;
 
 const STORE_NAME = 'tradeiq-budget';
 const SPEND_KEY_PREFIX = 'anthropic-spend:';
