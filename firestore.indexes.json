@@ -7,6 +7,14 @@
         { "fieldPath": "universe", "order": "ASCENDING" },
         { "fieldPath": "generatedAt", "order": "DESCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "decisionLog",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "fwdReturnsStatus", "order": "ASCENDING" },
+        { "fieldPath": "decisionDate", "order": "ASCENDING" }
+      ]
     }
   ],
   "fieldOverrides": []

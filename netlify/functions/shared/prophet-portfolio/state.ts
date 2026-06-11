@@ -125,6 +125,18 @@ export async function appendEquityCurvePoint(
     .set(point);
 }
 
+/** Wave 3A / M9 — duplicate-bar-date guard: the MTM cron reads the point
+ *  for the latest bar date before writing; if it already exists the run
+ *  is a no-op (holiday/duplicate invocations never write flat points). */
+export async function getEquityCurvePoint(
+  universe: PortfolioUniverse,
+  date: string,
+): Promise<EquityCurvePoint | null> {
+  const doc = await universeDoc(universe).collection('equityCurve').doc(date).get();
+  if (!doc.exists) return null;
+  return (doc.data() as EquityCurvePoint) ?? null;
+}
+
 export async function listEquityCurve(
   universe: PortfolioUniverse,
   limit: number = 252,
@@ -151,9 +163,24 @@ export async function writeDecisionLogRow(
   await universeDoc(universe)
     .collection('decisionLog')
     .doc(decisionLogId(row.ticker, row.decisionDate))
-    .set(row);
+    // Wave 3A / M5: every row carries an explicit fwdReturnsStatus so the
+    // populator's equality filter sees it (Firestore equality filters
+    // exclude documents missing the field entirely).
+    .set({ fwdReturnsStatus: 'pending', ...row });
 }
 
+/**
+ * Oldest ≤`limit` rows still awaiting forward-return labels.
+ *
+ * Wave 3A / M5: filters `fwdReturnsStatus == 'pending'` server-side so
+ * resolved ('complete') and permanently unresolvable ('exhausted') rows
+ * stop occupying the head of the oldest-first window — previously, 200
+ * dead rows at the head starved every younger row forever. Requires the
+ * composite index (fwdReturnsStatus ASC, decisionDate ASC) declared in
+ * firestore.indexes.json. Rows are stamped 'pending' at write time;
+ * production decisionLog is empty pre-W5, so no unstamped legacy rows
+ * exist to fall outside the filter.
+ */
 export async function listDecisionLogRowsOlderThan(
   universe: PortfolioUniverse,
   cutoffDate: string,
@@ -161,6 +188,7 @@ export async function listDecisionLogRowsOlderThan(
 ): Promise<DecisionLogRow[]> {
   const snap = await universeDoc(universe)
     .collection('decisionLog')
+    .where('fwdReturnsStatus', '==', 'pending')
     .where('decisionDate', '<=', cutoffDate)
     .orderBy('decisionDate', 'asc')
     .limit(limit)
@@ -172,7 +200,16 @@ export async function updateDecisionLogForwardReturns(
   universe: PortfolioUniverse,
   ticker: string,
   decisionDate: string,
-  patch: Partial<Pick<DecisionLogRow, 'forwardReturn30d' | 'forwardReturn60d' | 'forwardReturn90d'>>,
+  patch: Partial<
+    Pick<
+      DecisionLogRow,
+      | 'forwardReturn30d'
+      | 'forwardReturn60d'
+      | 'forwardReturn90d'
+      | 'fwdReturnsStatus'
+      | 'fwdReturnAttempts'
+    >
+  >,
 ): Promise<void> {
   await universeDoc(universe)
     .collection('decisionLog')

@@ -108,6 +108,7 @@ vi.mock('firebase-admin/firestore', () => ({
 
 import {
   appendEquityCurvePoint,
+  getEquityCurvePoint,
   getPortfolioConfig,
   getPortfolioState,
   listDecisionLogRowsOlderThan,
@@ -285,6 +286,15 @@ describe('equity curve', () => {
     expect(curve[0].date).toBe('2024-01-04');
     expect(curve[1].date).toBe('2024-01-05');
   });
+
+  it('getEquityCurvePoint reads a single point by bar date (M9 duplicate guard)', async () => {
+    await appendEquityCurvePoint('largecap', pt('2024-01-09', 100_500));
+    const hit = await getEquityCurvePoint('largecap', '2024-01-09');
+    expect(hit).not.toBeNull();
+    expect(hit!.equity).toBe(100_500);
+    const miss = await getEquityCurvePoint('largecap', '2024-01-10');
+    expect(miss).toBeNull();
+  });
 });
 
 describe('decisionLog', () => {
@@ -323,5 +333,41 @@ describe('decisionLog', () => {
     const olderThanJan = await listDecisionLogRowsOlderThan('largecap', '2024-01-15', 10);
     expect(olderThanJan).toHaveLength(1);
     expect(olderThanJan[0].ticker).toBe('AAPL');
+  });
+
+  // --- Wave 3A / M5 — pending-only query (starvation fix) -------------------
+
+  it('stamps fwdReturnsStatus pending at write time', async () => {
+    await writeDecisionLogRow('largecap', row('AAPL', '2024-01-08'));
+    const rows = await listDecisionLogRowsOlderThan('largecap', '2024-01-08', 10);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].fwdReturnsStatus).toBe('pending');
+  });
+
+  it('excludes exhausted and complete rows so younger rows reach the batch window', async () => {
+    // Old dead rows at the head of the oldest-first window…
+    await writeDecisionLogRow('largecap', row('DEAD1', '2023-06-01'));
+    await writeDecisionLogRow('largecap', row('DEAD2', '2023-06-02'));
+    await writeDecisionLogRow('largecap', row('DONE', '2023-06-03'));
+    // …and one younger pending row.
+    await writeDecisionLogRow('largecap', row('AAPL', '2024-01-08'));
+    await updateDecisionLogForwardReturns('largecap', 'DEAD1', '2023-06-01', {
+      fwdReturnsStatus: 'exhausted',
+      forwardReturn30d: null,
+    });
+    await updateDecisionLogForwardReturns('largecap', 'DEAD2', '2023-06-02', {
+      fwdReturnsStatus: 'exhausted',
+    });
+    await updateDecisionLogForwardReturns('largecap', 'DONE', '2023-06-03', {
+      fwdReturnsStatus: 'complete',
+      forwardReturn30d: 0.1,
+    });
+
+    // Pre-fix shape of the bug: with limit 2, the head of the window was
+    // permanently occupied by dead rows and AAPL never surfaced. Now the
+    // pending filter skips them server-side.
+    const batch = await listDecisionLogRowsOlderThan('largecap', '2024-06-01', 2);
+    expect(batch).toHaveLength(1);
+    expect(batch[0].ticker).toBe('AAPL');
   });
 });
