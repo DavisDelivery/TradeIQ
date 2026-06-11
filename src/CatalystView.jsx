@@ -73,7 +73,7 @@ export const CatalystView = ({ universe = 'sp500', onNavigate }) => {
       {data && !loading && (
         <div className="flex items-center justify-between mb-3 text-[11px] text-neutral-500 font-mono">
           <span>{data.matched} matched / {data.universeChecked} scanned</span>
-          <button onClick={load} className="flex items-center gap-1 hover:text-neutral-300 transition-colors">
+          <button onClick={() => forceRescan()} className="flex items-center gap-1 hover:text-neutral-300 transition-colors">
             <RefreshCw className="h-3 w-3" />
             refresh
           </button>

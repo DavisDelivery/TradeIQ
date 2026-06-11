@@ -23,7 +23,14 @@ line 99). Fix: require the same trigger token, validate universe.
 ## MAJOR
 
 **2. `scan-status.ts` Firestore range query is degenerate — always returns
-zero runs** — `netlify/functions/scan-status.ts:99`:
+zero runs**
+
+> **RETRACTED (Wave-1 verification, 2026-06-11).** Byte-level inspection of
+> `scan-status.ts:99` shows `idPrefix + '\uf8ff'` — the U+F8FF sentinel IS
+> present (invisible in rendered output, which is how it was misread as an
+> empty string). The range query is the canonical descending prefix scan
+> and is correct as written. The scan-status.test.ts mock's `startsWith`
+> semantics match the correct production behavior. No fix needed. — `netlify/functions/scan-status.ts:99`:
 `const upperBound = idPrefix + '';` concatenates an *empty string*
 (intended: `idPrefix + ''`). With
 `orderBy('__name__','desc').startAt(upperBound).endAt(idPrefix)` the range

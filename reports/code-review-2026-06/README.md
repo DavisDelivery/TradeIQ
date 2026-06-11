@@ -78,7 +78,7 @@ Severity counts: **12 critical, ~35 major, ~60 minor.**
 - #69's `universeChecked = entries.length` unconditionally — reports universe size as coverage even when stage 1 scored 60% (`prophet-sieve/index.ts:147`).
 
 **Infrastructure**
-- `scan-status.ts:99`: upper bound built as `idPrefix + ''` (empty string; meant `''`) → the Firestore range query matches nothing; the stalled-scan diagnostic can never see a stalled scan. **Same degenerate prefix-range pattern in `scan-resume/finalize.ts:144-150`** (DESC `startAt(prefix)`) → zombie runs never recovered. Both tests mock the *intended* semantics and pass.
+- ~~`scan-status.ts:99` / `scan-resume/finalize.ts:144`: degenerate Firestore prefix-range queries~~ — **RETRACTED (Wave-1 verification, 2026-06-11)**: byte-level inspection shows both sites already append the invisible `U+F8FF` sentinel (`ef a3 bf`) to the prefix, not an empty string. Both queries are the canonical descending prefix-scan form and are correct as written; the review agents misread the invisible character. No fix needed, and the test mocks' `startsWith` semantics match the (correct) production behavior.
 - Anthropic budget priced 3× actual ($15/$75 vs real $5/$25 per MTok) → the $25/day cap halts AI features at ~$8.33 real spend; test asserts the wrong constants. Also racy read-modify-write on Blobs, model-blind pricing.
 - `research.ts` / `chart-analysis.ts`: unauthenticated, unrate-limited LLM endpoints with trivially bypassable caches — anonymous traffic can burn the entire (already 3×-undersized) daily AI budget.
 - `analysts-status.ts` drifted from `analyst-runner.ts`: reports removed analysts (macro 0.07, patent 0.06) as live, totalWeight 1.00 vs real 0.87.
@@ -96,14 +96,13 @@ Severity counts: **12 critical, ~35 major, ~60 minor.**
 
 ## 3. Cross-cutting failure patterns (the systemic stuff)
 
-1. **Tests that encode intent, not reality.** Five independent instances:
-   scan-status and scan-resume mocks re-implement the Firestore prefix query
-   with `startsWith` (intended semantics) so degenerate production queries
-   pass; the budget test asserts the wrong pricing constants; the
-   KeyMetricsPanel fixture uses percent margins the handler never produces;
-   `signal.test.ts` pins the look-ahead fallback as desired. **Rule to
-   adopt: integration-shaped mocks must mimic the platform's actual
-   semantics, and fixtures must be derived from captured real responses.**
+1. **Tests that encode intent, not reality.** Three confirmed instances
+   (two retracted — see Infrastructure note above): the budget test asserts
+   the wrong pricing constants; the KeyMetricsPanel fixture uses percent
+   margins the handler never produces; `signal.test.ts` pins the look-ahead
+   fallback as desired. **Rule to adopt: integration-shaped mocks must
+   mimic the platform's actual semantics, and fixtures must be derived from
+   captured real responses.**
 2. **Calendar vs trading days.** 220-calendar-day fetches feeding 200-bar
    indicators (CR-4, dead setups); √252 annualization over calendar-day
    series; `expectedMove` mixing √252 with calendar scaling; "daysSince"
@@ -174,9 +173,9 @@ Severity counts: **12 critical, ~35 major, ~60 minor.**
 2. **Producers**: CR-7 (thin-cron→background for all three Prophet crons,
    confirm against prod logs first), CR-8 (status stamping + publish guard),
    promotion race, snapshotBeforeDate status filter.
-3. **Live correctness**: CR-3, CR-4, CR-5, CR-6; the two degenerate
-   Firestore queries; budget repricing (decide: keep effective or nominal
-   ceiling).
+3. **Live correctness**: CR-3, CR-4, CR-5, CR-6; budget repricing (decide:
+   keep effective or nominal ceiling). (The "two degenerate Firestore
+   queries" originally listed here were retracted — see section 2.)
 4. **Security**: token-gate seed-scan-background (+narrate POST validation),
    shared per-IP limiter for research/chart-analysis.
 5. **Frontend**: the three crashes (one-line fixes), the two query-key
