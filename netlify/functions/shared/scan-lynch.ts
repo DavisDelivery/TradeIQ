@@ -12,6 +12,7 @@ import {
   getPreviousClose,
 } from './data-provider';
 import { mapWithConcurrency } from './full-scan-iterator';
+import { sideFromScore, type StyleSide } from './style-types';
 import type { Logger } from './logger';
 
 export type LynchUniverseKey = IndexTag | 'all';
@@ -24,7 +25,8 @@ export interface LynchCandidate {
   confidence: number;
   rationale: string;
   signals: Record<string, any>;
-  side: 'long' | 'short';
+  /** 'neutral' = zero score (typically no scoreable data) — Wave 4C, review m6. */
+  side: StyleSide;
   /** Discrete investment signal (Phase 4m): BUY/HOLD/AVOID + fair-value band. */
   signal: LynchSignal;
   /** Latest close at scan time, for reference. */
@@ -85,7 +87,7 @@ export async function runLynchScan(opts: RunLynchScanOpts): Promise<RunLynchScan
       const s = runLynch({
         ticker,
         peRatio: fund?.ttmEps && snap ? snap.c / fund.ttmEps : undefined,
-        epsGrowthYoY: fund?.epsGrowthYoY,
+        epsGrowthTTM: fund?.epsGrowthTTM,
         revenueGrowthYoY: fund?.revenueGrowthYoY,
         debtToEquity: fund?.debtToEquity,
         operatingMargin: fund?.operatingMargin,
@@ -107,7 +109,7 @@ export async function runLynchScan(opts: RunLynchScanOpts): Promise<RunLynchScan
         confidence: s.confidence,
         rationale: s.rationale,
         signals: s.signals,
-        side: s.score >= 0 ? 'long' : 'short',
+        side: sideFromScore(s.score),
         signal,
         price: snap?.c ?? null,
       };

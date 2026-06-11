@@ -22,6 +22,17 @@ import type { Logger } from './logger';
 
 export type CatalystUniverseKey = IndexTag | 'all';
 
+/**
+ * Bar-fetch lookback in CALENDAR days. Wave 4C (review M4): the old 220-day
+ * window yielded ~150 trading bars, permanently starving the two 200-bar
+ * setups (`multi_tf_aligned`, `oversold_bounce`) — the "7-setup deck" that
+ * the catalyst scorer's 0.30 setup weight assumes was silently a 5-setup
+ * deck. 320 calendar days ≈ 220 trading bars restores them with headroom.
+ * Cost: zero extra provider calls — getDailyBars is a single Polygon
+ * aggregates request whose range param just widens (limit=5000 ≫ 220 rows).
+ */
+export const CATALYST_BAR_LOOKBACK_DAYS = 320;
+
 export type CatalystPick = CatalystScore & {
   name: string;
   sector: string;
@@ -89,7 +100,9 @@ export async function runCatalystScan(
   });
 
   const to = new Date().toISOString().slice(0, 10);
-  const from = new Date(Date.now() - 220 * 86400000).toISOString().slice(0, 10);
+  const from = new Date(Date.now() - CATALYST_BAR_LOOKBACK_DAYS * 86400000)
+    .toISOString()
+    .slice(0, 10);
 
   let budgetExceeded = false;
   // M8 follow-through: providers now resolve null on TRANSPORT failures

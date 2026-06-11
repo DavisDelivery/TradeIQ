@@ -506,7 +506,7 @@ async function scoreLynchAtDate(
   const analyst = runLynch({
     ticker,
     peRatio,
-    epsGrowthYoY: fund?.epsGrowthYoY,
+    epsGrowthTTM: fund?.epsGrowthTTM,
     revenueGrowthYoY: fund?.revenueGrowthYoY,
     debtToEquity: fund?.debtToEquity,
     operatingMargin: fund?.operatingMargin,

@@ -207,6 +207,9 @@ export async function runTargetScan(opts: RunTargetScanOpts): Promise<RunTargetS
       return { ticker: t, score: preScore(bars, spyRet20) };
     });
     preScored.sort((a, b) => b.score - a.score);
+    // NOTE: preScore is long-only, so this `score > 0` gate means shorts
+    // can never surface from large-universe scans — see the limitation
+    // comment on preScore (review m5).
     survivors = preScored
       .slice(0, opts.pass2Max)
       .filter((p) => p.score > 0)
@@ -289,12 +292,23 @@ export async function runTargetScan(opts: RunTargetScanOpts): Promise<RunTargetS
 
 // ---------- helpers (lifted verbatim from original target-board.ts) ----------
 
+// KNOWN LIMITATION (code-review-2026-06 track-1, finding m5): pass-1
+// pre-scoring is structurally LONG-ONLY. Every term below rewards bullish
+// structure, and runTargetScan keeps only `score > 0` survivors, so even
+// though composeTarget supports short candidates, a bearish name can never
+// reach pass 2 on large universes. Making pass 1 two-sided is a methodology
+// redesign (how do you rank "best shorts" against "best longs" on one
+// scale?) deliberately deferred — see
+// reports/code-review-2026-06/track-1-analyst-scoring.md.
 function preScore(bars: Bar[], spyRet20: number): number {
   if (bars.length < 50) return 0;
   const closes = bars.map((b) => b.c);
   const last = closes[closes.length - 1];
   const sma20 = avg(closes.slice(-20));
   const sma50 = avg(closes.slice(-50));
+  // fetchBarCache's default window is 220 CALENDAR days ≈ 150 trading bars,
+  // so this is null in every production target scan; it only contributes
+  // when a caller supplies a wider bar window.
   const sma200 = bars.length >= 200 ? avg(closes.slice(-200)) : null;
 
   let s = 50;
@@ -307,11 +321,15 @@ function preScore(bars: Bar[], spyRet20: number): number {
   if (myRet > spyRet20) s += 10;
   else if (myRet > spyRet20 - 0.05) s += 3;
 
-  const window52w = closes.slice(-252);
-  const max52w = Math.max(...window52w);
-  const from52wHigh = (last - max52w) / max52w;
-  if (from52wHigh > -0.05) s += 8;
-  else if (from52wHigh < -0.25) s -= 10;
+  // Distance from the high of the AVAILABLE window — at the production
+  // 220-calendar-day fetch that's ~150 bars (≈ a 7-month high), NOT a true
+  // 52-week high (the old `window52w`/`max52w` names overstated it —
+  // code-review-2026-06 track-1 m5). Capped at 252 bars so a wider fetch
+  // still measures at most one year.
+  const windowHigh = Math.max(...closes.slice(-252));
+  const fromWindowHigh = (last - windowHigh) / windowHigh;
+  if (fromWindowHigh > -0.05) s += 8;
+  else if (fromWindowHigh < -0.25) s -= 10;
 
   return Math.max(0, Math.min(100, s));
 }

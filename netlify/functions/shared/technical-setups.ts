@@ -42,6 +42,14 @@
 //
 // All functions operate on daily OHLCV bars in the same shape used by the
 // data provider: { t, o, h, l, c, v }.
+//
+// BAR-WINDOW REQUIREMENT (Wave 4C, review M4): setups 4 (multi_tf_aligned)
+// and 6 (oversold_bounce) need >= 200 trading bars for the 200d EMA and are
+// silently skipped below that. Callers that want the FULL 7-setup deck must
+// fetch at least ~300 CALENDAR days of daily bars (calendar days ≈ 1.45×
+// trading bars). The catalyst scan fetches CATALYST_BAR_LOOKBACK_DAYS (320)
+// for exactly this reason; chart-analysis defaults to a 180-day lookback and
+// therefore intentionally runs the 5-setup subset.
 
 import type { Bar } from './data-provider';
 
@@ -77,7 +85,6 @@ export function detectSetups(bars: Bar[]): TechnicalSetup[] {
   const ema21 = ema(closes, 21);
   const ema50 = ema(closes, 50);
   const ema200 = bars.length >= 200 ? ema(closes, 200) : null;
-  const bbNow = bollinger(closes.slice(-20), 20, 2);
   const rsi14 = rsi(closes, 14);
   const obvSeries = computeObv(bars);
   const avgVol20 = avg(vols.slice(-20));
@@ -263,7 +270,6 @@ function detectBaseAndHandle(closes: number[], vols: number[]): TechnicalSetup |
 
 function detectFailedBreakdown(closes: number[], lows: number[]): TechnicalSetup | null {
   if (closes.length < 30) return null;
-  const recent = closes.slice(-25);
   const priorLow = Math.min(...lows.slice(-25, -4));
   // Did we break below prior low in the last 5 days?
   const last5Lows = lows.slice(-5);
@@ -296,17 +302,26 @@ export function scoreSetups(setups: TechnicalSetup[]): {
 
   let longPts = 0;
   let shortPts = 0;
+  let neutralPts = 0;
   const tags: string[] = [];
 
   for (const s of setups) {
     const pts = s.strength * 15;
     if (s.direction === 'long') longPts += pts;
     else if (s.direction === 'short') shortPts += pts;
-    // Neutral setups (compression) contribute to both sides equally — they
-    // amplify whichever side the fundamentals push.
-    else { longPts += pts * 0.5; shortPts += pts * 0.5; }
+    else neutralPts += pts * 0.5;
     tags.push(s.label);
   }
+
+  // Neutral setups (compression) are directionless on their own — they
+  // amplify whichever side the directional setups already favor. Wave 4C
+  // (review m8): the old code added 0.5×pts to BOTH sides, which cancelled
+  // exactly in the net — compression had zero effect despite this comment.
+  // With no directional setups there is nothing to amplify, so a pure
+  // compression deck stays at the 50/neutral baseline.
+  const directionalNet = longPts - shortPts;
+  if (directionalNet > 0) longPts += neutralPts;
+  else if (directionalNet < 0) shortPts += neutralPts;
 
   const net = longPts - shortPts;
   const dir: 'long' | 'short' | 'neutral' = net > 5 ? 'long' : net < -5 ? 'short' : 'neutral';

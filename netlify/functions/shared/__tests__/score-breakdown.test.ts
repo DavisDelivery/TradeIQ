@@ -17,7 +17,7 @@ describe('buildLynchComponents', () => {
     const s = runLynch({
       ticker: 'AAPL',
       peRatio: 15,
-      epsGrowthYoY: 0.25,
+      epsGrowthTTM: 0.25,
       revenueGrowthYoY: 0.2,
       debtToEquity: 0.25,
       operatingMargin: 0.3,

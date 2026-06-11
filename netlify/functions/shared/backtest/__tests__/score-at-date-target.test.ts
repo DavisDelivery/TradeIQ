@@ -73,6 +73,7 @@ vi.mock('../../data-provider', async () => {
         epsGrowthYoY: 0.25,
         ttmEps: 5,
         priorTtmEps: 4,
+        epsGrowthTTM: 0.25, // (5 − 4) / 4 — Wave 4C Lynch growth input
         grossMargin: 0.4,
         priorGrossMargin: 0.38,
         priorGrossMarginYoY: 0.37,

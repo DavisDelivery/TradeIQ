@@ -127,6 +127,12 @@ export interface FundamentalsSnapshot {
    *  compared to a year-ago P/E on the same TTM basis, not against a
    *  single quarter's EPS. */
   priorTtmEps?: number;
+  /** TTM-vs-prior-TTM EPS growth ((ttmEps − priorTtmEps) / |priorTtmEps|).
+   *  Wave 4C (review M5): the Lynch PEG input. Unlike `epsGrowthYoY`
+   *  (latest quarter vs year-ago quarter), this smooths single-quarter
+   *  base effects — a +300% rebound off one depressed comp no longer
+   *  reads as 300% "growth". Undefined unless all 8 quarters are present. */
+  epsGrowthTTM?: number;
   grossMargin?: number;
   /** Gross margin from prior quarter (Q/Q baseline). */
   priorGrossMargin?: number;
@@ -457,19 +463,31 @@ function assembleSnapshot(
   const totalEquity = n(latestBal?.total_equity_attributable_to_parent)
     ?? n(latestBal?.total_equity); // safety fallback when attributable-to-parent missing
 
-  // ttmEps and priorTtmEps preserve VX semantics exactly.
-  const ttmEps = income.slice(0, 4)
-    .map((r) => n(r.basic_earnings_per_share) ?? 0)
-    .reduce((a, b) => a + b, 0);
-  const priorTtmEpsAcc = income.length >= 7
-    ? income.slice(3, 7).reduce<{ sum: number; ok: boolean }>(
-        (acc, r) => {
-          const v = n(r.basic_earnings_per_share);
-          return v !== undefined ? { sum: acc.sum + v, ok: acc.ok } : { sum: acc.sum, ok: false };
-        },
-        { sum: 0, ok: true },
-      )
-    : { sum: 0, ok: false };
+  // ttmEps and priorTtmEps preserve VX semantics, with one Wave 4C
+  // correction (review M5 prerequisite): ttmEps previously mapped missing
+  // quarters to 0 while priorTtmEps tracked an ok flag — a name with only
+  // 2 reported quarters got a half-year "TTM" EPS. Both windows now use
+  // the same ok-flag discipline: undefined unless every quarter in the
+  // window reported basic EPS.
+  const sumEpsWindow = (rows: MassiveIncomeStatement[], expected: number) =>
+    rows.length >= expected
+      ? rows.reduce<{ sum: number; ok: boolean }>(
+          (acc, r) => {
+            const v = n(r.basic_earnings_per_share);
+            return v !== undefined ? { sum: acc.sum + v, ok: acc.ok } : { sum: acc.sum, ok: false };
+          },
+          { sum: 0, ok: true },
+        )
+      : { sum: 0, ok: false };
+  const ttmEpsAcc = sumEpsWindow(income.slice(0, 4), 4);
+  const priorTtmEpsAcc = sumEpsWindow(income.slice(3, 7), 4); // < 7 quarters ⇒ short window ⇒ not ok
+  const ttmEpsVal = ttmEpsAcc.ok ? ttmEpsAcc.sum : undefined;
+  const priorTtmEpsVal = priorTtmEpsAcc.ok && priorTtmEpsAcc.sum !== 0 ? priorTtmEpsAcc.sum : undefined;
+  // Wave 4C (review M5): TTM-on-TTM growth for the Lynch PEG input.
+  const epsGrowthTTM =
+    ttmEpsVal !== undefined && priorTtmEpsVal !== undefined
+      ? (ttmEpsVal - priorTtmEpsVal) / Math.abs(priorTtmEpsVal)
+      : undefined;
 
   const revenueGrowthYoY =
     revenue !== undefined && priorRevenue !== undefined && priorRevenue !== 0
@@ -596,8 +614,9 @@ function assembleSnapshot(
     eps,
     priorEps: priorEpsYoY,
     epsGrowthYoY,
-    ttmEps,
-    priorTtmEps: priorTtmEpsAcc.ok && priorTtmEpsAcc.sum !== 0 ? priorTtmEpsAcc.sum : undefined,
+    ttmEps: ttmEpsVal,
+    priorTtmEps: priorTtmEpsVal,
+    epsGrowthTTM,
     grossMargin,
     priorGrossMargin,
     priorGrossMarginYoY,

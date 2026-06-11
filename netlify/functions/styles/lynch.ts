@@ -28,11 +28,27 @@
 
 import type { AnalystScore } from '../shared/style-types';
 
+/**
+ * Growth-rate clamp for the PEG ratio and the fair-P/E band (Wave 4C,
+ * review M5). Lynch's "fair P/E ≈ growth rate" rule assumes a SUSTAINABLE
+ * multi-year growth rate. Without a cap, a base-effect rebound (e.g. EPS
+ * +300% off a depressed comp) produces PEG ≈ 0 — an automatic "+40 cheap
+ * for growth" — and a fair P/E of 300. Below the floor a company isn't a
+ * Lynch growth candidate and the PEG math degenerates the other way.
+ * Growth outside [10%, 40%] is clamped to the boundary before it touches
+ * PEG or the fair-value band; the raw rate is still surfaced in signals.
+ */
+export const LYNCH_GROWTH_MIN_PCT = 10;
+export const LYNCH_GROWTH_MAX_PCT = 40;
+
 export interface LynchInput {
   ticker: string;
   // From Polygon fundamentals
   peRatio?: number;
-  epsGrowthYoY?: number;
+  /** TTM-vs-prior-TTM EPS growth (FundamentalsSnapshot.epsGrowthTTM).
+   *  Wave 4C (review M5): replaces the single-quarter YoY rate, whose
+   *  base-effect rebounds gamed the PEG. Fraction, e.g. 0.25 = +25%. */
+  epsGrowthTTM?: number;
   revenueGrowthYoY?: number;
   debtToEquity?: number;
   operatingMargin?: number;
@@ -54,16 +70,24 @@ export function runLynch(input: LynchInput): AnalystScore {
   const rationaleParts: string[] = [];
 
   // --- 1. PEG ratio (the Lynch staple) ---
+  // Growth basis is TTM-vs-prior-TTM (still year-over-year, hence the
+  // `epsGrowthYoYPct` signal key, which is also pinned by stored snapshots
+  // and the SPA's Lynch board columns), clamped to the sustainable Lynch
+  // range before it touches PEG. See LYNCH_GROWTH_MIN/MAX_PCT above.
   if (
     input.peRatio !== undefined &&
     input.peRatio > 0 &&
-    input.epsGrowthYoY !== undefined &&
-    input.epsGrowthYoY > 0
+    input.epsGrowthTTM !== undefined &&
+    input.epsGrowthTTM > 0
   ) {
-    const pegPct = input.peRatio / (input.epsGrowthYoY * 100);
+    const rawGrowthPct = input.epsGrowthTTM * 100;
+    const growthPct = clamp(rawGrowthPct, LYNCH_GROWTH_MIN_PCT, LYNCH_GROWTH_MAX_PCT);
+    const pegPct = input.peRatio / growthPct;
     signals.peg = +pegPct.toFixed(2);
     signals.peRatio = +input.peRatio.toFixed(1);
-    signals.epsGrowthYoYPct = +(input.epsGrowthYoY * 100).toFixed(1);
+    signals.epsGrowthYoYPct = +rawGrowthPct.toFixed(1);
+    signals.pegGrowthPct = +growthPct.toFixed(1);
+    if (growthPct !== rawGrowthPct) signals.growthClamped = true;
 
     if (pegPct < 0.7) {
       score += 40;
@@ -200,7 +224,7 @@ function estimateConfidence(input: LynchInput): number {
   // Lynch relies on fundamentals — confidence proportional to data completeness
   let c = 0;
   if (input.peRatio !== undefined) c += 0.25;
-  if (input.epsGrowthYoY !== undefined) c += 0.25;
+  if (input.epsGrowthTTM !== undefined) c += 0.25;
   if (input.revenueGrowthYoY !== undefined) c += 0.15;
   if (input.debtToEquity !== undefined) c += 0.15;
   if (input.earningsHistory && input.earningsHistory.length >= 4) c += 0.15;
