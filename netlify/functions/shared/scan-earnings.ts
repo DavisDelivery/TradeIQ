@@ -172,7 +172,9 @@ async function scoreEarningsForTicker(
 ): Promise<EarningsSetup | null> {
   const [bars, history] = await Promise.all([
     getDailyBars(e.ticker, from, to).catch(() => []),
-    getEarningsHistory(e.ticker, 8).catch(() => []),
+    // withAnnounceDates: reaction windows anchor on the ANNOUNCEMENT date
+    // (CR-3) — costs one extra Finnhub calendar call per ticker.
+    getEarningsHistory(e.ticker, 8, { withAnnounceDates: true }).catch(() => []),
   ]);
   if (bars.length < 30) return null;
 
@@ -203,10 +205,17 @@ async function scoreEarningsForTicker(
   const expectedMove = rv20 * 100 * Math.sqrt(horizonDays / 365);
 
   // ---- Prior earnings reactions: T-1 → T+1 close-to-close move ----
+  // Windows anchor on the ANNOUNCEMENT date (CR-3): `period` is the fiscal
+  // quarter end and lags the print by 2-8 weeks, so windowing on it
+  // measured random 2-day moves ~a month from the actual print. Rows whose
+  // announcement date didn't resolve are skipped outright — never fall
+  // back to period-end.
   const priorMoves: number[] = [];
   const priorMovesSigned: number[] = [];
-  for (const h of history.slice(0, 6)) {
-    const hd = new Date(h.date).getTime();
+  let lastMove: number | null = null; // most-recent print's reaction (null if unresolved)
+  for (const [k, h] of history.slice(0, 6).entries()) {
+    if (!h.announceDate) continue;
+    const hd = new Date(h.announceDate).getTime();
     const barIdx = bars.findIndex((b) => Math.abs(b.t - hd) < 3 * 86400000);
     if (barIdx > 0 && barIdx < bars.length - 1) {
       const pre = bars[barIdx - 1].c;
@@ -215,6 +224,7 @@ async function scoreEarningsForTicker(
         const signed = ((post - pre) / pre) * 100;
         priorMoves.push(Math.abs(signed));
         priorMovesSigned.push(signed);
+        if (k === 0) lastMove = signed;
       }
     }
   }
@@ -252,8 +262,10 @@ async function scoreEarningsForTicker(
   let strategy = 'Wait';
 
   if (postPrint) {
+    // lastMove is the latest print's announcement-anchored reaction; null
+    // when that row's announcement date is unknown — classification is
+    // skipped rather than computed off a period-end window.
     const surprise = (history[0]?.surprisePct ?? null);
-    const lastMove = priorMovesSigned[0] ?? null;
     if (surprise !== null && lastMove !== null && volRatio > 1.3) {
       if (surprise > 5 && lastMove > 3) {
         playType = 'pead_long';
@@ -616,7 +628,7 @@ function reversalSteps(
 
 function computeHistoricalEdge(
   playType: EarningsPlayType,
-  history: { date: string; surprisePct?: number }[],
+  history: { period: string; surprisePct?: number }[],
   priorMovesSigned: number[],
 ): HistoricalEdge | null {
   if (history.length < 3 || priorMovesSigned.length < 3) return null;

@@ -22,10 +22,10 @@ describe('buildLynchComponents', () => {
       debtToEquity: 0.25,
       operatingMargin: 0.3,
       earningsHistory: [
-        { date: '2026-01-30', epsActual: 2.4, epsEstimate: 2.2 },
-        { date: '2025-10-30', epsActual: 1.6, epsEstimate: 1.5 },
-        { date: '2025-07-30', epsActual: 1.4, epsEstimate: 1.3 },
-        { date: '2025-04-30', epsActual: 1.5, epsEstimate: 1.4 },
+        { epsActual: 2.4, epsEstimate: 2.2 },
+        { epsActual: 1.6, epsEstimate: 1.5 },
+        { epsActual: 1.4, epsEstimate: 1.3 },
+        { epsActual: 1.5, epsEstimate: 1.4 },
       ],
     });
     const comps = buildLynchComponents(s.signals);

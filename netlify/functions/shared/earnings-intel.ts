@@ -48,11 +48,15 @@ export interface EarningsIntel {
 
 export async function getEarningsIntel(
   ticker: string,
-  opts: { asOfDate?: string } = {},
+  opts: { asOfDate?: string; withAnnounceDates?: boolean } = {},
 ): Promise<EarningsIntel> {
+  // withAnnounceDates threads through to getEarningsHistory's calendar
+  // join (+1 Finnhub call per ticker). Without it (and without asOfDate,
+  // which forces the join), announceDate stays null and postEarningsDrift
+  // is conservatively false — never inferred from period-end (CR-3).
   const [fund, history, upcoming] = await Promise.all([
     getFundamentals(ticker, { asOfDate: opts.asOfDate }).catch(() => null),
-    getEarningsHistory(ticker, 8, { asOfDate: opts.asOfDate }).catch(() => [] as EarningsSurprise[]),
+    getEarningsHistory(ticker, 8, { asOfDate: opts.asOfDate, withAnnounceDates: opts.withAnnounceDates }).catch(() => [] as EarningsSurprise[]),
     getUpcomingEarnings(ticker, 90, { asOfDate: opts.asOfDate }).catch(() => null),
   ]);
 
@@ -124,9 +128,13 @@ export async function getEarningsIntel(
 
   // Post-earnings drift: was the most recent report a beat, within the past 3-10 trading days?
   // This is a well-documented edge (PEAD) — post-earnings-announcement drift.
+  // daysSince anchors on the ANNOUNCEMENT date (CR-3): `period` is the
+  // fiscal quarter end, 2-8 weeks before the print, so the old period-end
+  // window fired at the wrong time or never. Unknown announcement date ⇒
+  // drift conservatively false (skip), never inferred from period-end.
   let postEarningsDrift = false;
-  if (history.length > 0 && latestSurprisePct !== undefined && latestSurprisePct > 0) {
-    const lastReportDate = new Date(history[0].date);
+  if (history.length > 0 && latestSurprisePct !== undefined && latestSurprisePct > 0 && history[0].announceDate) {
+    const lastReportDate = new Date(history[0].announceDate);
     const daysSince = (nowMs - lastReportDate.getTime()) / 86400000;
     if (daysSince >= 3 && daysSince <= 14) {
       postEarningsDrift = true;

@@ -198,7 +198,10 @@ async function scoreProphetAtDate(
       () => getFundamentals(ticker, { asOfDate }).catch(() => null),
     ).then((v) => v as Awaited<ReturnType<typeof getFundamentals>> | null),
     pitCacheWrap<unknown>(
-      { provider: 'derived', dataClass: 'earnings_intel', ticker, asOfDate },
+      // v2announce — Wave 2C: pre-fix cache entries were built from
+      // period-end-filtered earnings history (look-ahead) and period-end
+      // drift windows; the key bump orphans them.
+      { provider: 'derived', dataClass: 'earnings_intel', ticker, asOfDate, extra: 'v2announce' },
       () => getEarningsIntel(ticker, { asOfDate }).catch(() => null),
     ).then((v) => v as Awaited<ReturnType<typeof getEarningsIntel>> | null),
     pitCacheWrap<unknown>(
@@ -384,11 +387,13 @@ async function scoreWilliamsAtDate(
 // hazard the brief (PART V) warns about is real.
 //
 // PIT integrity story for the Lynch scoring path:
-//   - Filing-date filter: `getFundamentals(ticker, { asOfDate })` and
-//     `getEarningsHistory(ticker, 4, { asOfDate })` both server- AND
-//     in-memory filter on `filing_date <= asOfDate` (or `period <=
-//     asOfDate` for earnings). The agent at date D cannot see filings
-//     made AFTER D — that part is correct.
+//   - Filing-date filter: `getFundamentals(ticker, { asOfDate })` filters
+//     on `filing_date <= asOfDate`; `getEarningsHistory(ticker, 4,
+//     { asOfDate })` filters on the ANNOUNCEMENT date (Wave 2C — the old
+//     `period <= asOfDate` filter leaked reports announced after D whose
+//     fiscal quarter ended before D; rows with unresolved announcement
+//     dates are excluded outright). The agent at date D cannot see
+//     filings made AFTER D — that part is correct.
 //   - Restatement risk: Polygon's `/vX/reference/financials` silently
 //     incorporates later restatements into earlier filings. If a company
 //     restated 2021 revenue downward in 2023, scoring a 2021 date today
@@ -399,7 +404,7 @@ async function scoreWilliamsAtDate(
 //     scope here).
 //   - Price (current close at asOfDate): PIT-clean by construction.
 //   - Earnings beats/positive-quarter counts: PIT-correct only as far
-//     as the report PERIOD filter goes; the EPS-actual values inside
+//     as the announcement-date filter goes; the EPS-actual values inside
 //     those rows can also be restated (less common than financials).
 //
 // 4n's report MUST surface this caveat. The PIT path here is wired
@@ -436,7 +441,9 @@ async function scoreLynchAtDate(
       () => getFundamentals(ticker, { asOfDate }).catch(() => null),
     ).then((v) => v as Awaited<ReturnType<typeof getFundamentals>> | null),
     pitCacheWrap<unknown>(
-      { provider: 'finnhub', dataClass: 'earnings_history', ticker, asOfDate, extra: 'lb=4:lynch' },
+      // v2announce — Wave 2C: pre-fix entries were period-end filtered
+      // (look-ahead) and lack announceDate; the key bump orphans them.
+      { provider: 'finnhub', dataClass: 'earnings_history', ticker, asOfDate, extra: 'lb=4:lynch:v2announce' },
       () => getEarningsHistory(ticker, 4, { asOfDate }).catch(() => [] as Awaited<ReturnType<typeof getEarningsHistory>>),
     ).then((v) => v as Awaited<ReturnType<typeof getEarningsHistory>>),
   ]);
@@ -549,7 +556,7 @@ async function scoreTargetAtDate(
   // Every other PIT-aware fetch in parallel, each wrapped in the cache.
   // News: 15 items is what the live runner uses; `getNews` filters by
   // published_utc.lte. Upcoming earnings: 45-day forward window from
-  // asOfDate. Earnings history: 4 quarters back, period-filtered.
+  // asOfDate. Earnings history: 4 quarters back, announcement-filtered.
   // Insider/political/contracts/patents: live scan defaults (90/180-
   // day lookbacks). Political uses the STOCK-Act-shifted backtest
   // helper, not the raw getPoliticalActivity.
@@ -576,7 +583,9 @@ async function scoreTargetAtDate(
       () => getUpcomingEarnings(ticker, 45, { asOfDate }).catch(() => null),
     ).then((v) => v as Awaited<ReturnType<typeof getUpcomingEarnings>> | null),
     pitCacheWrap<unknown>(
-      { provider: 'finnhub', dataClass: 'earnings_history', ticker, asOfDate, extra: 'lb=4:target' },
+      // v2announce — Wave 2C: pre-fix entries were period-end filtered
+      // (look-ahead) and lack announceDate; the key bump orphans them.
+      { provider: 'finnhub', dataClass: 'earnings_history', ticker, asOfDate, extra: 'lb=4:target:v2announce' },
       () => getEarningsHistory(ticker, 4, { asOfDate }).catch(() => []),
     ).then((v) => v as Awaited<ReturnType<typeof getEarningsHistory>>),
     pitCacheWrap<unknown>(

@@ -123,10 +123,10 @@ describe('runEarnings — _noData repair (Phase 4f-finish)', () => {
 
   it('does NOT mark _noData when history is rich enough to contribute', () => {
     const history: EarningsSurprise[] = [
-      { date: '2024-01-15', epsActual: 1.20, epsEstimate: 1.10 },
-      { date: '2023-10-15', epsActual: 1.05, epsEstimate: 1.00 },
-      { date: '2023-07-15', epsActual: 0.98, epsEstimate: 0.95 },
-      { date: '2023-04-15', epsActual: 1.10, epsEstimate: 1.00 },
+      { period: '2023-12-31', announceDate: '2024-01-15', epsActual: 1.20, epsEstimate: 1.10 },
+      { period: '2023-09-30', announceDate: '2023-10-15', epsActual: 1.05, epsEstimate: 1.00 },
+      { period: '2023-06-30', announceDate: '2023-07-15', epsActual: 0.98, epsEstimate: 0.95 },
+      { period: '2023-03-31', announceDate: '2023-04-15', epsActual: 1.10, epsEstimate: 1.00 },
     ];
     const out = runEarnings(null, history);
     expect(out.signals._noData).toBeUndefined();
@@ -135,7 +135,7 @@ describe('runEarnings — _noData repair (Phase 4f-finish)', () => {
 
   it('marks _noData when history has < 2 entries AND no upcoming', () => {
     const history: EarningsSurprise[] = [
-      { date: '2024-01-15', epsActual: 1.20, epsEstimate: 1.10 },
+      { period: '2023-12-31', announceDate: '2024-01-15', epsActual: 1.20, epsEstimate: 1.10 },
     ];
     const out = runEarnings(null, history);
     expect(out.signals._noData).toBe(true);

@@ -62,10 +62,10 @@ describe('GET /api/lynch-rationale', () => {
     getFundamentalsMock.mockResolvedValue(strongFundamentals());
     getPreviousCloseMock.mockResolvedValue({ t: 0, o: 90, h: 92, l: 89, c: 90, v: 1 });
     getEarningsHistoryMock.mockResolvedValue([
-      { date: '2026-01-30', epsActual: 2.4, epsEstimate: 2.2 },
-      { date: '2025-10-30', epsActual: 1.6, epsEstimate: 1.5 },
-      { date: '2025-07-30', epsActual: 1.4, epsEstimate: 1.3 },
-      { date: '2025-04-30', epsActual: 1.5, epsEstimate: 1.4 },
+      { period: '2025-12-31', announceDate: '2026-01-30', epsActual: 2.4, epsEstimate: 2.2 },
+      { period: '2025-09-30', announceDate: '2025-10-30', epsActual: 1.6, epsEstimate: 1.5 },
+      { period: '2025-06-30', announceDate: '2025-07-30', epsActual: 1.4, epsEstimate: 1.3 },
+      { period: '2025-03-31', announceDate: '2025-04-30', epsActual: 1.5, epsEstimate: 1.4 },
     ]);
     const res = await handler(evt({ ticker: 'AAPL' }), {} as any, () => {});
     expect((res as any).statusCode).toBe(200);
@@ -84,10 +84,10 @@ describe('GET /api/lynch-rationale', () => {
   it('marks components no-data when fundamentals are absent but earnings exist', async () => {
     getFundamentalsMock.mockResolvedValue(null);
     getEarningsHistoryMock.mockResolvedValue([
-      { date: '2026-01-30', epsActual: 2.4, epsEstimate: 2.2 },
-      { date: '2025-10-30', epsActual: 1.6, epsEstimate: 1.5 },
-      { date: '2025-07-30', epsActual: 1.4, epsEstimate: 1.3 },
-      { date: '2025-04-30', epsActual: 1.5, epsEstimate: 1.4 },
+      { period: '2025-12-31', announceDate: '2026-01-30', epsActual: 2.4, epsEstimate: 2.2 },
+      { period: '2025-09-30', announceDate: '2025-10-30', epsActual: 1.6, epsEstimate: 1.5 },
+      { period: '2025-06-30', announceDate: '2025-07-30', epsActual: 1.4, epsEstimate: 1.3 },
+      { period: '2025-03-31', announceDate: '2025-04-30', epsActual: 1.5, epsEstimate: 1.4 },
     ]);
     const res = await handler(evt({ ticker: 'AAPL' }), {} as any, () => {});
     expect((res as any).statusCode).toBe(200);
