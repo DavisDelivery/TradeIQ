@@ -7,7 +7,7 @@ import { useBreakpoint } from './hooks/useBreakpoint.js';
 import { MasterDetail } from './layout/MasterDetail.jsx';
 import { StockDetailPanel } from './components/detail/StockDetailPanel.jsx';
 import { FundamentalsStrip } from './components/detail/FundamentalsStrip.jsx';
-import { useStockDetailsFanout } from './hooks/useStockDetailsFanout.js';
+import { useStockDetailsFanout, FANOUT_METRIC_FIELDS } from './hooks/useStockDetailsFanout.js';
 import { fmtMcap, fmtNum1, fmtNum2, fmtPct1 } from './lib/formatters.jsx';
 
 const VERDICT_RANK = { BUY: 3, HOLD: 2, AVOID: 1 };
@@ -44,7 +44,12 @@ export const LynchView = ({ universe = 'sp500' }) => {
   // columns sort cleanly. Shares queryKeys with FundamentalsStrip → one
   // ticker = one fetch across both surfaces.
   const tickers = baseRows.map((c) => c.ticker);
-  const { metricsByTicker } = useStockDetailsFanout(tickers);
+  // M6 — eager fan-out is capped (FANOUT_EAGER_ROWS); rows further down
+  // are filled by FundamentalsStrip's in-viewport fetch (shared cache).
+  // Sorting on a fan-out column lifts the cap so the sort sees every row.
+  const { metricsByTicker } = useStockDetailsFanout(tickers, {
+    eagerCount: FANOUT_METRIC_FIELDS.includes(sortKey) ? Infinity : undefined,
+  });
   // Lynch already has a `debtToEquity` field in signals; the column reads from
   // the consolidated stock-detail metrics for parity with the strip + Williams.
   const rows = baseRows.map((c) => {

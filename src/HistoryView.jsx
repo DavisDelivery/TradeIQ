@@ -311,19 +311,23 @@ function pickColumnsForBoard(board, results) {
 
   switch (board) {
     case 'target-board':
+      // Target rows carry `composite` / `direction` (shared/types.ts Target),
+      // not `score` / `side` — code-review-2026-06 M5.
       return [
         tickerCol,
-        { key: 'score', label: 'Score', format: (r) => fmtInt(r?.score) },
+        { key: 'composite', label: 'Score', format: (r) => fmtInt(r?.composite) },
         { key: 'price', label: 'Price', format: (r) => `$${fmtNum(r?.price)}` },
-        { key: 'side', label: 'Side', format: (r) => r?.side ?? '—' },
+        { key: 'direction', label: 'Side', format: (r) => r?.direction ?? '—' },
         { key: 'rationale', label: 'Rationale', format: (r) => (
           <span className="text-neutral-400">{(r?.rationale ?? '').slice(0, 80)}</span>
         ) },
       ];
     case 'prophet':
+      // Prophet picks carry `composite` (shared/prophet-layers.ts
+      // ProphetScore), not `score` — same M5 class of bug.
       return [
         tickerCol,
-        { key: 'score', label: 'Score', format: (r) => fmtInt(r?.score) },
+        { key: 'composite', label: 'Score', format: (r) => fmtInt(r?.composite) },
         { key: 'conviction', label: 'Conviction', format: (r) => r?.conviction ?? '—' },
         { key: 'layers', label: 'Layers', format: (r) => {
           // Prophet snapshot rows store `layers` as an object keyed by
@@ -337,40 +341,50 @@ function pickColumnsForBoard(board, results) {
         { key: 'price', label: 'Price', format: (r) => `$${fmtNum(r?.price)}` },
       ];
     case 'catalyst':
+      // Catalyst picks carry `composite` (shared/catalyst-scorer.ts
+      // CatalystScore), not `score` — same M5 class of bug.
       return [
         tickerCol,
-        { key: 'score', label: 'Score', format: (r) => fmtInt(r?.score) },
+        { key: 'composite', label: 'Score', format: (r) => fmtInt(r?.composite) },
         { key: 'conviction', label: 'Conv', format: (r) => r?.conviction ?? '—' },
         { key: 'tags', label: 'Tags', format: (r) => (r?.tags ?? []).slice(0, 3).join(' · ') || '—' },
         { key: 'price', label: 'Price', format: (r) => `$${fmtNum(r?.price)}` },
       ];
     case 'insider':
+      // Insider rows carry `buyerCount` / `latestFilingDate`
+      // (shared/scan-insider.ts), not `buyCount` / `mostRecentFiling` — M5.
       return [
         tickerCol,
-        { key: 'buyCount', label: 'Buys', format: (r) => fmtInt(r?.buyCount) },
+        { key: 'buyerCount', label: 'Buyers', format: (r) => fmtInt(r?.buyerCount) },
         { key: 'buyDollars', label: '$ Bought', format: (r) =>
           r?.buyDollars ? `$${(r.buyDollars / 1000).toFixed(0)}k` : '—' },
         { key: 'topBuyer', label: 'Top Buyer', format: (r) =>
           r?.topBuyer?.name ? `${r.topBuyer.name} (${r.topBuyer.role || '?'})` : '—' },
-        { key: 'mostRecent', label: 'Most Recent', format: (r) =>
-          r?.mostRecentFiling ? formatDate(r.mostRecentFiling) : '—' },
+        { key: 'latestFilingDate', label: 'Most Recent', format: (r) =>
+          r?.latestFilingDate ? formatDate(r.latestFilingDate) : '—' },
       ];
     case 'williams':
+      // Williams candidates carry `rationale` (shared/scan-williams.ts
+      // WilliamsCandidate), not `reason` — M5.
       return [
         tickerCol,
         { key: 'score', label: 'Score', format: (r) => fmtInt(r?.score) },
         { key: 'side', label: 'Side', format: (r) => r?.side ?? '—' },
         { key: 'price', label: 'Price', format: (r) => `$${fmtNum(r?.price)}` },
-        { key: 'reason', label: 'Setup', format: (r) =>
-          <span className="text-neutral-400">{(r?.reason ?? '').slice(0, 60)}</span> },
+        { key: 'rationale', label: 'Setup', format: (r) =>
+          <span className="text-neutral-400">{(r?.rationale ?? '').slice(0, 60)}</span> },
       ];
     case 'lynch':
+      // Lynch candidates keep PEG / P/E / growth under `signals`
+      // (shared/scan-lynch.ts → styles/lynch.ts: signals.peg,
+      // signals.peRatio, signals.epsGrowthYoYPct — already percent), not at
+      // the top level — M5.
       return [
         tickerCol,
         { key: 'score', label: 'Score', format: (r) => fmtInt(r?.score) },
-        { key: 'peg', label: 'PEG', format: (r) => fmtNum(r?.peg) },
-        { key: 'pe', label: 'P/E', format: (r) => fmtNum(r?.pe, 1) },
-        { key: 'growth', label: 'Growth', format: (r) => fmtPct(r?.growth) },
+        { key: 'peg', label: 'PEG', format: (r) => fmtNum(r?.signals?.peg) },
+        { key: 'pe', label: 'P/E', format: (r) => fmtNum(r?.signals?.peRatio, 1) },
+        { key: 'growth', label: 'Growth', format: (r) => fmtPct(r?.signals?.epsGrowthYoYPct) },
       ];
     case 'earnings':
       return [

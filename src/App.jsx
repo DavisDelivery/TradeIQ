@@ -46,7 +46,7 @@ import { DesktopShell } from './layout/DesktopShell.jsx';
 import { RegimeStrip } from './layout/RegimeStrip.jsx';
 
 
-const APP_VERSION = '0.19.19-alpha';
+const APP_VERSION = '0.19.20-alpha';
 
 // Phase 4k W1 — single navigation source-of-truth shared by the mobile
 // TopBar and the desktop Sidebar. Mobile renders the same array as a
@@ -270,8 +270,25 @@ export default function App() {
   // shape to render against).
   const { data: regimeData } = useRegime();
   const { data: analystsData } = useAnalystsStatus();
-  const regime = regimeData?.regime ? regimeData : MOCK_REGIME;
-  const analysts = analystsData?.analysts?.length ? analystsData.analysts : MOCK_ANALYSTS;
+  const regimeIsMock = !regimeData?.regime;
+  const analystsAreMock = !analystsData?.analysts?.length;
+  const regime = regimeIsMock ? MOCK_REGIME : regimeData;
+  const analysts = analystsAreMock ? MOCK_ANALYSTS : analystsData.analysts;
+
+  // code-review-2026-06 m13 — the mock fallback stays (downstream
+  // components always get a renderable shape) but it must never be
+  // PRESENTED as live: surface a visible "demo data" banner whenever a
+  // mock is what's on screen.
+  const demoBanner = (regimeIsMock || analystsAreMock) && (
+    <div
+      data-testid="demo-data-banner"
+      className="border-b border-amber-500/30 bg-amber-500/10 text-amber-300 text-[10px] font-mono uppercase tracking-widest text-center py-1"
+    >
+      demo data — live {regimeIsMock && analystsAreMock
+        ? 'regime + analyst feeds'
+        : regimeIsMock ? 'regime feed' : 'analyst feed'} unavailable
+    </div>
+  );
 
   // Phase 4k W1 — content body shared by the mobile and desktop shells.
   // The universe selector and the view router are identical across
@@ -356,6 +373,7 @@ export default function App() {
           }
           topStrip={<RegimeStrip regime={regime} universeStats={{ core: 784, watchlist: 12 }} />}
         >
+          {demoBanner}
           {universeBar}
           {viewRouter}
           {footer}
@@ -374,6 +392,8 @@ export default function App() {
         regime={regime}
         universeStats={{ core: 784, watchlist: 12 }}
       />
+
+      {demoBanner}
 
       {universeBar}
 

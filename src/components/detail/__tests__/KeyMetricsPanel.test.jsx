@@ -18,6 +18,13 @@ function renderPanel(body, props = {}) {
 
 afterEach(() => vi.restoreAllMocks());
 
+// Fixture derived from what stock-detail.ts ACTUALLY emits (post
+// code-review-2026-06 M3 fix): metrics.profitability ratios are uniformly
+// PERCENT-scaled. The handler ×100s data-provider's fractional group, so
+// grossMargin 0.44 → 44, opMargin 0.31 → 31, netMargin 0.24 → 24,
+// roe 1.535 → 153.5, roa 0.282 → 28.2. (The pre-fix handler leaked
+// gross/op margin through as fractions; this fixture pins the percent
+// contract the UI's pct1 formatter assumes.)
 const fullMetrics = {
   ok: true, ticker: 'AAPL',
   metrics: {
@@ -50,6 +57,19 @@ describe('KeyMetricsPanel', () => {
     expect(screen.getByText('24.0%')).toBeInTheDocument();         // netMargin (pct1)
     expect(screen.getByText('0.87')).toBeInTheDocument();          // currentRatio (num2)
     expect(screen.getByText('1.05')).toBeInTheDocument();          // beta (num2)
+  });
+
+  // code-review-2026-06 M3 — margin-unit pin. A fraction input of 0.44 at
+  // the provider becomes 44 at the handler and must render "44.0%", not
+  // "0.4%". The favorability dot now compares percent vs percent (44 vs
+  // sector 55 → genuinely unfavorable, not unit-mismatch unfavorable).
+  it('renders percent-scale margins as percentages (44 → "44.0%")', async () => {
+    renderPanel(fullMetrics);
+    await waitFor(() => expect(screen.getByText('44.0%')).toBeInTheDocument()); // grossMargin
+    expect(screen.getByText('31.0%')).toBeInTheDocument(); // opMargin
+    expect(screen.queryByText('0.4%')).not.toBeInTheDocument(); // the pre-fix fraction symptom
+    // sector medians render in the same (percent) unit next to the value
+    expect(screen.getByText(/sector: 55.0%/)).toBeInTheDocument();
   });
 
   it('shows sector-median context where the median is available', async () => {

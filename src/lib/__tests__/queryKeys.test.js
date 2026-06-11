@@ -36,6 +36,38 @@ describe('queryKeys', () => {
     expect(high).not.toBe(med);
   });
 
+  // code-review-2026-06 M1 — catalyst is server-filtered by `filter` +
+  // `minConviction`; every combination must be a distinct cache entry or
+  // the filter buttons are no-ops within staleTime and AlertsView's
+  // filter=all/minConviction=low payload pollutes CatalystView's default
+  // medium-conviction view.
+  it('catalyst filter and minConviction are part of the key', () => {
+    const def = JSON.stringify(queryKeys.catalyst('sp500', 'all', 'medium'));
+    const cluster = JSON.stringify(queryKeys.catalyst('sp500', 'cluster', 'medium'));
+    const low = JSON.stringify(queryKeys.catalyst('sp500', 'all', 'low'));
+    const high = JSON.stringify(queryKeys.catalyst('sp500', 'all', 'high'));
+    expect(def).not.toBe(cluster); // filter changes the key
+    expect(def).not.toBe(low); // minConviction changes the key
+    expect(low).not.toBe(high);
+    // AlertsView's key (all/low) never collides with CatalystView's
+    // default (all/medium).
+    expect(JSON.stringify(queryKeys.catalyst('sp500', 'all', 'low'))).not.toBe(
+      JSON.stringify(queryKeys.catalyst('sp500', 'all', 'medium')),
+    );
+  });
+
+  // code-review-2026-06 M2 — insider is server-windowed by `days=`; the
+  // 30/60/90/180d selector must produce distinct cache entries.
+  it('insider windowDays is part of the key', () => {
+    const keys = [30, 60, 90, 180].map((d) => JSON.stringify(queryKeys.insider('sp500', d)));
+    expect(new Set(keys).size).toBe(4);
+    // The bare-universe form (default window) matches the hook's default
+    // windowDays=90 so legacy callers keep hitting the same entry.
+    expect(JSON.stringify(queryKeys.insider('sp500'))).toBe(
+      JSON.stringify(queryKeys.insider('sp500', 90)),
+    );
+  });
+
   it('all keys begin with the tradeiq namespace', () => {
     const samples = [
       queryKeys.targetBoard('sp500'),

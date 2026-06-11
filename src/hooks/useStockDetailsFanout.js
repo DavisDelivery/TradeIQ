@@ -42,15 +42,34 @@ function extract(stockDetail) {
   };
 }
 
-export function useStockDetailsFanout(tickers, { enabled = true } = {}) {
+/** Fields the fan-out feeds into sortable board columns. Views use this
+ *  to detect "user is sorting on a fan-out column" and lift the eager cap
+ *  so the sort sees every row's metrics. */
+export const FANOUT_METRIC_FIELDS = ['marketCap', 'pe', 'ps', 'roe', 'debtEquity'];
+
+/** Default eager fan-out cap (code-review-2026-06 M6). Boards render up
+ *  to ~50 rows but the user initially sees ~15; eager-fetching all 50
+ *  fired 50 parallel /api/stock-detail calls (each fanning to ~10
+ *  providers server-side) on every board load. Rows beyond the cap are
+ *  fetched on demand: each row's FundamentalsStrip shares the same
+ *  queryKeys.stockDetail key and IntersectionObserver-fetches when the
+ *  row scrolls into view (disabled fan-out queries still surface that
+ *  cached data), and sorting on a fan-out column lifts the cap. */
+export const FANOUT_EAGER_ROWS = 15;
+
+export function useStockDetailsFanout(tickers, { enabled = true, eagerCount = FANOUT_EAGER_ROWS } = {}) {
   const normalized = Array.isArray(tickers)
     ? Array.from(new Set(tickers.filter((t) => typeof t === 'string' && t.trim()).map((t) => t.trim().toUpperCase())))
     : [];
 
   const queries = useQueries({
-    queries: normalized.map((ticker) => ({
+    queries: normalized.map((ticker, i) => ({
       queryKey: queryKeys.stockDetail(ticker),
-      enabled: enabled && !!ticker,
+      // M6 lazy-fetch economy: only the first `eagerCount` tickers fire
+      // eagerly. Disabled queries still READ the shared cache, so rows
+      // populated by FundamentalsStrip's in-viewport fetch (same key)
+      // light up here for free.
+      enabled: enabled && !!ticker && i < eagerCount,
       staleTime: Infinity,
       gcTime: Infinity,
       refetchOnWindowFocus: false,
@@ -71,6 +90,13 @@ export function useStockDetailsFanout(tickers, { enabled = true } = {}) {
 
   // Build a key-by-ticker map so callers don't need to know the input order.
   // Memoize on the array shape so the parent isn't re-rendering forever.
+  //
+  // Deps are a FIXED-length pair (m1: the old `[key, ...queries.map(...)]`
+  // spread changed the deps array LENGTH between renders — a React dev
+  // error). `dataSignature` folds every query's dataUpdatedAt into one
+  // string, so the memo still re-derives whenever any ticker's data lands
+  // or updates, without a variable-length array.
+  const dataSignature = queries.map((q) => (q?.data ? q.dataUpdatedAt : 0)).join(',');
   const metricsByTicker = useMemo(() => {
     const map = {};
     for (let i = 0; i < normalized.length; i++) {
@@ -79,11 +105,8 @@ export function useStockDetailsFanout(tickers, { enabled = true } = {}) {
       if (q?.data) map[ticker] = extract(q.data);
     }
     return map;
-    // Re-derive whenever the data signature changes. We use the data
-    // references rather than the queries array (which is a new array each
-    // render) so the memo is meaningful.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [normalized.join('|'), ...queries.map((q) => q?.data)]);
+  }, [normalized.join('|'), dataSignature]);
 
   const isLoading = queries.some((q) => q.isLoading);
   const isFetching = queries.some((q) => q.isFetching);

@@ -15,7 +15,7 @@ import { AnalystContributions } from './components/AnalystContributions.jsx';
 import { CompanyInfo } from './components/CompanyInfo.jsx';
 import { PriceChart } from './components/PriceChart.jsx';
 import { FundamentalsStrip } from './components/detail/FundamentalsStrip.jsx';
-import { useStockDetailsFanout } from './hooks/useStockDetailsFanout.js';
+import { useStockDetailsFanout, FANOUT_METRIC_FIELDS } from './hooks/useStockDetailsFanout.js';
 import { fmtMcap, fmtNum1, fmtNum2, fmtPct1 } from './lib/formatters.jsx';
 import { useSortable, SortableTh } from './lib/useSortable.jsx';
 import { useTargetBoard } from './hooks/useTargetBoard.js';
@@ -132,7 +132,12 @@ const TargetTable = ({ targets, onOpenTarget, selectedTicker }) => {
   // columns sort cleanly. Shared queryKeys with FundamentalsStrip → one
   // ticker = one fetch across both surfaces.
   const tickers = useMemo(() => (targets ?? []).map((t) => t.ticker), [targets]);
-  const { metricsByTicker } = useStockDetailsFanout(tickers);
+  // M6 — eager fan-out is capped (FANOUT_EAGER_ROWS); rows further down
+  // are filled by FundamentalsStrip's in-viewport fetch (shared cache).
+  // Sorting on a fan-out column lifts the cap so the sort sees every row.
+  const { metricsByTicker } = useStockDetailsFanout(tickers, {
+    eagerCount: FANOUT_METRIC_FIELDS.includes(sortKey) ? Infinity : undefined,
+  });
   const enriched = useMemo(
     () => (targets ?? []).map((t) => {
       const m = metricsByTicker[t.ticker];

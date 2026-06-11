@@ -1,14 +1,8 @@
 import React from 'react';
 import { Shield } from 'lucide-react';
-import { AreaChart, Area, ResponsiveContainer } from 'recharts';
 import { StatusDot } from './components/Badges.jsx';
 
 export const RegimeView = ({ regime }) => {
-  const vixSeries = Array.from({ length: 60 }, (_, i) => ({
-    day: i,
-    vix: 14 + Math.sin(i / 5) * 4 + Math.random() * 2,
-  }));
-
   if (!regime || !regime.regime) {
     return (
       <div className="px-3 py-4 sm:p-6 max-w-[1600px] mx-auto">
@@ -38,25 +32,17 @@ export const RegimeView = ({ regime }) => {
         <div className="border border-neutral-800 p-5">
           <div className="flex items-center justify-between mb-1">
             <div className="text-[10px] uppercase tracking-[0.2em] text-neutral-500 font-mono">VIX</div>
-            <StatusDot status={regime.vol?.regime === 'extreme' ? 'danger' : regime.vol?.regime === 'elevated' ? 'warning' : 'healthy'} />
+            {/* Backend volRegime enum is 'low' | 'medium' | 'high'
+                (shared/regime.ts) — code-review-2026-06 M4. */}
+            <StatusDot status={regime.vol?.regime === 'high' ? 'danger' : regime.vol?.regime === 'medium' ? 'warning' : 'healthy'} />
           </div>
           <div className="font-mono text-4xl font-semibold text-neutral-100 mt-2">{regime.vol?.level?.toFixed(1)}</div>
           <div className="mt-2 text-[11px] font-mono text-neutral-500 uppercase tracking-widest">
             {regime.vol?.regime} · {regime.vol?.trend} · p{regime.vol?.percentile}
           </div>
-          <div className="h-16 mt-3">
-            <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={vixSeries}>
-                <defs>
-                  <linearGradient id="vixGrad" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stopColor="#14e89a" stopOpacity={0.3} />
-                    <stop offset="100%" stopColor="#14e89a" stopOpacity={0} />
-                  </linearGradient>
-                </defs>
-                <Area type="monotone" dataKey="vix" stroke="#14e89a" strokeWidth={1.5} fill="url(#vixGrad)" />
-              </AreaChart>
-            </ResponsiveContainer>
-          </div>
+          {/* No sparkline: the regime payload carries only the current VIX
+              level, and the repo's honest-no-data rule forbids fabricating a
+              series (code-review-2026-06 m7 removed a Math.random() chart). */}
         </div>
 
         <div className="border border-neutral-800 p-5">
@@ -116,8 +102,11 @@ export const RegimeView = ({ regime }) => {
             { label: 'Bearish Technical', value: regime.regime === 'risk_on' ? 0.85 : regime.regime === 'risk_off' ? 1.20 : 1.0 },
             { label: 'Positive News', value: regime.regime === 'risk_on' ? 1.10 : regime.regime === 'risk_off' ? 0.85 : 1.0 },
             { label: 'Negative News', value: regime.regime === 'risk_on' ? 0.85 : regime.regime === 'risk_off' ? 1.15 : 1.0 },
-            { label: 'Earnings Sell Premium', value: regime.vol?.regime === 'elevated' ? 1.15 : regime.vol?.regime === 'low' ? 0.90 : 1.0 },
-            { label: 'Earnings Buy Premium', value: regime.vol?.regime === 'low' ? 1.15 : regime.vol?.regime === 'elevated' ? 0.85 : 1.0 },
+            // Premium multipliers keyed on the REAL backend enum
+            // ('low' | 'medium' | 'high'); 'high' takes the old dead
+            // 'elevated' branch's behavior (M4).
+            { label: 'Earnings Sell Premium', value: regime.vol?.regime === 'high' ? 1.15 : regime.vol?.regime === 'low' ? 0.90 : 1.0 },
+            { label: 'Earnings Buy Premium', value: regime.vol?.regime === 'low' ? 1.15 : regime.vol?.regime === 'high' ? 0.85 : 1.0 },
           ].map(m => {
             const above = m.value > 1.0;
             const below = m.value < 1.0;
