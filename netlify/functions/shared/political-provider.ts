@@ -24,7 +24,7 @@
 //   3. Not included here: government contracts — that's a separate provider
 //      since the scoring logic is quite different.
 
-import { quiverGetTicker, q, qn, qdate } from './quiver-client';
+import { quiverGetTickerWithStatus, q, qn, qdate } from './quiver-client';
 import { QuiverCongressionalArraySchema, QuiverLobbyingArraySchema } from './schemas';
 
 export interface CongressTrade {
@@ -83,22 +83,20 @@ export interface PoliticalActivity {
  *   - Lobbying: `Date` (quarter end). LD-2 due 20 days post-quarter;
  *     drift is small.
  *
+ * Failure discipline (code-review-2026-06 M8): TRANSPORT failures on ANY
+ * of the three Quiver datasets (fetch throw, non-OK status incl. the 403
+ * subscription gate, rate-limit exhaustion, malformed body) return `null`
+ * — a partial fetch can't distinguish "no trades" from "missed trades".
+ * Verified-empty responses (HTTP 200, zero rows) flow through the normal
+ * computation and produce the all-zeros activity object.
+ *
  * PIT-cacheable: keyed by (ticker, lookbackDays, asOfDate).
  */
 export async function getPoliticalActivity(
   ticker: string,
   lookbackDays = 180,
   opts: { asOfDate?: string } = {},
-): Promise<PoliticalActivity> {
-  const empty: PoliticalActivity = {
-    ticker, lookbackDays,
-    totalTrades: 0, netTrades: 0, uniquePoliticians: 0,
-    bipartisan: false, largestTrade: null, recentTrades: [],
-    totalLobbyingDollars: 0, priorPeriodLobbyingDollars: 0,
-    lobbyingVelocityPct: 0, latestLobbyingQuarter: 0, recentFilings: [],
-    fetchedAt: new Date().toISOString(),
-  };
-
+): Promise<PoliticalActivity | null> {
   try {
     const anchorMs = opts.asOfDate
       ? Date.parse(opts.asOfDate + 'T23:59:59Z')
@@ -107,11 +105,15 @@ export async function getPoliticalActivity(
     const priorFromIso = new Date(anchorMs - lookbackDays * 2 * 86400000).toISOString().slice(0, 10);
     const toIso = opts.asOfDate ?? new Date(anchorMs).toISOString().slice(0, 10);
 
-    const [senateRows, houseRows, lobbyingRows] = await Promise.all([
-      quiverGetTicker('senatetrading', ticker, { schema: QuiverCongressionalArraySchema }),
-      quiverGetTicker('housetrading', ticker, { schema: QuiverCongressionalArraySchema }),
-      quiverGetTicker('lobbying', ticker, { schema: QuiverLobbyingArraySchema }),
+    const [senateR, houseR, lobbyingR] = await Promise.all([
+      quiverGetTickerWithStatus('senatetrading', ticker, { schema: QuiverCongressionalArraySchema }),
+      quiverGetTickerWithStatus('housetrading', ticker, { schema: QuiverCongressionalArraySchema }),
+      quiverGetTickerWithStatus('lobbying', ticker, { schema: QuiverLobbyingArraySchema }),
     ]);
+    if (!senateR.ok || !houseR.ok || !lobbyingR.ok) return null;
+    const senateRows = senateR.rows;
+    const houseRows = houseR.rows;
+    const lobbyingRows = lobbyingR.rows;
 
     const senateTrades = senateRows.map((r) => normalizeTrade(r, 'senate')).filter(Boolean) as CongressTrade[];
     const houseTrades = houseRows.map((r) => normalizeTrade(r, 'house')).filter(Boolean) as CongressTrade[];
@@ -167,7 +169,9 @@ export async function getPoliticalActivity(
       fetchedAt: new Date().toISOString(),
     };
   } catch {
-    return empty;
+    // Unexpected throw — same discipline as a transport failure: null,
+    // never a fake verified-empty.
+    return null;
   }
 }
 

@@ -92,6 +92,11 @@ export async function runCatalystScan(
   const from = new Date(Date.now() - 220 * 86400000).toISOString().slice(0, 10);
 
   let budgetExceeded = false;
+  // M8 follow-through: providers now resolve null on TRANSPORT failures
+  // (vs the old fake verified-empty), so a Quiver/Finnhub outage skips
+  // the ticker instead of scoring it neutral. Count the skips so an
+  // outage is visible in the snapshot warnings, not silent.
+  let providerNullSkips = 0;
   const picks: CatalystPick[] = [];
 
   await mapWithConcurrency(
@@ -105,7 +110,11 @@ export async function runCatalystScan(
         getDailyBars(ticker, from, to).catch(() => [] as Awaited<ReturnType<typeof getDailyBars>>),
       ]);
       const patents = patentStub(ticker);
-      if (!insider || !political || !contracts || bars.length < 60) return null;
+      if (!insider || !political || !contracts) {
+        providerNullSkips += 1;
+        return null;
+      }
+      if (bars.length < 60) return null;
 
       const setups = detectSetups(bars);
       const cat = scoreCatalysts({
@@ -150,6 +159,13 @@ export async function runCatalystScan(
   );
 
   picks.sort((a, b) => b.composite - a.composite);
+
+  if (providerNullSkips > 0) {
+    warnings.push(
+      `provider data unavailable (insider/political/contracts) for ${providerNullSkips} tickers — skipped, not scored as neutral`,
+    );
+    log?.warn('catalyst_provider_degraded', { universe: opts.universe, providerNullSkips });
+  }
 
   const scanDurationMs = Date.now() - start;
   log?.info('catalyst_scan_complete', {

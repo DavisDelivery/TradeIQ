@@ -65,7 +65,7 @@ export async function getPoliticalActivityForBacktest(
   ticker: string,
   lookbackDays: number,
   asOfDate: string,
-): Promise<PoliticalActivity> {
+): Promise<PoliticalActivity | null> {
   const shifted = shiftedPoliticalAsOfDate(asOfDate);
   return getPoliticalActivity(ticker, lookbackDays, { asOfDate: shifted });
 }

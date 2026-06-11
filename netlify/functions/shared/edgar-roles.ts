@@ -30,21 +30,36 @@ const ROLE_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 const PER_LOOKUP_TIMEOUT_MS = 1500;
 
 // Ticker → CIK map. Loaded lazily on first use.
+//
+// Failure discipline (code-review-2026-06 infra minor 13): a transient
+// failure fetching company_tickers.json must NOT be cached as an empty
+// map for the life of the warm instance — that silently disabled all
+// role enrichment until the next cold start. On failure we leave the
+// success cache unset (so the next call retries) and record a backoff
+// timestamp so a hard SEC outage isn't hammered more than once per
+// TICKER_MAP_RETRY_BACKOFF_MS.
 let tickerToCik: Map<string, string> | null = null;
 let tickerMapPromise: Promise<Map<string, string>> | null = null;
+let tickerMapFailedAt: number | null = null;
+const TICKER_MAP_RETRY_BACKOFF_MS = 60_000;
 
 async function getTickerToCikMap(): Promise<Map<string, string>> {
   if (tickerToCik) return tickerToCik;
   if (tickerMapPromise) return tickerMapPromise;
-  tickerMapPromise = (async () => {
+  // Within the failure backoff window — return an empty map WITHOUT
+  // caching it; the next call after the window retries the fetch.
+  if (tickerMapFailedAt !== null && Date.now() - tickerMapFailedAt < TICKER_MAP_RETRY_BACKOFF_MS) {
+    return new Map();
+  }
+  const p = (async () => {
     try {
       const res = await fetch(SEC_TICKERS_URL, {
         headers: { 'User-Agent': EDGAR_UA, Accept: 'application/json' },
       });
       if (!res.ok) {
         console.warn(`[edgar] ticker map fetch failed: ${res.status}`);
-        tickerToCik = new Map();
-        return tickerToCik;
+        tickerMapFailedAt = Date.now();
+        return new Map<string, string>();
       }
       const json = (await res.json()) as Record<string, { cik_str: number; ticker: string }>;
       const m = new Map<string, string>();
@@ -53,15 +68,30 @@ async function getTickerToCikMap(): Promise<Map<string, string>> {
           m.set(v.ticker.toUpperCase(), String(v.cik_str).padStart(10, '0'));
         }
       }
+      if (m.size === 0) {
+        // A 200 that parses to zero tickers is indistinguishable from a
+        // truncated/garbage body — treat as failure, don't cache.
+        console.warn('[edgar] ticker map fetch returned 0 tickers; not caching');
+        tickerMapFailedAt = Date.now();
+        return m;
+      }
       tickerToCik = m;
+      tickerMapFailedAt = null;
       return m;
     } catch (e) {
       console.warn('[edgar] ticker map fetch error:', String(e));
-      tickerToCik = new Map();
-      return tickerToCik;
+      tickerMapFailedAt = Date.now();
+      return new Map<string, string>();
     }
   })();
-  return tickerMapPromise;
+  tickerMapPromise = p;
+  try {
+    return await p;
+  } finally {
+    // Clear the in-flight handle once settled. On success tickerToCik is
+    // set (fast path); on failure the backoff timestamp gates retries.
+    tickerMapPromise = null;
+  }
 }
 
 export interface EnrichedRole {
@@ -91,7 +121,11 @@ export async function lookupInsiderRole(
     const role = await withTimeout(fetchRole(cleanedName, cleanedTicker), PER_LOOKUP_TIMEOUT_MS);
     roleCache.set(cacheKey, { role, at: Date.now() });
     return role;
-  } catch {
+  } catch (e) {
+    // Ticker map unavailable (SEC outage) — do NOT poison the 24h role
+    // cache with nulls; once the map fetch recovers (see backoff above)
+    // the next lookup gets a real shot.
+    if (e instanceof TickerMapUnavailableError) return null;
     // Timeout or fetch error — cache the null so we don't re-attempt
     // every cold start. 24h TTL means tomorrow's call retries.
     roleCache.set(cacheKey, { role: null, at: Date.now() });
@@ -126,8 +160,15 @@ export async function enrichRoles<T extends { name: string }>(
 // Internals
 // ---------------------------------------------------------------------------
 
+class TickerMapUnavailableError extends Error {
+  constructor() { super('SEC ticker map unavailable'); }
+}
+
 async function fetchRole(name: string, ticker: string): Promise<string | null> {
   const cikMap = await getTickerToCikMap();
+  // Empty map = the fetch failed (a real map has ~10k entries). Throw a
+  // typed error so the caller skips the 24h null-cache for this lookup.
+  if (cikMap.size === 0) throw new TickerMapUnavailableError();
   const issuerCik = cikMap.get(ticker);
   if (!issuerCik) return null; // Ticker not in SEC universe — can't disambiguate
 
@@ -291,3 +332,18 @@ function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
     );
   });
 }
+
+// ---------------------------------------------------------------------------
+// Test hooks
+// ---------------------------------------------------------------------------
+
+/** Tests only — wipe ticker-map + role caches and backoff state. */
+export function _resetEdgarCachesForTests(): void {
+  tickerToCik = null;
+  tickerMapPromise = null;
+  tickerMapFailedAt = null;
+  roleCache.clear();
+}
+
+/** Tests only — direct access to the lazy ticker-map loader. */
+export const _getTickerToCikMapForTests = getTickerToCikMap;

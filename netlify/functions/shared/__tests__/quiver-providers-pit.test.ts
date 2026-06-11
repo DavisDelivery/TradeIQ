@@ -6,6 +6,7 @@ vi.mock('../quiver-client', async (orig) => {
   return {
     ...actual,
     quiverGetTicker: vi.fn(),
+    quiverGetTickerWithStatus: vi.fn(),
   };
 });
 
@@ -16,7 +17,14 @@ import * as quiverClient from '../quiver-client';
 
 beforeEach(() => {
   vi.mocked(quiverClient.quiverGetTicker).mockReset();
+  vi.mocked(quiverClient.quiverGetTickerWithStatus).mockReset();
 });
+
+// Wave 4B (M8): political + govcontracts consume the status-aware variant;
+// these helpers mock VERIFIED (ok: true) responses for the PIT fixtures.
+function okRows(rows: any[]): { rows: any[]; ok: boolean } {
+  return { rows, ok: true };
+}
 
 // ===========================================================================
 // W7a — Political (Quiver senate + house + lobbying) PIT
@@ -37,35 +45,35 @@ describe('getPoliticalActivity PIT semantics', () => {
   ];
 
   it('returns all trades when asOfDate omitted', async () => {
-    vi.mocked(quiverClient.quiverGetTicker)
-      .mockResolvedValueOnce(senate)
-      .mockResolvedValueOnce(house)
-      .mockResolvedValueOnce(lobbying);
+    vi.mocked(quiverClient.quiverGetTickerWithStatus)
+      .mockResolvedValueOnce(okRows(senate))
+      .mockResolvedValueOnce(okRows(house))
+      .mockResolvedValueOnce(okRows(lobbying));
     // Use 4-year lookback so 2023-2024 fixture data falls inside the window
     // (real Date.now is 2026; default 180d would exclude them).
     const out = await getPoliticalActivity('FOO', 4 * 365);
-    expect(out.totalTrades).toBe(3);
+    expect(out!.totalTrades).toBe(3);
   });
 
   it('clips trades dated after asOfDate', async () => {
-    vi.mocked(quiverClient.quiverGetTicker)
-      .mockResolvedValueOnce(senate)
-      .mockResolvedValueOnce(house)
-      .mockResolvedValueOnce(lobbying);
+    vi.mocked(quiverClient.quiverGetTickerWithStatus)
+      .mockResolvedValueOnce(okRows(senate))
+      .mockResolvedValueOnce(okRows(house))
+      .mockResolvedValueOnce(okRows(lobbying));
     // asOfDate = 2024-06-01: drops the 2024-08-15 trade
     const out = await getPoliticalActivity('FOO', 365, { asOfDate: '2024-06-01' });
-    expect(out.totalTrades).toBe(2);
-    expect(out.recentTrades.every((t) => t.date <= '2024-06-01')).toBe(true);
+    expect(out!.totalTrades).toBe(2);
+    expect(out!.recentTrades.every((t) => t.date <= '2024-06-01')).toBe(true);
   });
 
   it('clips lobbying filings dated after asOfDate', async () => {
-    vi.mocked(quiverClient.quiverGetTicker)
-      .mockResolvedValueOnce(senate)
-      .mockResolvedValueOnce(house)
-      .mockResolvedValueOnce(lobbying);
+    vi.mocked(quiverClient.quiverGetTickerWithStatus)
+      .mockResolvedValueOnce(okRows(senate))
+      .mockResolvedValueOnce(okRows(house))
+      .mockResolvedValueOnce(okRows(lobbying));
     const out = await getPoliticalActivity('FOO', 365, { asOfDate: '2024-08-01' });
     // 2024-09-30 dropped; 2024-06-30 in current window, 2023-12-31 in prior
-    expect(out.recentFilings.every((f) => f.date <= '2024-08-01')).toBe(true);
+    expect(out!.recentFilings.every((f) => f.date <= '2024-08-01')).toBe(true);
   });
 });
 
@@ -107,19 +115,19 @@ describe('getGovContractActivity PIT semantics', () => {
   ];
 
   it('returns all contracts when asOfDate omitted', async () => {
-    vi.mocked(quiverClient.quiverGetTicker).mockResolvedValueOnce(contracts);
+    vi.mocked(quiverClient.quiverGetTickerWithStatus).mockResolvedValueOnce(okRows(contracts));
     const out = await getGovContractActivity('FOO', 4 * 365);
-    expect(out.totalContracts).toBe(3);
+    expect(out!.totalContracts).toBe(3);
   });
 
   it('clips contracts published after asOfDate (uses Date, not action_date)', async () => {
-    vi.mocked(quiverClient.quiverGetTicker).mockResolvedValueOnce(contracts);
+    vi.mocked(quiverClient.quiverGetTickerWithStatus).mockResolvedValueOnce(okRows(contracts));
     // Critical: action_date 2024-09-15 < 2024-10-01 cutoff, but Date is
     // 2024-12-01 (publication). Must use Date for PIT.
     const out = await getGovContractActivity('FOO', 365, { asOfDate: '2024-10-01' });
-    expect(out.recentContracts.every((c) => c.date <= '2024-10-01')).toBe(true);
+    expect(out!.recentContracts.every((c) => c.date <= '2024-10-01')).toBe(true);
     // The 2024-12-01-published contract must be excluded even though its
     // action_date precedes the cutoff.
-    expect(out.recentContracts.find((c) => c.amount === 1000000)).toBeUndefined();
+    expect(out!.recentContracts.find((c) => c.amount === 1000000)).toBeUndefined();
   });
 });
