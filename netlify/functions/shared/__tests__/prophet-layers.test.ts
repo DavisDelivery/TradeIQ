@@ -22,8 +22,10 @@ import {
   layerFundamental,
   layerCatalyst,
   composeProphet,
+  regimeWeights,
   type FundInput,
   type CatalystInput,
+  type LayerResult,
 } from '../prophet-layers';
 import {
   uptrend, downtrend, chop, lowVolGrind, highVol, breakout,
@@ -473,5 +475,60 @@ describe('composeProphet', () => {
     expect(score.signal).toBeNull();
     expect(score.conviction).toBeNull();
     expect(score.entry).toBeNull();
+  });
+});
+
+// ───────────────────────────────────────────────────────────────────────────
+// regimeWeights — CR-6 regression. The regime overrides used to change
+// individual weights without renormalizing (risk-on summed to 0.93,
+// risk-off to 0.83), so the maximum composite shifted by regime and HIGH
+// conviction (≥80) was nearly unreachable in risk-off.
+// ───────────────────────────────────────────────────────────────────────────
+
+describe('regimeWeights — CR-6 renormalization', () => {
+  // One bias per branch: neutral (no override), risk-on, risk-off.
+  const regimes: Array<[string, number]> = [
+    ['neutral', 0],
+    ['risk-on', 0.8],
+    ['risk-off', -0.8],
+  ];
+
+  it('effective weights sum to 1.0 (±1e-9) in every regime branch', () => {
+    for (const [label, bias] of regimes) {
+      const w = regimeWeights(bias);
+      const sum = Object.values(w).reduce((s, x) => s + x, 0);
+      expect(Math.abs(sum - 1), `${label} weights must sum to 1`).toBeLessThanOrEqual(1e-9);
+    }
+  });
+
+  it('regime tilts survive renormalization (relative emphasis preserved)', () => {
+    const base = regimeWeights(0);
+    const riskOn = regimeWeights(0.8);
+    const riskOff = regimeWeights(-0.8);
+    // Risk-on: momentum share rises, fundamental share falls.
+    expect(riskOn.momentum).toBeGreaterThan(base.momentum);
+    expect(riskOn.fundamental).toBeLessThan(base.fundamental);
+    // Risk-off: catalyst share falls; fundamental gains GROUND ON catalyst
+    // (the override drops both, fundamental less — base 0.25:0.30 vs
+    // override 0.20:0.18 — so the tilt is in the ratio, not the level).
+    expect(riskOff.catalyst).toBeLessThan(base.catalyst);
+    expect(riskOff.fundamental / riskOff.catalyst).toBeGreaterThan(base.fundamental / base.catalyst);
+  });
+
+  it('an all-layers-perfect score reaches the same maximum in every regime', () => {
+    const perfect = (): LayerResult => ({ score: 100, pass: true, details: {}, flags: [] });
+    const layers = {
+      structure: perfect(),
+      momentum: perfect(),
+      volume: perfect(),
+      volatility: perfect(),
+      relativeStrength: perfect(),
+      fundamental: perfect(),
+      catalyst: perfect(),
+    };
+    const bars = uptrend({ length: 260 });
+    const composites = regimes.map(([, bias]) => composeProphet(bars, layers, bias).composite);
+    // Pre-fix: 100 / 93 / 83. Post-fix: identical max in every regime.
+    expect(composites).toEqual([100, 100, 100]);
   });
 });

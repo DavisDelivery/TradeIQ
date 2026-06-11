@@ -926,12 +926,15 @@ export function layerCatalyst(cat: CatalystInput): LayerResult {
 // COMPOSITE & SIGNAL
 // ═══════════════════════════════════════════════════════════════════════════
 
-export function composeProphet(
-  bars: Bar[],
-  layers: ProphetScore['layers'],
-  macroBias = 0,
-): Omit<ProphetScore, 'layers'> {
-  // Regime-adjusted weights
+// Regime-adjusted layer weights. Exported for the renormalization test.
+//
+// CR-6 fix: the regime overrides change individual weights without
+// preserving the total (risk-on summed to 0.93, risk-off to 0.83), which
+// shifted the maximum composite by regime — HIGH conviction (≥80) was
+// nearly unreachable in risk-off and composites weren't comparable across
+// snapshots taken in different regimes. Renormalize after the override so
+// every regime's weight vector sums to 1.
+export function regimeWeights(macroBias: number): typeof BASE_WEIGHTS {
   const w = { ...BASE_WEIGHTS };
   if (macroBias > 0.4) {
     // Risk-on: momentum and catalyst matter more
@@ -942,6 +945,17 @@ export function composeProphet(
     w.fundamental = 0.20;
     w.catalyst = 0.18;
   }
+  const sum = Object.values(w).reduce((s, x) => s + x, 0);
+  for (const k of Object.keys(w) as (keyof typeof BASE_WEIGHTS)[]) w[k] /= sum;
+  return w;
+}
+
+export function composeProphet(
+  bars: Bar[],
+  layers: ProphetScore['layers'],
+  macroBias = 0,
+): Omit<ProphetScore, 'layers'> {
+  const w = regimeWeights(macroBias);
 
   const entries = Object.entries(layers) as [keyof typeof layers, LayerResult][];
   const layersPassed = entries.filter(([, r]) => r.pass).length;

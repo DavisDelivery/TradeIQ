@@ -12,6 +12,7 @@ import { getPatentActivity } from './patent-provider';
 import { getPoliticalActivity } from './political-provider';
 import { getGovContractActivity } from './govcontracts-provider';
 import { SECTOR_ETFS, SPY, findEntry } from './universe';
+import { ANALYST_WEIGHTS } from './analyst-weights';
 import type { AnalystOutput, Direction, Target, Tier, ConflictLevel, AnalystContribution, TopSignal } from './types';
 import { composeWeights } from './compose-weights';
 import type { Bar } from './data-provider';
@@ -47,41 +48,9 @@ export async function fetchBarCache(
   return cache;
 }
 
-// Weights sum to 1.0 over the analysts that produce real signal.
-// Political analyst (Quiver: congress + lobbying + contracts) gets a
-// meaningful slice because it captures academic-backed alpha
-// (Ziobrowski senate studies) plus sector-specific signals (defense
-// contract flow, regulatory-win lobbying) that the other analysts miss.
-//
-// Phase 4f-finish — macro-regime and patent-analyst are pinned to 0
-// (permanent removal) per `reports/phase-4f/audit.md` § 2:
-//   - macro-regime: `no_upstream` — the analyst computes
-//     `score = 50 + macroBias * 20` but macroBias defaults to 0 and is
-//     never set by any caller (the regime-classifier upstream was
-//     never wired in). Score is literally constant 50 across all 3600
-//     observations in the W1 audit.
-//   - patent-analyst: `no_upstream` for russell2k (1 unique value
-//     across 3600 obs); kept conservatively at 0 globally since the
-//     audit had 0 largecap target snapshots and `composeWeights`
-//     absorbs the 6% redistribution cleanly. Phase 4g can re-introduce
-//     a per-universe weight if largecap patent signal is recovered.
-//
-// Live weights (8 analysts): tech 0.15 + sector 0.08 + fund 0.13 +
-//   flow 0.10 + news 0.10 + earnings 0.07 + insider 0.14 + political 0.10
-//   = 0.87. composeWeights rescales the surviving 8 to sum to 1.0 on
-//   the actual scored set per ticker.
-const ANALYST_WEIGHTS: Record<string, number> = {
-  'technical-analyst': 0.15,
-  'sector-rotation': 0.08,
-  'fundamental-analyst': 0.13,
-  'flow-analyst': 0.10,
-  'news-sentiment': 0.10,
-  'earnings-analyst': 0.07,
-  'macro-regime': 0,        // REMOVED — no_upstream (see audit § 2)
-  'insider-analyst': 0.14,
-  'patent-analyst': 0,      // REMOVED — no_upstream (see audit § 2)
-  'political-analyst': 0.10,
-};
+// Weight table extracted to shared/analyst-weights.ts (single source of
+// truth — analysts-status.ts derives its registry weights from the same
+// module). See that file for the full rationale + Phase 4f removal notes.
 
 export interface TargetForOneOpts {
   ticker: string;
@@ -207,10 +176,10 @@ export async function runAnalystsForTicker(opts: TargetForOneOpts): Promise<{
     noDataAnalysts,
   } = composed;
 
-  // Top signals: highest-contributing analysts
+  // Top signals: strongest-contributing aligned analysts
   const topSignals: TopSignal[] = contributions
     .filter((c) => (direction === 'long' && c.direction === 'long') || (direction === 'short' && c.direction === 'short'))
-    .sort((a, b) => b.score - a.score)
+    .sort(byEvidenceStrength(direction))
     .slice(0, 3)
     .map((c) => ({ type: signalTypeFor(c.analyst, direction), score: c.score }));
 
@@ -376,7 +345,18 @@ function signalTypeFor(analyst: string, direction: Direction): string {
   }
 }
 
-function buildRationale(
+// Orders aligned contributions by evidence strength. `score` is a 0-100
+// bullishness scale (see composeTarget step 2), so the most convincing
+// contributor for a long is the HIGHEST score but for a short it's the
+// LOWEST — sorting descending for both directions made short candidates
+// quote their least convincing analysts. Exported for the regression test.
+export function byEvidenceStrength(direction: Direction) {
+  return (a: AnalystContribution, b: AnalystContribution): number =>
+    direction === 'short' ? a.score - b.score : b.score - a.score;
+}
+
+// Exported for the evidence-ordering regression test.
+export function buildRationale(
   direction: Direction,
   contributions: AnalystContribution[],
   analysts: Record<string, AnalystOutput>,
@@ -384,7 +364,7 @@ function buildRationale(
   const aligned = contributions.filter((c) => c.direction === direction).length;
   const leading = contributions
     .filter((c) => c.direction === direction && analysts[c.analyst].confidence > 0.4)
-    .sort((a, b) => b.score - a.score)
+    .sort(byEvidenceStrength(direction))
     .slice(0, 3);
   const reasons = leading.map((c) => analysts[c.analyst].rationale).filter(Boolean).slice(0, 2).join('. ');
   const prefix = direction === 'long' ? `Net long: ${aligned} analysts aligned bullish.`
