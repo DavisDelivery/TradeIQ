@@ -171,7 +171,12 @@ export interface PerformanceMetrics {
   perRegime: Record<
     string,
     {
-      sharpe: number;
+      // Average per-position ~20-trading-day segment return (percent,
+      // un-annualized). Replaces the old per-regime `sharpe`, which
+      // annualized cross-sectional segment returns with √(252/20) —
+      // statistically meaningless (code-review-2026-06 track-3 minor 2).
+      // Runs persisted before Wave 4D carry `sharpe` instead.
+      avgSegmentReturnPct: number;
       totalReturnPct: number;
       rebalanceCount: number;
     }

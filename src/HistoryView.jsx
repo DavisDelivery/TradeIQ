@@ -48,13 +48,24 @@ function formatDate(iso) {
   }
 }
 
+// code-review-2026-06 m9 — rounding hours meant a 20-minute-old snapshot
+// read "0h ago"; show minutes when under an hour.
 function formatAge(iso) {
   if (!iso) return '';
   const ageMs = Date.now() - new Date(iso).getTime();
+  const m = Math.round(ageMs / 60_000);
+  if (m < 60) return `${m}m ago`;
   const h = Math.round(ageMs / 3_600_000);
   if (h < 24) return `${h}h ago`;
   const d = Math.round(h / 24);
   return `${d}d ago`;
+}
+
+// code-review-2026-06 m9 — `(undefined / 1000).toFixed(1)` rendered "NaNs"
+// on snapshots that never recorded scanDurationMs; guard to an em-dash.
+function formatScanDuration(ms) {
+  if (ms == null || !Number.isFinite(ms)) return '—';
+  return `${(ms / 1000).toFixed(1)}s`;
 }
 
 const HistoryView = () => {
@@ -245,7 +256,7 @@ const SnapshotDetail = ({ board, universe, snapshot }) => {
         <div className="text-[11px] text-neutral-500 font-mono ml-auto">
           {formatDate(snapshot.generatedAt)} · v{snapshot.modelVersion} ·{' '}
           {results.length}/{snapshot.universeChecked} rows ·{' '}
-          {(snapshot.scanDurationMs / 1000).toFixed(1)}s scan
+          {formatScanDuration(snapshot.scanDurationMs)} scan
         </div>
       </header>
 
@@ -417,5 +428,5 @@ function pickColumnsForBoard(board, results) {
   }
 }
 
-export { HistoryView, pickColumnsForBoard };
+export { HistoryView, pickColumnsForBoard, formatAge, formatScanDuration };
 export default HistoryView;

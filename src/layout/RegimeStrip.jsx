@@ -8,9 +8,13 @@
 import React from 'react';
 import { Clock } from 'lucide-react';
 import { StatusDot } from '../components/Badges.jsx';
+import { useEtClock } from '../hooks/useEtClock.js';
 
 export function RegimeStrip({ regime, universeStats }) {
   const regimeLabel = (regime?.regime ?? 'neutral').replace(/_/g, ' ').toUpperCase();
+  // code-review-2026-06 m6 — ticking ET clock (30s interval) instead of a
+  // render-time snapshot that never updated.
+  const etTime = useEtClock();
   return (
     <div className="h-8 bg-[#090a0c] text-[11px] font-mono overflow-x-auto scrollbar-hide">
       <div className="flex items-center h-full gap-3 sm:gap-6 px-3 sm:px-6 text-neutral-400 whitespace-nowrap min-w-max">
@@ -44,9 +48,7 @@ export function RegimeStrip({ regime, universeStats }) {
         </div>
         <div className="ml-auto flex items-center gap-2 text-neutral-500">
           <Clock className="h-3 w-3" />
-          <span>
-            {new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', timeZone: 'America/New_York' })} ET
-          </span>
+          <span>{etTime} ET</span>
         </div>
       </div>
     </div>

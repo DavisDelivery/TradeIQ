@@ -156,11 +156,17 @@ export function computeMetrics(input: MetricsInput): PerformanceMetrics {
       ? (mean(excessRets) / stddev(excessRets)) * Math.sqrt(TRADING_DAYS_PER_YEAR)
       : 0;
 
-  // Sortino — downside-only deviation
-  const downside = excessRets.filter((r) => r < 0);
+  // Sortino — downside deviation per the standard definition:
+  // sqrt( Σ min(r, 0)² / N ) over ALL excess returns (zero-floored), NOT
+  // an RMS over only the negative returns with n−1 (which overstated
+  // downside risk and understated Sortino — code-review-2026-06 track-3
+  // minor 1).
   const downsideStd =
-    downside.length > 1
-      ? Math.sqrt(downside.reduce((s, r) => s + r * r, 0) / (downside.length - 1))
+    excessRets.length > 0
+      ? Math.sqrt(
+          excessRets.reduce((s, r) => s + Math.min(r, 0) ** 2, 0) /
+            excessRets.length,
+        )
       : 0;
   const sortino =
     downsideStd > 0
@@ -284,18 +290,24 @@ function computePerRegime(
   // For each regime, compute approximate metrics from segment returns.
   // We don't have per-day equity tagged by regime, so we use the
   // attribution-implied contributions: sum of weighted segment returns.
+  //
+  // code-review-2026-06 track-3 minor 2 — this used to be exposed as a
+  // per-regime "sharpe": mean/std of CROSS-SECTIONAL per-position segment
+  // returns annualized with √(252/20), which mixes cross-sectional
+  // dispersion with time-series vol and is statistically meaningless. We
+  // don't redesign here; we report the honest quantity we actually have:
+  // the average ~20-trading-day per-position segment return (percent,
+  // un-annualized), as `avgSegmentReturnPct`.
   for (const [regime, recs] of byRegime) {
     const seg = recs.map((r) => r.contribution);
     const segReturns = recs.map((r) => r.segmentReturn);
     if (seg.length === 0) {
-      out[regime] = { sharpe: 0, totalReturnPct: 0, rebalanceCount: 0 };
+      out[regime] = { avgSegmentReturnPct: 0, totalReturnPct: 0, rebalanceCount: 0 };
       continue;
     }
     const totalRet = seg.reduce((s, x) => s + x, 0);
-    const sd = stddev(segReturns);
-    const sharpe = sd > 0 ? (mean(segReturns) / sd) * Math.sqrt(TRADING_DAYS_PER_YEAR / 20) : 0;
     out[regime] = {
-      sharpe: +sharpe.toFixed(4),
+      avgSegmentReturnPct: +(mean(segReturns) * 100).toFixed(4),
       totalReturnPct: +(totalRet * 100).toFixed(4),
       rebalanceCount: new Set(recs.map((r) => r.rebalanceDate)).size,
     };

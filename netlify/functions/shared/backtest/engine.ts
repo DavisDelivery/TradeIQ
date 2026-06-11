@@ -100,7 +100,32 @@ export interface RunBacktestOptions {
   resumeRunId?: string;
 }
 
-export function validateConfig(config: BacktestConfig): void {
+/**
+ * Validate (and minimally normalize) a backtest config.
+ *
+ * code-review-2026-06 track-3 minor 10 — a future `endDate` used to pass
+ * validation; the run then dragged a flat-equity tail through the window,
+ * diluting CAGR/Sharpe. When `todayIso` (YYYY-MM-DD) is provided, a future
+ * endDate is CLAMPED to it in place and a warning is returned rather than
+ * throwing, so caller-built "through today"-style windows keep working.
+ * `todayIso` is injected by the entry points (trigger / background
+ * function): the engine itself must stay wall-clock-free per the
+ * walk-forward integrity invariant (no `new Date()`-derived windows here).
+ *
+ * Returns warnings (empty array when nothing was normalized).
+ */
+export function validateConfig(
+  config: BacktestConfig,
+  todayIso?: string,
+): string[] {
+  const warnings: string[] = [];
+  if (todayIso && config.endDate > todayIso) {
+    warnings.push(
+      `BacktestConfig: endDate ${config.endDate} is in the future; ` +
+        `clamped to ${todayIso}.`,
+    );
+    config.endDate = todayIso;
+  }
   if (config.startDate > config.endDate) {
     throw new Error(
       `BacktestConfig: startDate (${config.startDate}) > endDate (${config.endDate})`,
@@ -125,6 +150,7 @@ export function validateConfig(config: BacktestConfig): void {
   ) {
     throw new Error('BacktestConfig: maxPositionPct must be in (0, 1]');
   }
+  return warnings;
 }
 
 /**

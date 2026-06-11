@@ -39,6 +39,7 @@ import { Logo, StatusDot, ConvictionBadge, DirectionPill } from './components/Ba
 import { fmt, safeTimestamp, tierColor, tierGlow, directionIcon, analystIcon, analystLabel } from './lib/formatters.jsx';
 import { MOCK_REGIME, MOCK_TARGETS, MOCK_ANALYSTS, MOCK_ALERTS, MOCK_EQUITY_CURVE } from './lib/mockData.js';
 import { useRegime } from './hooks/useRegime.js';
+import { useEtClock } from './hooks/useEtClock.js';
 import { useAnalystsStatus } from './hooks/useAnalystsStatus.js';
 import { useBreakpoint } from './hooks/useBreakpoint.js';
 import { Sidebar } from './layout/Sidebar.jsx';
@@ -46,7 +47,7 @@ import { DesktopShell } from './layout/DesktopShell.jsx';
 import { RegimeStrip } from './layout/RegimeStrip.jsx';
 
 
-const APP_VERSION = '0.19.20-alpha';
+const APP_VERSION = '0.19.21-alpha';
 
 // Phase 4k W1 — single navigation source-of-truth shared by the mobile
 // TopBar and the desktop Sidebar. Mobile renders the same array as a
@@ -133,6 +134,9 @@ class ErrorBoundary extends React.Component {
 const TopBar = ({ activeView, setActiveView, regime, universeStats }) => {
   const scrollerRef = React.useRef(null);
   const buttonRefs = React.useRef({});
+  // code-review-2026-06 m6 — ticking ET clock (30s interval) instead of a
+  // render-time snapshot that never updated.
+  const etTime = useEtClock();
 
   const views = VIEWS;
 
@@ -244,9 +248,7 @@ const TopBar = ({ activeView, setActiveView, regime, universeStats }) => {
           </div>
           <div className="ml-auto flex items-center gap-2 text-neutral-500">
             <Clock className="h-3 w-3" />
-            <span>
-              {new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', timeZone: 'America/New_York' })} ET
-            </span>
+            <span>{etTime} ET</span>
           </div>
         </div>
       </div>

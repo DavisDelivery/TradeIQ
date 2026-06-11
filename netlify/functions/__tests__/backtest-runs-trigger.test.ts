@@ -181,6 +181,32 @@ describe('backtest-runs-trigger', () => {
     expect(mockPending).not.toHaveBeenCalled();
   });
 
+  // Wave 4D (track-3 minor 10) — a future endDate is clamped to today
+  // (with a warning surfaced in the 202 body), not rejected, so
+  // "through today"-style windows keep working.
+  it('clamps a future endDate to today, persists the clamped config, and surfaces a warning', async () => {
+    const todayIso = new Date().toISOString().slice(0, 10);
+    const res = await invoke(
+      handler,
+      makeEvent({ body: { ...validConfig, endDate: '2099-01-01' } }),
+    );
+    expect(res.statusCode).toBe(202);
+    const body = JSON.parse(res.body);
+    expect(body.warnings).toHaveLength(1);
+    expect(body.warnings[0]).toMatch(/endDate 2099-01-01 is in the future/);
+    // The pending row (and the dispatched config) must carry the CLAMPED
+    // endDate, not the future one.
+    expect(mockPending).toHaveBeenCalledTimes(1);
+    const persistedConfig = mockPending.mock.calls[0][1];
+    expect(persistedConfig.endDate).toBe(todayIso);
+  });
+
+  it('returns no warnings for an untouched, valid config', async () => {
+    const res = await invoke(handler, makeEvent({ body: validConfig }));
+    expect(res.statusCode).toBe(202);
+    expect(JSON.parse(res.body).warnings).toEqual([]);
+  });
+
   it('returns 400 when board lacks PIT scoring (catalyst/insider)', async () => {
     for (const board of ['catalyst', 'insider']) {
       const res = await invoke(

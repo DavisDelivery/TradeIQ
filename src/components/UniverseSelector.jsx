@@ -35,6 +35,12 @@ export const UniverseSelector = ({ universe, setUniverse, compact = false }) => 
   );
 };
 
+// code-review-2026-06 m2 — this set must list exactly the views whose data
+// actually varies with the universe prop. 'earnings' and 'options' were
+// listed but their views ignore the prop (the selector visibly did
+// nothing); 'insiders' was missing even though InsiderBoardView sends
+// `index=${universe}` (the board was silently filtered by a universe
+// chosen on another tab).
 export const UNIVERSE_AWARE_VIEWS = new Set([
-  'board', 'catalyst', 'williams', 'lynch', 'earnings', 'options',
+  'board', 'catalyst', 'insiders', 'williams', 'lynch',
 ]);
