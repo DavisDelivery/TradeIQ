@@ -103,3 +103,41 @@ describe('runAnalystsForTicker — Phase 4h enrichment', () => {
     expect(target).toBeNull();
   });
 });
+
+// Wave 4B (code-review-2026-06 M8): the providers now resolve NULL on
+// transport failures (instead of a fake verified-empty activity object).
+// This pins the runner-side contract that null flows into the `_noData`
+// branch and the composite weight rescale — NOT into a score-50/conf-0.1
+// stub vote. All provider mocks above resolve null, simulating exactly
+// a Quiver/Finnhub outage.
+describe('runAnalystsForTicker — provider null ⇒ _noData rescale (M8)', () => {
+  it('marks insider/patent/political analysts no-data when their providers resolve null', async () => {
+    const { target, analysts } = await runAnalystsForTicker({
+      ticker: 'AAPL',
+      barCache,
+      companyName: 'Apple Inc.',
+    });
+    expect(target).not.toBeNull();
+
+    for (const name of ['insider-analyst', 'patent-analyst', 'political-analyst']) {
+      expect(analysts[name].signals._noData).toBe(true);
+      expect(analysts[name].confidence).toBe(0);
+      expect(target!.noDataAnalysts).toContain(name);
+      expect(target!.scoredAnalysts).not.toContain(name);
+      // Rescaled weight must be exactly 0 — an outage carries no vote.
+      const contribution = target!.analystContributions.find((c) => c.analyst === name);
+      expect(contribution?.weight).toBe(0);
+    }
+  });
+
+  it('rescales surviving analyst weights to sum to ~1 (no-data weight redistributed)', async () => {
+    const { target } = await runAnalystsForTicker({
+      ticker: 'AAPL',
+      barCache,
+      companyName: 'Apple Inc.',
+    });
+    expect(target).not.toBeNull();
+    const total = target!.analystContributions.reduce((a, c) => a + c.weight, 0);
+    expect(total).toBeCloseTo(1, 3);
+  });
+});

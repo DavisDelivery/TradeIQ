@@ -23,7 +23,33 @@
 // one invocation at a time per scan, and W1 staggers the 4 insider
 // cron slots so the 4 universes don't collide.
 
-const DEFAULT_CALLS_PER_MIN = Number(process.env.FINNHUB_RPM ?? 55);
+const DEFAULT_CALLS_PER_MIN = 55;
+
+// Warn once per cold start, not on every bucket creation.
+let warnedBadFinnhubRpm = false;
+
+/**
+ * Resolve the Finnhub pacing rate from FINNHUB_RPM with validation
+ * (code-review-2026-06 infra minor 8). A malformed env var used to
+ * produce NaN, which silently disabled pacing entirely (NaN comparisons
+ * make `acquire()` a no-op). Non-finite or non-positive values fall back
+ * to the default with a one-time warning.
+ */
+export function resolveFinnhubRpm(): number {
+  const raw = process.env.FINNHUB_RPM;
+  if (raw === undefined || raw === '') return DEFAULT_CALLS_PER_MIN;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n <= 0) {
+    if (!warnedBadFinnhubRpm) {
+      console.warn(
+        `[rate-limiter] FINNHUB_RPM=${JSON.stringify(raw)} is not a finite positive number; falling back to ${DEFAULT_CALLS_PER_MIN} rpm`,
+      );
+      warnedBadFinnhubRpm = true;
+    }
+    return DEFAULT_CALLS_PER_MIN;
+  }
+  return n;
+}
 
 /**
  * Token-bucket rate limiter. Calls `acquire()` block until a token is
@@ -129,7 +155,7 @@ let _finnhubBucket: TokenBucket | null = null;
 
 export function getFinnhubBucket(): TokenBucket {
   if (_finnhubBucket === null) {
-    _finnhubBucket = createTokenBucket({ callsPerWindow: DEFAULT_CALLS_PER_MIN });
+    _finnhubBucket = createTokenBucket({ callsPerWindow: resolveFinnhubRpm() });
   }
   return _finnhubBucket;
 }

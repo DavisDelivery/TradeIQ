@@ -14,7 +14,7 @@
 //   - Award goes to a company that hasn't won a big one recently — regime
 //     change.
 
-import { quiverGetTicker, q, qn, qdate } from './quiver-client';
+import { quiverGetTickerWithStatus, q, qn, qdate } from './quiver-client';
 import { QuiverGovContractArraySchema } from './schemas';
 
 export interface GovContract {
@@ -47,13 +47,18 @@ export interface GovContractActivity {
  * availability by months. Verified at audit time: AAPL contract had
  * action_date=2025-09-22 vs Date=2025-12-12, a ~3-month publication lag.
  *
+ * Failure discipline (code-review-2026-06 M8): TRANSPORT failures (fetch
+ * throw, non-OK status, rate-limit exhaustion, malformed body) return
+ * `null` so consumers take their no-data path. The `empty` object is
+ * reserved for VERIFIED-empty responses (HTTP 200 with zero rows).
+ *
  * PIT-cacheable: keyed by (ticker, lookbackDays, asOfDate).
  */
 export async function getGovContractActivity(
   ticker: string,
   lookbackDays = 180,
   opts: { asOfDate?: string } = {},
-): Promise<GovContractActivity> {
+): Promise<GovContractActivity | null> {
   const empty: GovContractActivity = {
     ticker, lookbackDays,
     totalContracts: 0, totalDollars: 0,
@@ -63,9 +68,10 @@ export async function getGovContractActivity(
   };
 
   try {
-    const rows = await quiverGetTicker('govcontractsall', ticker, {
+    const { rows, ok } = await quiverGetTickerWithStatus('govcontractsall', ticker, {
       schema: QuiverGovContractArraySchema,
     });
+    if (!ok) return null;
     if (rows.length === 0) return empty;
 
     const all = (rows.map(normalize).filter(Boolean) as GovContract[])
@@ -115,7 +121,9 @@ export async function getGovContractActivity(
       fetchedAt: new Date().toISOString(),
     };
   } catch {
-    return empty;
+    // Unexpected throw — same discipline as a transport failure: null,
+    // never a fake verified-empty.
+    return null;
   }
 }
 

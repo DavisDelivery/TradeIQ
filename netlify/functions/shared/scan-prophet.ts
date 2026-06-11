@@ -193,6 +193,11 @@ export async function runProphetScan(
   let tickersScanned = 0;
   const picks: ProphetPick[] = [];
   const sufficientQualified = opts.sufficientQualified ?? Infinity;
+  // M8 follow-through: catalyst-layer providers resolve null on TRANSPORT
+  // failures (vs the old fake verified-empty). A provider outage silently
+  // degrades the heaviest layer toward its base score — count affected
+  // tickers so the outage is visible in the snapshot warnings.
+  const degraded = { catalystInputNullTickers: 0 };
 
   await mapWithConcurrency(
     scanList.map((t) => t.ticker),
@@ -206,6 +211,7 @@ export async function runProphetScan(
         sectorEtfCache[entry.sector] ?? null,
         sectorRank[entry.sector] ?? 6,
         macroBias,
+        degraded,
       );
       tickersScanned += 1;
       if (pick && pick.conviction) picks.push(pick);
@@ -232,6 +238,16 @@ export async function runProphetScan(
   );
 
   picks.sort((a, b) => b.composite - a.composite);
+
+  if (degraded.catalystInputNullTickers > 0) {
+    warnings.push(
+      `catalyst layer degraded: insider/political/contract provider data unavailable for ${degraded.catalystInputNullTickers} tickers`,
+    );
+    log?.warn('prophet_catalyst_degraded', {
+      universe: opts.universe,
+      catalystInputNullTickers: degraded.catalystInputNullTickers,
+    });
+  }
 
   const scanDurationMs = Date.now() - start;
   log?.info('prophet_scan_complete', {
@@ -274,6 +290,9 @@ async function scoreTicker(
   sectorBars: Bar[] | null,
   sectorRank: number,
   macroBias: number,
+  /** M8: incremented when any catalyst-layer provider resolved null
+   *  (transport failure) — surfaced as a scan warning by the caller. */
+  degraded?: { catalystInputNullTickers: number },
 ): Promise<ProphetPick | null> {
   const [bars, fund, intel, insider, political, contracts, patents] = await Promise.all([
     getDailyBars(entry.ticker, from, to),
@@ -286,6 +305,10 @@ async function scoreTicker(
   ]);
 
   if (bars.length < 200) return null;
+
+  if (degraded && (!insider || !political || !contracts)) {
+    degraded.catalystInputNullTickers += 1;
+  }
 
   const latestBar = bars[bars.length - 1];
   const pe = fund?.ttmEps && fund.ttmEps > 0 ? latestBar.c / fund.ttmEps : undefined;

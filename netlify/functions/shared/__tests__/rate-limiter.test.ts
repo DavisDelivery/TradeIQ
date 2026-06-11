@@ -3,11 +3,12 @@
 // Hermetic: no real timers, no real fetch. We drive a fake clock + fake
 // sleep so the suite runs instantly regardless of the configured rate.
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
   createTokenBucket,
   fetchWithRateLimit,
   getFinnhubBucket,
+  resolveFinnhubRpm,
   _resetFinnhubBucketForTests,
 } from '../rate-limiter';
 
@@ -235,5 +236,58 @@ describe('getFinnhubBucket', () => {
     // Default is 55/min — capacity at least 1 and reasonable.
     expect(b.capacity()).toBeGreaterThanOrEqual(1);
     expect(getFinnhubBucket()).toBe(b);
+  });
+});
+
+// Wave 4B (code-review-2026-06 infra minor 8): a malformed FINNHUB_RPM
+// used to produce `Number('garbage') = NaN`, which silently disabled
+// pacing (every NaN comparison is false, so acquire() never throttled).
+describe('resolveFinnhubRpm — env validation (Wave 4B)', () => {
+  const ORIGINAL = process.env.FINNHUB_RPM;
+
+  afterEach(() => {
+    if (ORIGINAL === undefined) delete process.env.FINNHUB_RPM;
+    else process.env.FINNHUB_RPM = ORIGINAL;
+    _resetFinnhubBucketForTests();
+  });
+
+  it('falls back to the default (55) when FINNHUB_RPM is not a number', () => {
+    process.env.FINNHUB_RPM = 'not-a-number';
+    expect(resolveFinnhubRpm()).toBe(55);
+    _resetFinnhubBucketForTests();
+    // The bucket must have a real, finite capacity — NaN here meant
+    // pacing was a no-op.
+    expect(getFinnhubBucket().capacity()).toBe(55);
+  });
+
+  it('falls back to the default when FINNHUB_RPM is zero or negative', () => {
+    process.env.FINNHUB_RPM = '0';
+    expect(resolveFinnhubRpm()).toBe(55);
+    process.env.FINNHUB_RPM = '-10';
+    expect(resolveFinnhubRpm()).toBe(55);
+  });
+
+  it('uses a valid FINNHUB_RPM override', () => {
+    process.env.FINNHUB_RPM = '120';
+    expect(resolveFinnhubRpm()).toBe(120);
+    _resetFinnhubBucketForTests();
+    expect(getFinnhubBucket().capacity()).toBe(120);
+  });
+
+  it('uses the default when FINNHUB_RPM is unset', () => {
+    delete process.env.FINNHUB_RPM;
+    expect(resolveFinnhubRpm()).toBe(55);
+  });
+
+  it('warns once (not per call) on a malformed value', () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    process.env.FINNHUB_RPM = 'garbage';
+    resolveFinnhubRpm();
+    resolveFinnhubRpm();
+    const rpmWarnings = warnSpy.mock.calls.filter((c) =>
+      String(c[0]).includes('FINNHUB_RPM'),
+    );
+    expect(rpmWarnings.length).toBeLessThanOrEqual(1);
+    warnSpy.mockRestore();
   });
 });

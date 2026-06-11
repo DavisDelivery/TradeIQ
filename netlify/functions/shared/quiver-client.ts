@@ -11,17 +11,32 @@ function quiverKey(): string {
   return k;
 }
 
-const cache = new Map<string, { data: any; at: number }>();
+const cache = new Map<string, { data: any; ok: boolean; at: number }>();
 const DEFAULT_TTL_MS = 10 * 60 * 1000;
 
-export async function quiverGet<T = any>(
+/**
+ * Status envelope for Quiver fetches (code-review-2026-06 M8).
+ *
+ * `ok` distinguishes a VERIFIED response (HTTP 200 with parseable JSON —
+ * including a genuinely-empty array) from a TRANSPORT failure (fetch
+ * throw, non-OK status incl. 403 subscription gates and 429 exhaustion,
+ * non-JSON body, malformed JSON). Providers must treat ok=false as
+ * "data unavailable" (return null → analyst no-data rescale), never as
+ * "verified no activity".
+ */
+export interface QuiverResult<T> {
+  data: T | null;
+  ok: boolean;
+}
+
+export async function quiverGetWithStatus<T = any>(
   path: string,
   opts: { ttlMs?: number } = {},
-): Promise<T | null> {
+): Promise<QuiverResult<T>> {
   const url = `${QUIVER_BASE}${path}`;
   const ttl = opts.ttlMs ?? DEFAULT_TTL_MS;
   const hit = cache.get(url);
-  if (hit && Date.now() - hit.at < ttl) return hit.data as T;
+  if (hit && Date.now() - hit.at < ttl) return { data: hit.data as T, ok: hit.ok };
   try {
     const res = await fetch(url, {
       headers: { Accept: 'application/json', Authorization: `Token ${quiverKey()}` },
@@ -40,36 +55,50 @@ export async function quiverGet<T = any>(
       } else if (res.status === 429) {
         console.warn(`[quiver] 429 rate-limited on ${path}`);
       }
-      cache.set(url, { data: null, at: Date.now() }); return null;
+      cache.set(url, { data: null, ok: false, at: Date.now() }); return { data: null, ok: false };
     }
     const ctype = res.headers.get('content-type') ?? '';
     if (!ctype.toLowerCase().includes('json')) {
-      cache.set(url, { data: null, at: Date.now() }); return null;
+      cache.set(url, { data: null, ok: false, at: Date.now() }); return { data: null, ok: false };
     }
     const text = await res.text();
     if (!text || text.trim().startsWith('<')) {
-      cache.set(url, { data: null, at: Date.now() }); return null;
+      cache.set(url, { data: null, ok: false, at: Date.now() }); return { data: null, ok: false };
     }
     let data: T;
     try { data = JSON.parse(text) as T; }
-    catch { cache.set(url, { data: null, at: Date.now() }); return null; }
-    cache.set(url, { data, at: Date.now() });
-    return data;
+    catch { cache.set(url, { data: null, ok: false, at: Date.now() }); return { data: null, ok: false }; }
+    cache.set(url, { data, ok: true, at: Date.now() });
+    return { data, ok: true };
   } catch {
-    cache.set(url, { data: null, at: Date.now() });
-    return null;
+    cache.set(url, { data: null, ok: false, at: Date.now() });
+    return { data: null, ok: false };
   }
 }
 
-export async function quiverGetTicker<T = any>(
+export async function quiverGet<T = any>(
+  path: string,
+  opts: { ttlMs?: number } = {},
+): Promise<T | null> {
+  return (await quiverGetWithStatus<T>(path, opts)).data;
+}
+
+/**
+ * Status-aware sibling of `quiverGetTicker` (code-review-2026-06 M8).
+ * `ok: true` + empty rows means VERIFIED-empty (HTTP 200, no records);
+ * `ok: false` means the fetch itself failed and the rows are missing,
+ * not absent.
+ */
+export async function quiverGetTickerWithStatus<T = any>(
   endpoint: string,
   ticker: string,
   opts: { ttlMs?: number; schema?: ZodSchema<T[]> } = {},
-): Promise<T[]> {
-  const data = await quiverGet<T[] | { data?: T[]; records?: T[] }>(
+): Promise<{ rows: T[]; ok: boolean }> {
+  const { data, ok } = await quiverGetWithStatus<T[] | { data?: T[]; records?: T[] }>(
     `/historical/${endpoint}/${encodeURIComponent(ticker)}`,
     opts,
   );
+  if (!ok) return { rows: [], ok: false };
   let rows: T[] = [];
   if (Array.isArray(data)) rows = data;
   else if (data && typeof data === 'object') {
@@ -77,7 +106,7 @@ export async function quiverGetTicker<T = any>(
     if (Array.isArray(obj.data)) rows = obj.data;
     else if (Array.isArray(obj.records)) rows = obj.records;
   }
-  if (rows.length === 0) return [];
+  if (rows.length === 0) return { rows: [], ok: true };
 
   // Optional schema validation. Only applied when caller supplies one.
   // We validate the array as a whole (so schema_mismatch is logged once
@@ -87,14 +116,30 @@ export async function quiverGetTicker<T = any>(
   // already normalize via q()/qn()/qdate(). Schemas exist here as drift
   // sensors, not gates.
   if (opts.schema) {
-    return parseOrFallback(
-      opts.schema,
-      rows,
-      { provider: 'quiver', endpoint, ticker },
-      rows,
-    );
+    return {
+      rows: parseOrFallback(
+        opts.schema,
+        rows,
+        { provider: 'quiver', endpoint, ticker },
+        rows,
+      ),
+      ok: true,
+    };
   }
-  return rows;
+  return { rows, ok: true };
+}
+
+/**
+ * Legacy rows-only variant — transport failures collapse into `[]`.
+ * Callers that must distinguish "verified empty" from "fetch failed"
+ * (the M8 provider-discipline contract) use quiverGetTickerWithStatus.
+ */
+export async function quiverGetTicker<T = any>(
+  endpoint: string,
+  ticker: string,
+  opts: { ttlMs?: number; schema?: ZodSchema<T[]> } = {},
+): Promise<T[]> {
+  return (await quiverGetTickerWithStatus<T>(endpoint, ticker, opts)).rows;
 }
 
 export function q(row: any, ...names: string[]): any {

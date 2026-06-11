@@ -16,7 +16,7 @@
 // unreachable. We compensate by leaning more weight onto the buyer-count
 // and net-dollars signals which Finnhub does carry cleanly.
 
-import { getFinnhubInsiderTransactions, type FinnhubInsiderTx } from './data-provider';
+import { getFinnhubInsiderTransactionsWithStatus, type FinnhubInsiderTx } from './data-provider';
 import { lookupInsiderRole } from './edgar-roles';
 
 export interface InsiderTransaction {
@@ -49,13 +49,20 @@ export interface InsiderActivity {
  * to "now" by default; when `asOfDate` is supplied it anchors to that
  * date and only Form 4 filings public on or before are considered.
  *
+ * Failure discipline (code-review-2026-06 M8): TRANSPORT failures
+ * (rate-limit exhaustion, non-OK status, network throw) return `null` so
+ * consumers take their no-data path (analyst-runner `_noData` rescale,
+ * scan-catalyst skip). The `empty` activity object is reserved for
+ * VERIFIED-empty responses — HTTP 200 with zero transactions. A Finnhub
+ * outage must never score as "no insider activity, confidence 0.1".
+ *
  * PIT-cacheable: keyed by (ticker, lookbackDays, asOfDate).
  */
 export async function getInsiderActivity(
   ticker: string,
   lookbackDays = 90,
   opts: { asOfDate?: string } = {},
-): Promise<InsiderActivity> {
+): Promise<InsiderActivity | null> {
   const empty: InsiderActivity = {
     ticker, lookbackDays,
     totalBuys: 0, totalSells: 0, netDollars: 0,
@@ -67,9 +74,13 @@ export async function getInsiderActivity(
   try {
     // Pull lookback + 365d so firstBuyInAYear has reference data.
     const fetchDays = lookbackDays + 365;
-    const raw = await getFinnhubInsiderTransactions(ticker, fetchDays, {
+    const status = await getFinnhubInsiderTransactionsWithStatus(ticker, fetchDays, {
       asOfDate: opts.asOfDate,
     });
+    // Transport failure — the data is MISSING, not absent. Surface null
+    // so the no-data machinery rescales instead of scoring a stub.
+    if (status.rateLimitExhausted || status.errorMessage) return null;
+    const raw = status.data;
     if (raw.length === 0) return empty;
 
     const all = raw.map(normalizeFinnhubTx).filter(Boolean) as InsiderTransaction[];
@@ -154,7 +165,11 @@ export async function getInsiderActivity(
       transactions: buys,
       fetchedAt: new Date().toISOString(),
     };
-  } catch { return empty; }
+  } catch {
+    // Unexpected throw (provider bug, parse error) — same discipline as a
+    // transport failure: null, never a fake verified-empty.
+    return null;
+  }
 }
 
 function normalizeFinnhubTx(raw: FinnhubInsiderTx): InsiderTransaction | null {
