@@ -326,7 +326,11 @@ function pickColumnsForBoard(board, results) {
         { key: 'score', label: 'Score', format: (r) => fmtInt(r?.score) },
         { key: 'conviction', label: 'Conviction', format: (r) => r?.conviction ?? '—' },
         { key: 'layers', label: 'Layers', format: (r) => {
-          const ls = r?.layerResults ?? r?.layers ?? [];
+          // Prophet snapshot rows store `layers` as an object keyed by
+          // layer name (prophet-layers.ts ProphetScore); legacy rows may
+          // carry a `layerResults` array. Normalize both to an array.
+          const raw = r?.layerResults ?? r?.layers ?? [];
+          const ls = Array.isArray(raw) ? raw : Object.values(raw ?? {});
           const passed = ls.filter((l) => l?.pass).length;
           return ls.length ? `${passed}/${ls.length}` : '—';
         } },
@@ -399,5 +403,5 @@ function pickColumnsForBoard(board, results) {
   }
 }
 
-export { HistoryView };
+export { HistoryView, pickColumnsForBoard };
 export default HistoryView;

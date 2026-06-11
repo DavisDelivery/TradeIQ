@@ -68,6 +68,13 @@ benchmark window when `endDate` ≈ today (`engine.ts:327-338`). Fix: never
 cache a window whose `to` exceeds the fetch date.
 
 **[M2] scan-resume stuck-run recovery query is a production no-op**
+
+> **RETRACTED (Wave-1 verification, 2026-06-11).** Byte-level inspection of
+> `finalize.ts:147` shows `.startAt(runIdPrefix + '\uf8ff')` — the U+F8FF
+> sentinel IS present (it is invisible in rendered output, which is how it
+> was misread as an empty string). The query is the canonical descending
+> prefix scan and is correct. The finalize.test.ts mock's `startsWith`
+> semantics match the correct production behavior. No fix needed.
 `shared/scan-resume/finalize.ts:144-150`:
 `.orderBy('__name__','desc').startAt(runIdPrefix).endAt(runIdPrefix)`. In
 DESCENDING order, `startAt(prefix)` begins at IDs ≤ prefix, but every real
