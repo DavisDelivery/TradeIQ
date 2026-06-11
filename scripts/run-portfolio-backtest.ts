@@ -25,6 +25,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import {
+  makeTradingDayWindow,
   runPortfolioBacktest,
   type BacktestWindow,
   type PriceSource,
@@ -249,24 +250,10 @@ function demoSignal(window: BacktestWindow): RankingSignal {
 }
 
 function makeWindow(label: string, start: string, end: string): BacktestWindow {
-  // Weekly rebalance cadence, daily marks. Real run resolves these to
-  // trading-calendar dates; the skeleton here is calendar-day stepped
-  // (caller injects a trading-day filter via PriceSource null-returns
-  // for non-trading days, which the harness gracefully handles).
-  const startMs = Date.parse(`${start}T00:00:00Z`);
-  const endMs = Date.parse(`${end}T00:00:00Z`);
-  const marks: string[] = [];
-  for (let t = startMs; t <= endMs; t += 86_400_000) {
-    const d = new Date(t).toISOString().slice(0, 10);
-    marks.push(d);
-  }
-  const rebalances: string[] = [];
-  // First trading day each week from start; pick mondays as proxy.
-  for (let t = startMs; t <= endMs; t += 7 * 86_400_000) {
-    const d = new Date(t).toISOString().slice(0, 10);
-    rebalances.push(d);
-  }
-  return { label, start, end, rebalanceDates: rebalances, markDates: marks };
+  // Wave 3B (track-3 M4) — trading-day marks, every-5th-trading-day
+  // rebalances, shared with the production worker so the CLI and the
+  // background function can never diverge on calendar semantics.
+  return makeTradingDayWindow(label, start, end);
 }
 
 async function runDemo(win: BacktestWindow, config: PortfolioConfig): Promise<void> {
@@ -316,11 +303,11 @@ async function runDemo(win: BacktestWindow, config: PortfolioConfig): Promise<vo
     `| SPY Sharpe (annualized)      | ${result.spySharpe} |`,
     `| Portfolio max DD (%)         | ${result.maxDDPct} |`,
     `| SPY max DD (%)               | ${result.spyMaxDDPct} |`,
-    `| Longest underwater days      | ${result.longestUnderwaterDays} |`,
+    `| Longest underwater trading days | ${result.longestUnderwaterDays} |`,
     `| Rebalances                   | ${result.rebalanceCount} |`,
     `| Swaps recorded               | ${result.swapCount} |`,
     `| Avg hold (days)              | ${result.avgHoldDays} |`,
-    `| Annualized turnover (%)      | ${result.turnoverPct} |`,
+    `| Annualized turnover (%, (buys+sells)/2) | ${result.turnoverPct} |`,
     `| Cost drag (%)                | ${result.costDragPct} |`,
     ``,
     `## What this tells you`,

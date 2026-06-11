@@ -94,6 +94,13 @@ export interface RegularBacktestState {
    * the fix predate the field.
    */
   scoredOutsideUniverseTotal?: number;
+  /**
+   * Wave 3B (track-3 M3) — consecutive trading days with no bar, per
+   * held ticker. Drives forced liquidation; carried on state so a gap
+   * spanning a batch boundary still liquidates. Optional with `?? {}`
+   * defaulting on resume: cursors persisted before Wave 3B predate it.
+   */
+  missingBarStreaks?: Record<string, number>;
 }
 
 export interface ProcessBatchOptions {
@@ -166,6 +173,7 @@ export function initialRegularState(
     warningRowCount: 0,
     survivorshipWarned: false,
     scoredOutsideUniverseTotal: 0,
+    missingBarStreaks: {},
   };
 }
 
@@ -234,7 +242,10 @@ export async function processRegularBatch(
     tickerFailureSample: opts.state.tickerFailureSample.slice(),
     // Cursors persisted before the CR-2 fix lack the counter — default it.
     scoredOutsideUniverseTotal: opts.state.scoredOutsideUniverseTotal ?? 0,
+    // Wave 3B (M3) — clone; pre-Wave-3B cursors lack the field.
+    missingBarStreaks: { ...(opts.state.missingBarStreaks ?? {}) },
   };
+  const missingBarStreaks = state.missingBarStreaks!;
 
   // Per-batch outputs — flushed to subcollections by the worker after
   // the batch returns. Each is BATCH-LOCAL: the engine never reads them
@@ -417,13 +428,40 @@ export async function processRegularBatch(
       positionReturns.set(p.ticker, rets);
     }
 
+    // Wave 3B (M3) — forced-liquidation sweep; must mirror engine.ts
+    // exactly (the equivalence suite is the contract). Prune streaks to
+    // the current target, then track per-ticker missing-bar streaks
+    // through the segment; positions whose streak exceeds the gap are
+    // liquidated (warning surfaced, removed from the carried portfolio
+    // below so no phantom sell is booked at the next rebalance).
+    for (const k of Object.keys(missingBarStreaks)) {
+      if (!target.some((p) => p.ticker === k)) delete missingBarStreaks[k];
+    }
+    const forciblyLiquidated = new Set<string>();
+
     const dates = tradingDaysBetween(addDays(asOfDate, 1), nextAsOf);
     for (const date of dates) {
       let portReturn = 0;
       for (const p of target) {
+        if (forciblyLiquidated.has(p.ticker)) continue;
         const rets = positionReturns.get(p.ticker) ?? [];
-        const todayRet = rets.find((r) => r.date === date)?.ret ?? 0;
-        portReturn += p.weight * todayRet;
+        const today = rets.find((r) => r.date === date);
+        if (today) {
+          missingBarStreaks[p.ticker] = 0;
+          portReturn += p.weight * today.ret;
+        } else {
+          const streak = (missingBarStreaks[p.ticker] ?? 0) + 1;
+          missingBarStreaks[p.ticker] = streak;
+          if (streak > _engineInternals.FORCED_LIQUIDATION_GAP_TRADING_DAYS) {
+            forciblyLiquidated.add(p.ticker);
+            delete missingBarStreaks[p.ticker];
+            batchWarnings.push(
+              `${date}: ${p.ticker} has no daily bar for ${streak} consecutive trading days — ` +
+                `forced liquidation at last traded close (delisting/halt suspected; ` +
+                `see FORCED_LIQUIDATION_GAP_TRADING_DAYS)`,
+            );
+          }
+        }
       }
       state.nav = state.nav * (1 + portReturn);
       batchDailyEquity.push({ date, value: state.nav });
@@ -502,7 +540,12 @@ export async function processRegularBatch(
       if (row !== undefined) batchMlRows.push(row);
     }
 
-    state.portfolio = target;
+    // Wave 3B (M3) — carry only positions that were not force-
+    // liquidated during the segment (mirror of engine.ts).
+    state.portfolio =
+      forciblyLiquidated.size > 0
+        ? target.filter((p) => !forciblyLiquidated.has(p.ticker))
+        : target;
     state.nextRebalanceIdx = i + 1;
     rebalancesProcessed++;
 

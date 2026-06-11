@@ -24,9 +24,10 @@ import { Timestamp } from 'firebase-admin/firestore';
 import { getDailyBars } from './shared/data-provider';
 import { getAdminDb } from './shared/firebase-admin';
 import { logger } from './shared/logger';
-import type {
-  BacktestWindow,
-  PriceSource,
+import {
+  makeTradingDayWindow,
+  type BacktestWindow,
+  type PriceSource,
 } from './shared/prophet-portfolio/backtest-harness';
 import {
   finalizePortfolioBacktest,
@@ -103,21 +104,19 @@ const RULE_CONFIG_BASE: Omit<PortfolioConfig, 'startDate'> = {
   version: 'v2',
 };
 
+// Wave 3B (track-3 M4) — markDates come from the NYSE trading calendar
+// and rebalances fall every 5th trading day (≈ weekly), both via
+// makeTradingDayWindow. Pre-fix this marked every CALENDAR day (so the
+// √252 Sharpe annualization in the harness ran over a ~365-obs/yr
+// series, understating Sharpe ≈17%, with ~30% structural-zero "daily
+// returns") and rebalanced every 7 calendar days. See the helper's
+// doc-comment for the trading-calendar vs us-market-holidays divergence
+// note.
 function makeWindow(label: string, start: string, end: string): BacktestWindow {
-  const startMs = Date.parse(`${start}T00:00:00Z`);
-  const endMs = Date.parse(`${end}T00:00:00Z`);
-  const marks: string[] = [];
-  for (let t = startMs; t <= endMs; t += 86_400_000) {
-    marks.push(new Date(t).toISOString().slice(0, 10));
-  }
-  const rebalances: string[] = [];
-  for (let t = startMs; t <= endMs; t += 7 * 86_400_000) {
-    rebalances.push(new Date(t).toISOString().slice(0, 10));
-  }
-  return { label, start, end, rebalanceDates: rebalances, markDates: marks };
+  return makeTradingDayWindow(label, start, end);
 }
 
-function windowSpec(label: string): BacktestWindow {
+export function windowSpec(label: string): BacktestWindow {
   switch (label) {
     case 'full':
       return makeWindow('full', '2018-01-01', '2026-01-01');

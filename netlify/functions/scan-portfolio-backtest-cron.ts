@@ -29,7 +29,10 @@ import type { Handler } from '@netlify/functions';
 import { schedule } from '@netlify/functions';
 import { getAdminDb } from './shared/firebase-admin';
 import { logger } from './shared/logger';
-import { recoverStuckBacktestRuns } from './shared/backtest-resume/recover';
+import {
+  recoverStuckBacktestRuns,
+  STALE_RUN_THRESHOLD_MS,
+} from './shared/backtest-resume/recover';
 
 const COLLECTION = 'portfolioBacktests';
 
@@ -80,9 +83,42 @@ function pickLegacyWindow(now: Date): string {
   return LEGACY_CYCLE[dayOfYear % LEGACY_CYCLE.length];
 }
 
+/** Millis from a Firestore Timestamp, an ISO string, or undefined. The
+ *  run docs carry `updatedAt` both as Timestamp (status writes) and as
+ *  an ISO string (writeCursor) — accept both. */
+function toMillis(v: unknown): number {
+  if (v == null) return NaN;
+  if (typeof v === 'string') return Date.parse(v);
+  const ts = v as { toMillis?: () => number; _seconds?: number };
+  if (typeof ts.toMillis === 'function') return ts.toMillis();
+  if (typeof ts._seconds === 'number') return ts._seconds * 1000;
+  return NaN;
+}
+
+export interface WindowLatestDoc {
+  runId: string;
+  status: string;
+  version: string | null;
+  /** Wave 3B (M6) — true when the doc is a FRESH pending/running run
+   *  (latest activity within the stale threshold). */
+  inFlight: boolean;
+}
+
 /**
  * Read each window's latest doc and return the first PRIORITY-ordered
- * window whose latest is NOT `done` at the active version.
+ * window whose latest is NOT `done` at the active version AND not a
+ * healthy in-flight run.
+ *
+ * Wave 3B (track-3 M6) — pre-fix this re-fired any window whose latest
+ * doc wasn't `done`, INCLUDING healthily `running` multi-batch runs
+ * (each cron tick stacked a duplicate concurrent run: Polygon budget
+ * burn, `latest` flipping to the new pending doc). Now a fresh
+ * pending/running doc (latest activity — startedAt / updatedAt /
+ * cursor.lastInvocationStartedAt — younger than the recover sweep's
+ * STALE_RUN_THRESHOLD_MS) counts as in-progress and the window is
+ * skipped; only stale ones are eligible for re-fire (the recovery
+ * sweep that runs before this pick has already resumed-or-failed
+ * them).
  *
  * Exported for unit testing — accepts an injected db so the test can
  * pass a stub.
@@ -90,7 +126,12 @@ function pickLegacyWindow(now: Date): string {
 export async function pickNextUndoneWindow(
   db: FirebaseFirestore.Firestore,
   activeVersion: string,
-): Promise<{ window: string; reason: 'undone' | 'all-done-revalidate'; perWindow: Record<string, { runId: string; status: string; version: string | null } | null> }> {
+  now: number = Date.now(),
+): Promise<{
+  window: string | null;
+  reason: 'undone' | 'all-done-revalidate' | 'in-flight-skip';
+  perWindow: Record<string, WindowLatestDoc | null>;
+}> {
   // Pull the most recent batch and dedupe per window (latest by startedAt).
   // 200 is generous — even with 13 windows × 5 retries the dedupe finds
   // every latest in one query.
@@ -100,27 +141,61 @@ export async function pickNextUndoneWindow(
     .limit(200)
     .get();
 
-  const latest: Record<string, { runId: string; status: string; version: string | null }> = {};
+  const latest: Record<string, WindowLatestDoc> = {};
   for (const doc of snap.docs) {
-    const data = doc.data() as { window?: string; status?: string; version?: string };
+    const data = doc.data() as {
+      window?: string;
+      status?: string;
+      version?: string;
+      startedAt?: string;
+      updatedAt?: unknown;
+      cursor?: { lastInvocationStartedAt?: string } | null;
+    };
     if (!data.window) continue;
     if (latest[data.window]) continue; // already captured the most recent
+    const status = typeof data.status === 'string' ? data.status : 'unknown';
+    const lastActivityMs = Math.max(
+      ...[
+        toMillis(data.startedAt),
+        toMillis(data.updatedAt),
+        toMillis(data.cursor?.lastInvocationStartedAt),
+      ].filter((m) => Number.isFinite(m)),
+      0,
+    );
+    const inFlight =
+      (status === 'pending' || status === 'running') &&
+      lastActivityMs > 0 &&
+      now - lastActivityMs < STALE_RUN_THRESHOLD_MS;
     latest[data.window] = {
       runId: doc.id,
-      status: typeof data.status === 'string' ? data.status : 'unknown',
+      status,
       version: typeof data.version === 'string' ? data.version : null,
+      inFlight,
     };
   }
 
-  const perWindow: Record<string, { runId: string; status: string; version: string | null } | null> = {};
+  const perWindow: Record<string, WindowLatestDoc | null> = {};
   for (const w of PRIORITY) perWindow[w] = latest[w] ?? null;
 
-  // First undone: latest is null, or status !== 'done', or version !== active.
+  // First undone: latest is null, or status !== 'done', or version !==
+  // active — but never a window with a healthy in-flight run.
+  let sawInFlight = false;
   for (const w of PRIORITY) {
     const l = latest[w];
+    if (l?.inFlight) {
+      sawInFlight = true;
+      continue;
+    }
     if (!l || l.status !== 'done' || l.version !== activeVersion) {
       return { window: w, reason: 'undone', perWindow };
     }
+  }
+
+  // Every window is either done at the active version or in flight. If
+  // anything is still running, do NOT dispatch a revalidate alongside
+  // it — skip this tick entirely.
+  if (sawInFlight) {
+    return { window: null, reason: 'in-flight-skip', perWindow };
   }
 
   // Everything is done at the active version. Re-validate the oldest
@@ -151,8 +226,8 @@ export async function runCron(opts: {
   const fetchImpl = opts.fetchImpl ?? fetch;
   const url = `${origin}/.netlify/functions/portfolio-backtest-trigger`;
 
-  let chosenWindow: string;
-  let strategy: 'next-undone' | 'all-done-revalidate' | 'legacy-fallback';
+  let chosenWindow: string | null;
+  let strategy: 'next-undone' | 'all-done-revalidate' | 'in-flight-skip' | 'legacy-fallback';
   let perWindow: Record<string, unknown> | undefined;
   const db = opts.db ?? getAdminDb();
 
@@ -192,15 +267,38 @@ export async function runCron(opts: {
   }
 
   try {
-    const result = await pickNextUndoneWindow(db, activeVersion);
+    const result = await pickNextUndoneWindow(db, activeVersion, now.getTime());
     chosenWindow = result.window;
-    strategy = result.reason === 'undone' ? 'next-undone' : 'all-done-revalidate';
+    strategy =
+      result.reason === 'undone'
+        ? 'next-undone'
+        : result.reason === 'in-flight-skip'
+          ? 'in-flight-skip'
+          : 'all-done-revalidate';
     perWindow = result.perWindow as Record<string, unknown>;
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     log.warn('strategy_query_failed_using_legacy', { err: msg });
     chosenWindow = (opts.legacyFallback ?? pickLegacyWindow)(now);
     strategy = 'legacy-fallback';
+  }
+
+  // Wave 3B (track-3 M6) — nothing undone and at least one healthy
+  // in-flight run: skip this tick entirely rather than stacking a
+  // duplicate/revalidate run alongside it.
+  if (chosenWindow == null) {
+    log.info('cron_skipped_in_flight', { strategy, activeVersion });
+    return {
+      statusCode: 200,
+      body: JSON.stringify({
+        ok: true,
+        window: null,
+        skipped: true,
+        strategy,
+        activeVersion,
+        perWindow,
+      }),
+    };
   }
 
   log.info('cron_selected_window', { window: chosenWindow, strategy, activeVersion });

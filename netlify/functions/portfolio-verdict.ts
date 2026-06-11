@@ -309,10 +309,10 @@ function buildMarkdown(audit: AuditRow | null, results: Map<string, BacktestSumm
     lines.push(``);
     lines.push(`- Total swaps executed: ${full.swapCount ?? '—'}`);
     lines.push(`- Average hold days per position: ${fmt(full.avgHoldDays)}`);
-    lines.push(`- Annualized turnover: ${fmt(full.turnoverPct, '%')}`);
+    lines.push(`- Annualized turnover ((buys+sells)/2): ${fmt(full.turnoverPct, '%')}`);
     lines.push(`- Total cost drag (slippage): ${fmt(full.costDragPct, '%')}`);
     lines.push(`- Rebalances: ${full.rebalanceCount ?? '—'}`);
-    lines.push(`- Longest underwater stretch (days): ${full.longestUnderwaterDays ?? '—'}`);
+    lines.push(`- Longest underwater stretch (trading days): ${full.longestUnderwaterDays ?? '—'}`);
     lines.push(``);
   }
 

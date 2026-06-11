@@ -44,6 +44,8 @@ interface FakeDoc {
     status?: string;
     version?: string;
     startedAt?: string;
+    updatedAt?: unknown;
+    cursor?: { lastInvocationStartedAt?: string } | null;
   };
 }
 
@@ -60,12 +62,18 @@ function makeStubDb(docs: FakeDoc[]) {
   return { collection } as unknown as Parameters<typeof pickNextUndoneWindow>[0];
 }
 
-function fakeDoc(window: string, status: string, version: string | null, startedAt: string): FakeDoc {
-  const dataObj: Record<string, string> = { window, status, startedAt };
+function fakeDoc(
+  window: string,
+  status: string,
+  version: string | null,
+  startedAt: string,
+  extra: { updatedAt?: unknown; cursor?: { lastInvocationStartedAt?: string } | null } = {},
+): FakeDoc {
+  const dataObj: Record<string, unknown> = { window, status, startedAt, ...extra };
   if (version !== null) dataObj.version = version;
   return {
     id: `pb-${window}-${startedAt.replace(/[-:T.Z]/g, '').slice(0, 12)}-test01`,
-    data: () => dataObj,
+    data: () => dataObj as ReturnType<FakeDoc['data']>,
   };
 }
 
@@ -143,6 +151,86 @@ describe('pickNextUndoneWindow', () => {
     expect(window).toBe('rolling-2018'); // first in priority that's also undone
   });
 
+  // -------------------------------------------------------------------------
+  // Wave 3B (track-3 M6) — single-flight: a FRESH pending/running doc
+  // means the window is in progress; the cron must skip it instead of
+  // stacking a duplicate concurrent run. Only STALE in-flight docs
+  // (recovery sweep territory) stay eligible for re-fire.
+  // -------------------------------------------------------------------------
+
+  const NOW = Date.parse('2026-06-11T22:00:00Z');
+  const FRESH = new Date(NOW - 5 * 60_000).toISOString(); // 5 min ago
+  const STALE = new Date(NOW - 4 * 3600_000).toISOString(); // 4 h ago
+
+  it('skips a window whose latest doc is a FRESH running run (healthy multi-batch window)', async () => {
+    const docs = [
+      fakeDoc('rolling-2018', 'running', 'v2', STALE, {
+        cursor: { lastInvocationStartedAt: FRESH },
+      }),
+    ];
+    const db = makeStubDb(docs);
+    const { window, reason, perWindow } = await pickNextUndoneWindow(db, 'v2', NOW);
+    // rolling-2018 is in flight → the pick moves on to rolling-2019.
+    expect(window).toBe('rolling-2019');
+    expect(reason).toBe('undone');
+    expect(perWindow['rolling-2018']).toMatchObject({ status: 'running', inFlight: true });
+  });
+
+  it('skips a window whose latest doc is a FRESH pending run', async () => {
+    const docs = [fakeDoc('rolling-2018', 'pending', null, FRESH)];
+    const db = makeStubDb(docs);
+    const { window, perWindow } = await pickNextUndoneWindow(db, 'v2', NOW);
+    expect(window).toBe('rolling-2019');
+    expect(perWindow['rolling-2018']).toMatchObject({ status: 'pending', inFlight: true });
+  });
+
+  it('still re-fires a window whose latest running doc is STALE (no fresh activity)', async () => {
+    const docs = [
+      fakeDoc('rolling-2018', 'running', 'v2', STALE, {
+        cursor: { lastInvocationStartedAt: STALE },
+        updatedAt: STALE,
+      }),
+    ];
+    const db = makeStubDb(docs);
+    const { window, reason, perWindow } = await pickNextUndoneWindow(db, 'v2', NOW);
+    expect(window).toBe('rolling-2018'); // stale → eligible again
+    expect(reason).toBe('undone');
+    expect(perWindow['rolling-2018']).toMatchObject({ inFlight: false });
+  });
+
+  it('reads freshness from the doc updatedAt Timestamp when there is no cursor', async () => {
+    const docs = [
+      fakeDoc('rolling-2018', 'running', 'v2', STALE, {
+        // Firestore Timestamp shape (status writes use Timestamp.now()).
+        updatedAt: { toMillis: () => NOW - 60_000 },
+      }),
+    ];
+    const db = makeStubDb(docs);
+    const { window } = await pickNextUndoneWindow(db, 'v2', NOW);
+    expect(window).toBe('rolling-2019'); // fresh via updatedAt → skipped
+  });
+
+  it('returns in-flight-skip (window null) when everything is done except a fresh running run', async () => {
+    const docs: FakeDoc[] = [];
+    let day = 0;
+    for (const w of PRIORITY) {
+      day++;
+      if (w === 'full') {
+        docs.push(
+          fakeDoc(w, 'running', 'v2', `2026-04-${String(day).padStart(2, '0')}T22:00:00Z`, {
+            cursor: { lastInvocationStartedAt: FRESH },
+          }),
+        );
+      } else {
+        docs.push(fakeDoc(w, 'done', 'v2', `2026-04-${String(day).padStart(2, '0')}T22:00:00Z`));
+      }
+    }
+    const db = makeStubDb(docs);
+    const { window, reason } = await pickNextUndoneWindow(db, 'v2', NOW);
+    expect(window).toBeNull();
+    expect(reason).toBe('in-flight-skip');
+  });
+
   it('returns all-done-revalidate only when every priority window is done at active version', async () => {
     const docs: FakeDoc[] = [];
     let day = 0;
@@ -187,6 +275,42 @@ describe('runCron', () => {
     expect(init.method).toBe('POST');
     const payload = JSON.parse(init.body as string);
     expect(payload.window).toBe('rolling-2019');
+  });
+
+  // Wave 3B (track-3 M6) — when the only non-done window is healthily
+  // in flight, the cron must NOT dispatch anything this tick.
+  it('skips dispatch entirely when all windows are done or freshly in flight', async () => {
+    const NOW = Date.parse('2026-06-11T22:00:00Z');
+    const docs: FakeDoc[] = [];
+    let day = 0;
+    for (const w of PRIORITY) {
+      day++;
+      if (w === 'rolling-2025') {
+        docs.push(
+          fakeDoc(w, 'running', 'v2', `2026-04-${String(day).padStart(2, '0')}T22:00:00Z`, {
+            cursor: { lastInvocationStartedAt: new Date(NOW - 5 * 60_000).toISOString() },
+          }),
+        );
+      } else {
+        docs.push(fakeDoc(w, 'done', 'v2', `2026-04-${String(day).padStart(2, '0')}T22:00:00Z`));
+      }
+    }
+    const db = makeStubDb(docs);
+    const fetchSpy = vi.fn(async () => new Response('{"ok":true}', { status: 202 }));
+    const res = await runCron({
+      db,
+      fetchImpl: fetchSpy as unknown as typeof fetch,
+      origin: 'https://example.test',
+      activeVersion: 'v2',
+      now: new Date(NOW),
+    });
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.body);
+    expect(body.skipped).toBe(true);
+    expect(body.window).toBeNull();
+    expect(body.strategy).toBe('in-flight-skip');
+    // No trigger POST fired.
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 
   it('falls back to the legacy dayOfYear%13 picker when Firestore throws', async () => {
