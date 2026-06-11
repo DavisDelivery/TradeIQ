@@ -20,6 +20,7 @@ import { buildWilliamsComponents, type ScoreComponent } from './shared/score-bre
 import { generateWilliamsThesis } from './shared/thesis-generation';
 import { williamsRiskCallouts } from './shared/risk-callouts';
 import { findEntry } from './shared/universe';
+import { sideFromScore, type StyleSide } from './shared/style-types';
 import { createLogger } from './shared/logger';
 import { MODEL_VERSION } from './shared/model-version';
 
@@ -32,7 +33,7 @@ interface WilliamsRationaleResponse {
   sector?: string;
   score?: number;
   direction?: 'long' | 'short' | 'neutral';
-  side?: 'long' | 'short';
+  side?: StyleSide;
   signal?: ReturnType<typeof deriveWilliamsSignal>;
   thesis?: string;
   components?: ScoreComponent[];
@@ -82,7 +83,7 @@ export const handler: Handler = async (event) => {
       sector,
       score: +s.score.toFixed(1),
       direction,
-      side: s.score >= 0 ? 'long' : 'short',
+      side: sideFromScore(s.score),
       signal,
       thesis,
       components,

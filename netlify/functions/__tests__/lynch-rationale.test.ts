@@ -29,6 +29,9 @@ function strongFundamentals() {
     ticker: 'AAPL',
     ttmEps: 6.0,
     epsGrowthYoY: 0.25,
+    // Wave 4C (review M5): the endpoint now feeds runLynch the TTM-on-TTM
+    // growth rate, not the single-quarter YoY rate.
+    epsGrowthTTM: 0.25,
     revenueGrowthYoY: 0.2,
     debtToEquity: 0.25,
     operatingMargin: 0.3,

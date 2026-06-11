@@ -9,6 +9,7 @@ import { runWilliams } from '../styles/williams';
 import { deriveWilliamsSignal, type WilliamsSignal } from '../styles/williams-signal';
 import { getDailyBars } from './data-provider';
 import { mapWithConcurrency } from './full-scan-iterator';
+import { sideFromScore, type StyleSide } from './style-types';
 import type { Logger } from './logger';
 
 export type WilliamsUniverseKey = IndexTag | 'all';
@@ -21,7 +22,8 @@ export interface WilliamsCandidate {
   confidence: number;
   rationale: string;
   signals: Record<string, any>;
-  side: 'long' | 'short';
+  /** 'neutral' = zero score (typically no scoreable data) — Wave 4C, review m6. */
+  side: StyleSide;
   /** Discrete trade signal (Phase 4m): BUY/SELL/HOLD + ATR-based levels. */
   signal: WilliamsSignal;
   /** Latest close at scan time, for reference. */
@@ -95,7 +97,7 @@ export async function runWilliamsScan(
         confidence: s.confidence,
         rationale: s.rationale,
         signals: s.signals,
-        side: s.score >= 0 ? 'long' : 'short',
+        side: sideFromScore(s.score),
         signal,
         price: bars.length > 0 ? bars[bars.length - 1].c : null,
       };

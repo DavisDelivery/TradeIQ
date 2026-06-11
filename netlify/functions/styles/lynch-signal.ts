@@ -26,6 +26,7 @@
 // + the underlying inputs to derive the discrete verdict and levels.
 
 import type { AnalystScore } from '../shared/style-types';
+import { LYNCH_GROWTH_MIN_PCT, LYNCH_GROWTH_MAX_PCT } from './lynch';
 
 export type LynchVerdict = 'BUY' | 'HOLD' | 'AVOID';
 
@@ -62,6 +63,10 @@ export interface LynchSignalInputs {
   /** From `runLynch.signals`. */
   peg?: number;
   peRatio?: number;
+  /** EPS growth in % — TTM-vs-prior-TTM since Wave 4C (review M5); the
+   *  key name is kept for snapshot/UI compatibility (TTM-on-TTM is still
+   *  a year-over-year rate). Clamped to [LYNCH_GROWTH_MIN_PCT,
+   *  LYNCH_GROWTH_MAX_PCT] before the fair-P/E band is derived. */
   epsGrowthYoYPct?: number;
   revGrowthYoYPct?: number;
   debtToEquity?: number;
@@ -154,6 +159,11 @@ export function deriveLynchSignal(input: LynchSignalInputs): LynchSignal {
   // So fair-value LOW  = ttmEps × growth%        (PEG = 1.0, "cheap")
   //    fair-value HIGH = ttmEps × growth% × 1.5  (PEG = 1.5, "fair upper")
   // We only emit a band when ttmEps > 0 and growth > 0.
+  //
+  // Wave 4C (review M5): growth is clamped to the sustainable Lynch range
+  // before deriving the fair P/E. The rule assumes a multi-year sustainable
+  // rate; un-clamped, a base-effect EPS rebound (+300% off a depressed
+  // comp) implied a "fair" P/E of 300-450 and a fantasy band.
   let fairValueLow: number | null = null;
   let fairValueHigh: number | null = null;
   if (
@@ -162,8 +172,12 @@ export function deriveLynchSignal(input: LynchSignalInputs): LynchSignal {
     epsGrowthYoYPct !== undefined &&
     epsGrowthYoYPct > 0
   ) {
-    const fairPeLow = epsGrowthYoYPct; // PEG = 1.0
-    const fairPeHigh = epsGrowthYoYPct * PEG_FAIR_UPPER; // PEG = 1.5
+    const growthPct = Math.min(
+      LYNCH_GROWTH_MAX_PCT,
+      Math.max(LYNCH_GROWTH_MIN_PCT, epsGrowthYoYPct),
+    );
+    const fairPeLow = growthPct; // PEG = 1.0
+    const fairPeHigh = growthPct * PEG_FAIR_UPPER; // PEG = 1.5
     fairValueLow = round(ttmEps * fairPeLow, 2);
     fairValueHigh = round(ttmEps * fairPeHigh, 2);
   }
