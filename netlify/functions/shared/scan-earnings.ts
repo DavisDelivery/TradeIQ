@@ -194,15 +194,29 @@ async function scoreEarningsForTicker(
   const chunked = chunksAnnVol(returns, 20).filter((v) => v > 0);
   const rv90Min = chunked.length ? Math.min(...chunked) : 0;
   const rv90Max = chunked.length ? Math.max(...chunked) : 0;
-  // IV proxy clamped 0-100.
-  const ivrRaw = rv90Max > rv90Min
+  // REALIZED-vol rank, NOT implied vol (M2): where the current 20d realized
+  // vol sits within the range of trailing 20d-chunk realized vols, clamped
+  // 0-100. No options data is involved, so recommendations are worded as
+  // "RV rank", never "IV". The proper upgrade is real IV from the Polygon
+  // options snapshot already used by institutional-flow/ — out of scope here.
+  const rvRankRaw = rv90Max > rv90Min
     ? ((rv20 - rv90Min) / (rv90Max - rv90Min)) * 100
     : 50;
-  const ivr = Math.max(0, Math.min(100, Math.round(ivrRaw)));
+  const rvRank = Math.max(0, Math.min(100, Math.round(rvRankRaw)));
 
-  // Expected move from realized vol scaled to T-day horizon
-  const horizonDays = Math.max(1, Math.abs(daysUntil) || 1);
-  const expectedMove = rv20 * 100 * Math.sqrt(horizonDays / 365);
+  // EVENT-WINDOW expected move (M2), directly comparable to avgPriorMove
+  // (a 2-trading-day T-1→T+1 reaction):
+  //   annVol() annualizes daily log-return vol with √252 (trading days),
+  //   so per-trading-day vol = rv20 / √252, and the 2-trading-day event
+  //   window scales by √2:
+  //     expectedMove = rv20 / √252 × √2 × 100   (in %)
+  // The old formula rv20 × 100 × √(daysUntil/365) (a) mixed √252
+  // trading-day annualization with calendar-day scaling, and (b) grew with
+  // days UNTIL the report — the waiting-period move, not the event move —
+  // so the movesBig/movesContained comparison flipped with event distance
+  // (far events skewed short_volatility, imminent ones long_volatility).
+  // The event-window form is invariant to daysUntil.
+  const expectedMove = (rv20 / Math.sqrt(252)) * Math.sqrt(2) * 100;
 
   // ---- Prior earnings reactions: T-1 → T+1 close-to-close move ----
   // Windows anchor on the ANNOUNCEMENT date (CR-3): `period` is the fiscal
@@ -260,6 +274,11 @@ async function scoreEarningsForTicker(
   let playType: EarningsPlayType = 'skip';
   let bias: EarningsSetup['bias'] = 'neutral';
   let strategy = 'Wait';
+  // Trade side for plays where playType alone doesn't encode it. 'reversal'
+  // covers BOTH gap-up-on-miss (short fade) and gap-down-on-beat (long
+  // fade); the playType taxonomy stays stable (frontend switches on it via
+  // PLAY_TYPE_LABELS/COLORS) and the side travels on `direction` (M3).
+  let direction: 'long' | 'short' | undefined;
 
   if (postPrint) {
     // lastMove is the latest print's announcement-anchored reaction; null
@@ -271,38 +290,48 @@ async function scoreEarningsForTicker(
         playType = 'pead_long';
         bias = 'buy_premium';
         strategy = 'PEAD Long (continuation)';
+        direction = 'long';
       } else if (surprise < -5 && lastMove < -3) {
         playType = 'pead_short';
         bias = 'buy_premium';
         strategy = 'PEAD Short (continuation)';
+        direction = 'short';
       } else if (Math.abs(lastMove) > 5 && volRatio > 1.5 && Math.sign(lastMove) !== Math.sign(surprise)) {
         playType = 'reversal';
         bias = 'buy_premium';
-        strategy = 'Earnings Reversal (gap-and-fade)';
+        // The gap direction decides the fade side: gap-UP on a miss fades
+        // SHORT, gap-DOWN on a beat fades LONG. The old code hardcoded the
+        // short side for both, inverting half the reversal candidates.
+        direction = lastMove > 0 ? 'short' : 'long';
+        strategy = direction === 'short'
+          ? 'Earnings Reversal (fade the gap-up, short side)'
+          : 'Earnings Reversal (fade the gap-down, long side)';
       }
     }
   } else {
-    const ivLow = ivr <= 35;
-    const ivRich = ivr >= 65;
+    const rvLow = rvRank <= 35;
+    const rvRich = rvRank >= 65;
     const movesBig = (avgPriorMove ?? 0) > expectedMove * 1.15;
     const movesContained = avgPriorMove !== null && avgPriorMove < expectedMove * 0.85;
 
-    if (ivLow && movesBig) {
+    if (rvLow && movesBig) {
       playType = 'long_volatility';
       bias = 'buy_premium';
-      strategy = 'Long Straddle (IV cheap, history of big moves)';
-    } else if (ivRich && movesContained) {
+      strategy = 'Long Straddle (RV rank low, history of big moves)';
+    } else if (rvRich && movesContained) {
       playType = 'short_volatility';
       bias = 'sell_premium';
-      strategy = 'Iron Condor (IV rich, history of contained moves)';
+      strategy = 'Iron Condor (RV rank high, history of contained moves)';
     } else if (driftLean === 'long' && drift20 > 8) {
       playType = 'directional_long';
       bias = 'buy_premium';
       strategy = 'Directional Long (pre-earnings drift)';
+      direction = 'long';
     } else if (driftLean === 'short' && drift20 < -8) {
       playType = 'directional_short';
       bias = 'buy_premium';
       strategy = 'Directional Short (pre-earnings weakness)';
+      direction = 'short';
     } else {
       playType = 'skip';
       bias = 'neutral';
@@ -312,8 +341,8 @@ async function scoreEarningsForTicker(
 
   // ---- Composite score ----
   let composite = 50;
-  if (playType === 'short_volatility') composite = 75 + Math.min(15, Math.round((ivr - 65) / 2));
-  else if (playType === 'long_volatility') composite = 75 + Math.min(15, Math.round((35 - ivr) / 2));
+  if (playType === 'short_volatility') composite = 75 + Math.min(15, Math.round((rvRank - 65) / 2));
+  else if (playType === 'long_volatility') composite = 75 + Math.min(15, Math.round((35 - rvRank) / 2));
   else if (playType === 'directional_long' || playType === 'directional_short') {
     composite = 65 + Math.min(20, Math.round(Math.abs(drift20) / 2));
   }
@@ -327,15 +356,15 @@ async function scoreEarningsForTicker(
   composite = Math.max(0, Math.min(100, composite));
 
   // ---- Triggers, stops, targets ----
-  const triggers = computeTriggers(playType, latest.c, expectedMove, bars, e.date);
+  const triggers = computeTriggers(playType, latest.c, expectedMove, bars, e.date, direction);
 
   // ---- Historical edge ----
   const historicalEdge = computeHistoricalEdge(playType, history, priorMovesSigned);
 
   // ---- Rationale ----
   const rationale = buildRationale({
-    playType, ivr, expectedMove, avgPriorMove, daysUntil,
-    drift20, surprise: history[0]?.surprisePct ?? null,
+    playType, rvRank, expectedMove, avgPriorMove, daysUntil,
+    drift20, surprise: history[0]?.surprisePct ?? null, direction,
   });
 
   return {
@@ -347,7 +376,12 @@ async function scoreEarningsForTicker(
     bias,
     strategy,
     composite,
-    ivr,
+    rvRank,
+    // Deprecated alias — the frontend (EarningsView table + journal log)
+    // still reads `ivr`. It has always been a realized-vol rank, never
+    // implied vol; `rvRank` is the honest name going forward.
+    ivr: rvRank,
+    direction,
     expectedMove: +expectedMove.toFixed(2),
     avgPriorMove: avgPriorMove !== null ? +avgPriorMove.toFixed(2) : null,
     rationale,
@@ -374,6 +408,9 @@ function computeTriggers(
   expectedMove: number,
   bars: { o: number; h: number; l: number; c: number; t: number; v?: number }[],
   reportDateIso: string,
+  // Fade side for 'reversal' (M3): 'short' fades a gap-up-on-miss,
+  // 'long' fades a gap-down-on-beat. Other play types ignore it.
+  direction?: 'long' | 'short',
 ): PlayTriggers {
   const last20 = bars.slice(-20);
   const high20 = last20.length ? Math.max(...last20.map((b) => b.h)) : price;
@@ -513,13 +550,25 @@ function computeTriggers(
       break;
     }
     case 'reversal': {
-      entry = `Fade the gap on day 2-3 reversal candle, hold 5-10d`;
-      stop = +(price * 1.04).toFixed(2);
-      t1 = +(price * 0.97).toFixed(2);
-      t2 = +(price * 0.94).toFixed(2);
-      t3 = +(price * 0.90).toFixed(2);
+      // Direction-aware fade (M3). Long fade (gap-down-on-beat) mirrors the
+      // short fade's geometry: stop 4% beyond entry against the trade,
+      // targets at -3/-6/-10% (short) or +3/+6/+10% (long).
+      const side: 'long' | 'short' = direction ?? 'short';
+      if (side === 'long') {
+        entry = `Fade the gap-down on day 2-3 reversal candle, hold 5-10d`;
+        stop = +(price * 0.96).toFixed(2);
+        t1 = +(price * 1.03).toFixed(2);
+        t2 = +(price * 1.06).toFixed(2);
+        t3 = +(price * 1.10).toFixed(2);
+      } else {
+        entry = `Fade the gap-up on day 2-3 reversal candle, hold 5-10d`;
+        stop = +(price * 1.04).toFixed(2);
+        t1 = +(price * 0.97).toFixed(2);
+        t2 = +(price * 0.94).toFixed(2);
+        t3 = +(price * 0.90).toFixed(2);
+      }
       positionSizePct = 0.5;
-      executionSteps = reversalSteps(price, stop, t1, t2, t3);
+      executionSteps = reversalSteps(side, price, stop, t1, t2, t3);
       break;
     }
     default: {
@@ -610,18 +659,30 @@ function peadSteps(
 }
 
 function reversalSteps(
+  side: 'long' | 'short',
   price: number,
   stop: number,
   t1: number,
   t2: number,
   t3: number,
 ): ExecutionStep[] {
+  // M3 — direction-aware wording. Short side fades a gap-UP-on-miss;
+  // long side fades a gap-DOWN-on-beat.
+  const isShort = side === 'short';
+  const exhaustion = isShort
+    ? `look for a candle that opens at the prior day's close, runs up, then closes weak (long upper wick on a gap-up)`
+    : `look for a candle that opens at the prior day's close, sells off, then closes strong (long lower wick on a gap-down)`;
+  const enterVerb = isShort
+    ? `SHORT shares (or buy short-dated puts at ATM strike, ~5-10 DTE)`
+    : `BUY shares (or buy short-dated calls at ATM strike, ~5-10 DTE)`;
+  const t1Pct = isShort ? '-3%' : '+3%';
+  const t2Pct = isShort ? '-6%' : '+6%';
   return [
-    { n: 1, title: 'Wait for day 2-3 reversal candle', detail: `Don't fade day 1 of an earnings gap. Wait for day 2 or 3 — look for a candle that opens at the prior day's close, runs up, then closes weak (long upper wick on a gap-up). That's the exhaustion signal.` },
-    { n: 2, title: 'Enter on confirmation', detail: `SHORT shares (or buy short-dated puts at ATM strike, ~5-10 DTE) once the reversal candle prints. Don't wait for the next session — gaps fade fastest in the first few days.` },
+    { n: 1, title: 'Wait for day 2-3 reversal candle', detail: `Don't fade day 1 of an earnings gap. Wait for day 2 or 3 — ${exhaustion}. That's the exhaustion signal.` },
+    { n: 2, title: 'Enter on confirmation', detail: `${enterVerb} once the reversal candle prints. Don't wait for the next session — gaps fade fastest in the first few days.` },
     { n: 3, title: 'Size the position', detail: `Risk 0.5% of account (smaller than directional plays — reversals are higher-variance). Max loss per share = $${Math.abs(price - stop).toFixed(2)}. Shares = floor(account × 0.5% ÷ $${Math.abs(price - stop).toFixed(2)}).` },
     { n: 4, title: 'Set the stop', detail: `Hard stop at $${stop.toFixed(2)} (4% beyond entry). If the gap continues, the trade is wrong and the bull/bear trap thesis is invalid.` },
-    { n: 5, title: 'Scale out aggressively', detail: `Take 1/2 at $${t1.toFixed(2)} (-3%) — this is the high-probability target. Take 1/4 at $${t2.toFixed(2)} (-6%). Let the last 1/4 run toward $${t3.toFixed(2)} with a trailing stop. Don't be greedy — gap fades complete in 5-10 days.` },
+    { n: 5, title: 'Scale out aggressively', detail: `Take 1/2 at $${t1.toFixed(2)} (${t1Pct}) — this is the high-probability target. Take 1/4 at $${t2.toFixed(2)} (${t2Pct}). Let the last 1/4 run toward $${t3.toFixed(2)} with a trailing stop. Don't be greedy — gap fades complete in 5-10 days.` },
     { n: 6, title: 'Time horizon', detail: `5-10 trading days. If price hasn't moved toward T1 within 5 days, exit at break-even — the fade thesis has expired.` },
   ];
 }
@@ -673,35 +734,41 @@ function computeHistoricalEdge(
 
 function buildRationale(input: {
   playType: EarningsPlayType;
-  ivr: number;
+  rvRank: number;
   expectedMove: number;
   avgPriorMove: number | null;
   daysUntil: number;
   drift20: number;
   surprise: number | null;
+  direction?: 'long' | 'short';
 }): string {
-  const { playType, ivr, expectedMove, avgPriorMove, daysUntil, drift20, surprise } = input;
+  const { playType, rvRank, expectedMove, avgPriorMove, daysUntil, drift20, surprise, direction } = input;
   const em = `\u00b1${expectedMove.toFixed(1)}%`;
   const apm = avgPriorMove !== null ? `${avgPriorMove.toFixed(1)}%` : 'unknown';
   const when = daysUntil < 0
     ? `reported ${Math.abs(daysUntil)}d ago`
     : daysUntil === 0 ? 'reports today' : `${daysUntil}d to print`;
 
+  // Wording is deliberately "RV rank", not "IV" (M2): rvRank is a
+  // realized-vol rank with zero options data behind it. Premium richness/
+  // cheapness is therefore a likelihood, not an observation.
   switch (playType) {
     case 'long_volatility':
-      return `IV cheap (${ivr}), expected ${em} but history avg ${apm} \u2192 premium underprices reality. ${when}.`;
+      return `RV rank low (${rvRank}) \u2014 premium likely cheap; expected ${em} event move but history avg ${apm}. ${when}.`;
     case 'short_volatility':
-      return `IV rich (${ivr}), expected ${em} but history avg ${apm} \u2192 premium overprices reality. ${when}.`;
+      return `RV rank high (${rvRank}) \u2014 premium likely rich; expected ${em} event move vs history avg ${apm}. ${when}.`;
     case 'directional_long':
-      return `Pre-earnings drift +${drift20.toFixed(1)}% over 20d, momentum into print. IV ${ivr}, ${when}.`;
+      return `Pre-earnings drift +${drift20.toFixed(1)}% over 20d, momentum into print. RV rank ${rvRank}, ${when}.`;
     case 'directional_short':
-      return `Pre-earnings weakness ${drift20.toFixed(1)}% over 20d, breakdown setup. IV ${ivr}, ${when}.`;
+      return `Pre-earnings weakness ${drift20.toFixed(1)}% over 20d, breakdown setup. RV rank ${rvRank}, ${when}.`;
     case 'pead_long':
       return `Beat by ${surprise?.toFixed(1)}%, post-print continuation likely. ${when}.`;
     case 'pead_short':
       return `Miss by ${surprise?.toFixed(1)}%, post-print weakness likely. ${when}.`;
     case 'reversal':
-      return `Gap-and-fade pattern: surprise vs reaction divergence. ${when}.`;
+      return direction === 'long'
+        ? `Gap-and-fade: gapped DOWN on a beat \u2014 fade the gap LONG. ${when}.`
+        : `Gap-and-fade: gapped UP on a miss \u2014 fade the gap SHORT. ${when}.`;
     default:
       return `Mixed data, no clear edge. ${when}.`;
   }
