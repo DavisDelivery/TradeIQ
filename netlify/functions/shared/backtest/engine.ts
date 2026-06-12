@@ -76,6 +76,14 @@ const BENCHMARK_BY_UNIVERSE: Record<BacktestConfig['universe'], string> = {
 export interface RunBacktestOptions {
   /** Skip Firestore persistence — used by integrity tests + dry runs. */
   noPersist?: boolean;
+  /**
+   * Track-3 M1 — wall-clock fetch date (YYYY-MM-DD), injected by the
+   * boundary so this module stays wall-clock-free (walk-forward integrity
+   * test 7). Used to refuse PIT-caching of bar windows that end on/after
+   * today (still-growing → would freeze truncated). Also clamps a future
+   * endDate. Omitted by historical callers (all windows are immutable).
+   */
+  todayIso?: string;
   /** Optional logger callback — defaults to console-less silent. */
   onProgress?: (event: {
     phase: string;
@@ -163,11 +171,34 @@ export function validateConfig(
  * The cache key includes `from` + `to` so different windows for the same
  * ticker don't collide.
  */
-async function getCachedBars(
+/**
+ * Track-3 M1 — a bar window is immutable (safe to PIT-cache) only when its
+ * end is strictly before the fetch date. A window ending today or in the
+ * future is still growing: the provider returns bars only through today, so
+ * persisting it would freeze a truncated array forever (the cache has no TTL
+ * "because PIT data is immutable") — re-runs months later keep the short
+ * array and `forward60d/252dReturn` stay permanently null, silently lossing
+ * Phase-5 training data. Exported for tests.
+ */
+// NB: walk-forward integrity (test 7) forbids wall-clock in this module —
+// `todayIso` is injected by the boundary (entry points). Without it we
+// cannot prove a window is in the future, so we conservatively treat the
+// window as immutable (the pre-M1 caching behavior); live entry points
+// always inject todayIso, so real runs get the guard.
+export function barWindowIsImmutable(to: string, todayIso?: string): boolean {
+  if (!todayIso) return true;
+  return to < todayIso;
+}
+
+export async function getCachedBars(
   ticker: string,
   from: string,
   to: string,
+  todayIso?: string,
 ): Promise<Bar[]> {
+  const fetcher = () => getDailyBars(ticker, from, to);
+  // Future/today windows: fetch fresh every time, never persist (M1).
+  if (!barWindowIsImmutable(to, todayIso)) return fetcher();
   const key: PitCacheKey = {
     provider: 'polygon',
     dataClass: 'bars',
@@ -175,14 +206,15 @@ async function getCachedBars(
     asOfDate: to,
     extra: `from=${from}`,
   };
-  return pitCacheWrap(key, () => getDailyBars(ticker, from, to));
+  return pitCacheWrap(key, fetcher);
 }
 
 async function getCachedBarsThrough(
   ticker: string,
   asOfDate: string,
+  todayIso?: string,
 ): Promise<Bar[]> {
-  return getCachedBars(ticker, addDays(asOfDate, -BAR_LOOKBACK_DAYS), asOfDate);
+  return getCachedBars(ticker, addDays(asOfDate, -BAR_LOOKBACK_DAYS), asOfDate, todayIso);
 }
 
 /**
@@ -309,7 +341,8 @@ export async function runBacktest(
   config: BacktestConfig,
   options: RunBacktestOptions = {},
 ): Promise<BacktestResult> {
-  validateConfig(config);
+  const todayIso = options.todayIso;
+  validateConfig(config, todayIso);
   // Phase 4b-2: if a runId was pre-allocated by the trigger endpoint,
   // reuse it (and skip the persistRunStart write — the trigger wrote
   // 'pending', and the background function flipped it to 'running'
@@ -381,9 +414,13 @@ export async function runBacktest(
       asOfDate: benchTo,
       extra: `from=${benchFrom}:engine-benchmark`,
     };
-    const benchBars = await pitCacheWrap(benchKey, () =>
-      getDailyBars(benchTicker, benchFrom, benchTo).catch(() => []),
-    );
+    // M1: don't persist a benchmark window that ends today/in the future —
+    // it would freeze a truncated SPY series (understating CAGR/Sharpe).
+    const benchFetch = () =>
+      getDailyBars(benchTicker, benchFrom, benchTo).catch(() => []);
+    const benchBars = barWindowIsImmutable(benchTo, todayIso)
+      ? await pitCacheWrap(benchKey, benchFetch)
+      : await benchFetch();
 
     for (let i = 0; i < rebalanceDates.length; i++) {
       const asOfDate = rebalanceDates[i];
@@ -488,7 +525,7 @@ export async function runBacktest(
       // 5. Diff prev → target, apply costs
       const prevPrices = new Map<string, number>();
       for (const p of portfolio) {
-        const bars = await getCachedBarsThrough(p.ticker, asOfDate).catch(() => []);
+        const bars = await getCachedBarsThrough(p.ticker, asOfDate, todayIso).catch(() => []);
         const price = lastCloseAtOrBefore(bars, asOfDate);
         if (price != null) prevPrices.set(p.ticker, price);
       }
@@ -529,7 +566,7 @@ export async function runBacktest(
       //    Position-level marks weighted by target weight.
       const positionReturns = new Map<string, { date: string; ret: number }[]>();
       for (const p of target) {
-        const bars = await getCachedBarsThrough(p.ticker, nextAsOf).catch(
+        const bars = await getCachedBarsThrough(p.ticker, nextAsOf, todayIso).catch(
           () => [],
         );
         const rets = dailyReturnsBetween(bars, asOfDate, nextAsOf);
@@ -630,6 +667,7 @@ export async function runBacktest(
             c.ticker,
             addDays(asOfDate, -30), // small backward buffer so the entry bar is present
             addDays(asOfDate, 400),
+            todayIso, // M1: a forward window ending after today is never cached truncated
           ).catch(() => []);
           const entryClose = lastCloseAtOrBefore(longBars, asOfDate);
           return {

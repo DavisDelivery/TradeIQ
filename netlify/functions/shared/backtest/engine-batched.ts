@@ -34,7 +34,7 @@ import {
 import { buildPortfolio, diffPortfolios } from './portfolio';
 import { applyCosts } from './costs';
 import { computeMetrics } from './metrics';
-import { _engineInternals, lastCloseAtOrBefore } from './engine';
+import { _engineInternals, lastCloseAtOrBefore, barWindowIsImmutable } from './engine';
 import type {
   AttributionRecord,
   BacktestConfig,
@@ -105,6 +105,8 @@ export interface RegularBacktestState {
 
 export interface ProcessBatchOptions {
   config: BacktestConfig;
+  /** Track-3 M1 — boundary-injected wall-clock fetch date (YYYY-MM-DD); see engine.RunBacktestOptions.todayIso. */
+  todayIso?: string;
   runId: string;
   /** State at the start of this batch. Caller seeds initial state on fresh runs. */
   state: RegularBacktestState;
@@ -184,7 +186,7 @@ export function initialRegularState(
  *   - windowSurvivorshipCorrected reads pre-loaded universe history,
  *   - benchmark bar fetch hits the PIT cache after the first time.
  */
-async function prepRun(config: BacktestConfig): Promise<{
+async function prepRun(config: BacktestConfig, todayIso?: string): Promise<{
   rebalanceDates: string[];
   benchTicker: string;
   benchBars: Bar[];
@@ -207,9 +209,11 @@ async function prepRun(config: BacktestConfig): Promise<{
     asOfDate: benchTo,
     extra: `from=${benchFrom}:engine-benchmark`,
   };
-  const benchBars = await pitCacheWrap(benchKey, () =>
-    getDailyBars(benchTicker, benchFrom, benchTo).catch(() => []),
-  );
+  // M1: don't persist a benchmark window ending today/in the future.
+  const benchFetch = () => getDailyBars(benchTicker, benchFrom, benchTo).catch(() => []);
+  const benchBars = barWindowIsImmutable(benchTo, todayIso)
+    ? await pitCacheWrap(benchKey, benchFetch)
+    : await benchFetch();
   return { rebalanceDates, benchTicker, benchBars, survivorship };
 }
 
@@ -226,10 +230,10 @@ async function prepRun(config: BacktestConfig): Promise<{
 export async function processRegularBatch(
   opts: ProcessBatchOptions,
 ): Promise<ProcessBatchResult> {
-  const { config, runId, batchSize } = opts;
+  const { config, runId, batchSize, todayIso } = opts;
   const isExpired = opts.isExpired ?? (() => false);
 
-  const { rebalanceDates, survivorship } = await prepRun(config);
+  const { rebalanceDates, survivorship } = await prepRun(config, todayIso);
 
   // Shallow-copy state so callers' references are not mutated.
   // Phase 4u — `dailyEquity / trades / attribution / warnings` are no
@@ -382,7 +386,7 @@ export async function processRegularBatch(
     const prevPrices = new Map<string, number>();
     for (const p of state.portfolio) {
       const bars = await _engineInternals
-        .getCachedBarsThrough(p.ticker, asOfDate)
+        .getCachedBarsThrough(p.ticker, asOfDate, todayIso)
         .catch(() => [] as Bar[]);
       const price = lastCloseAtOrBefore(bars, asOfDate);
       if (price != null) prevPrices.set(p.ticker, price);
@@ -422,7 +426,7 @@ export async function processRegularBatch(
     const positionReturns = new Map<string, { date: string; ret: number }[]>();
     for (const p of target) {
       const bars = await _engineInternals
-        .getCachedBarsThrough(p.ticker, nextAsOf)
+        .getCachedBarsThrough(p.ticker, nextAsOf, todayIso)
         .catch(() => [] as Bar[]);
       const rets = _engineInternals.dailyReturnsBetween(bars, asOfDate, nextAsOf);
       positionReturns.set(p.ticker, rets);
@@ -509,6 +513,7 @@ export async function processRegularBatch(
             c.ticker,
             addDays(asOfDate, -30),
             addDays(asOfDate, 400),
+            todayIso,
           )
           .catch(() => [] as Bar[]);
         const entryClose = lastCloseAtOrBefore(longBars, asOfDate);

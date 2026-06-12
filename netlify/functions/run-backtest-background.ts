@@ -152,9 +152,13 @@ export const handler: Handler = withSentry(async (event, context) => {
       config = persistedConfig;
     }
 
-    validateConfig(config);
+    // Track-3 M1 — wall-clock fetch date, injected at this boundary so the
+    // engine stays wall-clock-free; refuses PIT-caching of still-growing
+    // (today/future) bar windows + clamps a future endDate.
+    const todayIso = new Date().toISOString().slice(0, 10);
+    validateConfig(config, todayIso);
 
-    const prep = await prepRun(config);
+    const prep = await prepRun(config, todayIso);
     const totalRebalances = prep.rebalanceDates.length;
 
     const cursor: BacktestCursor<RegularBacktestState> = isResume
@@ -206,6 +210,7 @@ export const handler: Handler = withSentry(async (event, context) => {
       res = await processRegularBatch({
         config,
         runId,
+        todayIso,
         state: cursor.state ?? initialRegularState(config, totalRebalances, prep.rebalanceDates[0]),
         batchSize: BATCH_SIZE,
         isExpired: () => watchdog.isExpired(),
