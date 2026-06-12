@@ -7,28 +7,34 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const store: Record<string, any> = {};
 
-function makeDocs(prefix: string, max: number) {
+// Platform-faithful Firestore descending-range semantics on the doc id:
+// the result set is exactly { id : lower <= id <= upper }, ordered desc,
+// capped at `max`. Production passes upper = prefix + '', lower =
+// prefix — the canonical descending prefix scan. A degenerate query
+// (upper === lower === prefix) yields NOTHING here, so this test fails if
+// the U+F8FF sentinel is ever dropped (Wave 5 policy: faithful range
+// semantics, not a mock that pins the query's behavior regardless of bounds).
+function makeDocs(lower: string, upper: string, max: number) {
   return Object.keys(store)
-    .filter((k) => k.startsWith('scanRuns/') && k.slice('scanRuns/'.length).startsWith(prefix))
+    .filter((k) => k.startsWith('scanRuns/'))
+    .map((k) => k.slice('scanRuns/'.length))
+    .filter((id) => id >= lower && id <= upper)
     .sort()
     .reverse()
     .slice(0, max)
-    .map((k) => ({
-      id: k.slice('scanRuns/'.length),
-      data: () => store[k],
-    }));
+    .map((id) => ({ id, data: () => store['scanRuns/' + id] }));
 }
 
 vi.mock('../shared/firebase-admin', () => ({
   getAdminDb: vi.fn(() => ({
     collection: (cn: string) => ({
       orderBy: (_field: string, _dir?: string) => ({
-        startAt: (_v: string) => ({
+        startAt: (upper: string) => ({
           endAt: (lower: string) => ({
             limit: (n: number) => ({
               get: async () => {
                 if (cn !== 'scanRuns') return { docs: [] };
-                const docs = makeDocs(lower, n);
+                const docs = makeDocs(lower, upper, n);
                 return { docs };
               },
             }),
@@ -204,5 +210,36 @@ describe('/api/scan-status', () => {
     expect(body.runs[0].cursor).toBeNull();
     expect(body.runs[0].status).toBe('done');
     expect(body.runs[0].invocationAgeMs).toBeUndefined();
+  });
+
+  it('excludes other-prefix runs (lower bound) and includes prefix runs (upper sentinel)', async () => {
+    // A target-board run and an unrelated insider run coexist in scanRuns.
+    store['scanRuns/target-board-russell2k-20260518-230000'] = { status: 'running', cursor: null };
+    store['scanRuns/insider-sp500-20260518-230000'] = { status: 'running', cursor: null };
+    const res = (await handler(get({ board: 'target-board', universe: 'russell2k' }), {} as any)) as any;
+    const body = JSON.parse(res.body);
+    // The descending prefix scan must return the target-board run (proving
+    // the U+F8FF upper bound includes longer ids) and exclude the insider
+    // run (proving the lower bound is applied) — not "everything".
+    expect(body.runs.map((r: any) => r.runId)).toEqual(['target-board-russell2k-20260518-230000']);
+  });
+
+  it('GUARD: the faithful range fake returns the match only with the U+F8FF sentinel, nothing when degenerate', async () => {
+    // Direct proof the test models real Firestore range semantics: with the
+    // canonical bounds (startAt prefix+, endAt prefix) the seeded id is
+    // returned; with the degenerate bounds (startAt===endAt===prefix, i.e.
+    // the dropped-sentinel regression) the same query returns nothing. A mock
+    // that pinned behavior would return the match in BOTH cases.
+    const { getAdminDb } = await import('../shared/firebase-admin');
+    store['scanRuns/insider-russell2k-20260518-230000'] = { status: 'running', cursor: null };
+    const db: any = (getAdminDb as any)();
+    const prefix = 'insider-russell2k-';
+    const SENT = '';
+    const withSentinel = await db.collection('scanRuns').orderBy('__name__', 'desc')
+      .startAt(prefix + SENT).endAt(prefix).limit(5).get();
+    const degenerate = await db.collection('scanRuns').orderBy('__name__', 'desc')
+      .startAt(prefix).endAt(prefix).limit(5).get();
+    expect(withSentinel.docs.map((d: any) => d.id)).toEqual(['insider-russell2k-20260518-230000']);
+    expect(degenerate.docs).toHaveLength(0);
   });
 });

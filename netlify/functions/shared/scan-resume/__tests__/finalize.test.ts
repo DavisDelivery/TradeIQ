@@ -56,22 +56,26 @@ function makeMockDb(initial: Record<DocPath, unknown> = {}) {
   function collection(prefix: string) {
     return {
       doc: (id: string) => doc(`${prefix}/${id}`),
+      // Platform-faithful Firestore descending-range semantics on the doc
+      // id: result set = { id : lower <= id <= upper } ordered desc, capped
+      // at `n`. Production passes upper = runIdPrefix + '', lower =
+      // runIdPrefix — the canonical descending prefix scan. A degenerate
+      // query (upper === lower === prefix) yields NOTHING here, so this test
+      // fails if the U+F8FF sentinel is dropped (Wave 5 policy: no mock that
+      // pins query behavior regardless of its bounds).
       orderBy: (_field: string, _dir?: string) => ({
-        startAt: (_v: string) => ({
+        startAt: (upper: string) => ({
           endAt: (lower: string) => ({
             limit: (n: number) => ({
               get: async () => {
                 const docs = Object.keys(store)
                   .filter((p) => p.startsWith(`${prefix}/`))
-                  .filter((p) => {
-                    const id = p.slice(`${prefix}/`.length);
-                    return id.startsWith(lower);
-                  })
-                  .sort()
-                  .reverse()
+                  .map((p) => ({ p, id: p.slice(`${prefix}/`.length) }))
+                  .filter(({ id }) => id >= lower && id <= upper)
+                  .sort((a, b) => (a.id < b.id ? 1 : a.id > b.id ? -1 : 0))
                   .slice(0, n)
-                  .map((p) => ({
-                    id: p.slice(`${prefix}/`.length),
+                  .map(({ p, id }) => ({
+                    id,
                     data: () => store[p],
                     ref: { path: p },
                   }));
