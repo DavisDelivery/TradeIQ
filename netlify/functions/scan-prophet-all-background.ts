@@ -2,19 +2,22 @@
 // worker.
 //
 // The thin cron dispatcher (`scan-prophet-all.ts`, cron
-// `0,30 13-21 * * 1-5`) POSTs here after its holiday guard passes. The
-// scan body is the pre-Wave-2D scheduled handler's, carried over
-// unchanged: full 7-layer scan over the ~2,200-name 'all' universe on a
-// 14-min budget, then pre-narration of qualified picks (4c-1 W4) before
-// the snapshot write. Background functions get the 15-minute container
-// this needs; the old in-handler cron was killed at the ~26s synchronous
-// ceiling before writeSnapshot ever ran.
+// `0,30 13-21 * * 1-5`) POSTs here after its holiday guard passes.
 //
-// Wave 2D (CR-8) — partial-publish discipline, previously missing on
-// this path:
-//   - status stamped from the scan's budgetExceeded flag (the 'all'
-//     universe at concurrency 7 routinely truncates), so a partial run
-//     lands in runs/ for diagnostics but never swaps _latest;
+// Wave 3 (track-3 critical #7 follow-up) — the body now runs the 3-stage
+// SIEVE, not a single-pass scan. The ~2,200-name 'all' universe cannot
+// complete a full 7-layer single pass inside the 14-min container budget:
+// the pre-Wave-3 body routinely hit budgetExceeded → status:'partial' →
+// writeSnapshot's partial-safe guard never promoted it → `_latest/all`
+// went stale on 2026-05-12 and stayed there. The sieve (the same one
+// russell uses) Stage-1 cheap-scores the FULL universe, then deepens
+// survivors through Stages 2/3 — guaranteeing universe-wide coverage AND
+// a promotable `complete` snapshot within budget.
+//
+// Wave 2D (CR-8) — partial-publish discipline:
+//   - status stamped from the sieve's per-stage partial flags, so a
+//     budget-truncated stage lands in runs/ for diagnostics but never
+//     swaps _latest;
 //   - assessSnapshotPublish guards the publish: a "complete" run that
 //     assembled a hollow result (provider outage → 0 picks over ~2,200
 //     names) is demoted to status:'partial' instead of replacing the
@@ -24,7 +27,8 @@
 // (owner decision: no token gating on scan paths).
 
 import type { Handler } from '@netlify/functions';
-import { runProphetScan, type ProphetUniverseKey } from './shared/scan-prophet';
+import { resolveProphetUniverse, type ProphetUniverseKey } from './shared/scan-prophet';
+import { runProphetSieve } from './shared/prophet-sieve';
 import {
   writeSnapshot,
   assessSnapshotPublish,
@@ -36,7 +40,6 @@ import { MODEL_VERSION } from './shared/model-version';
 import { logger } from './shared/logger';
 import { narrateAll } from './shared/narrative-generator';
 
-const PER_SCAN_BUDGET_MS = 14 * 60_000;
 // 'all' covers ~2200 tickers — scan duration is variable. 2 min narration
 // budget covers most cases without risking the container limit.
 const NARRATE_BUDGET_MS = 2 * 60_000;
@@ -55,23 +58,29 @@ export const handler: Handler = async (event) => {
   log.info('background_scan_started', { board: 'prophet', universe: UNIVERSE });
 
   try {
-    const scan = await runProphetScan({
+    // Wave 3 (track-3 critical #7 follow-up) — the 'all' universe (~2,200
+    // names) CANNOT complete a single-pass 7-layer scan inside the 14-min
+    // budget (the pre-Wave-3 body routinely hit budgetExceeded → status:
+    // partial → never promoted → _latest/all went stale 2026-05-12). Drive
+    // it through the same 3-stage sieve russell uses: Stage 1 cheap-scores
+    // the FULL universe, then deepens survivors — guaranteeing universe-wide
+    // coverage AND a promotable `complete` snapshot.
+    const entries = resolveProphetUniverse(UNIVERSE);
+    const sieveResult = await runProphetSieve({
+      entries,
       universe: UNIVERSE,
-      scanBudgetMs: PER_SCAN_BUDGET_MS,
-      concurrency: 7,
-      sufficientQualified: Infinity,
       logger: log,
     });
 
-    if (process.env.ANTHROPIC_API_KEY && scan.picks.length > 0) {
-      const narrateResult = await narrateAll(scan.picks, {
+    if (process.env.ANTHROPIC_API_KEY && sieveResult.picks.length > 0) {
+      const narrateResult = await narrateAll(sieveResult.picks, {
         concurrency: NARRATE_CONCURRENCY,
         budgetMs: NARRATE_BUDGET_MS,
         onWarn: (msg, ticker, err) =>
           log.warn(msg, { ticker, err: String((err as any)?.message ?? err) }),
       });
       log.info('narrate_all_complete', {
-        picks: scan.picks.length,
+        picks: sieveResult.picks.length,
         narrated: narrateResult.narrated,
         failed: narrateResult.failed,
         skipped: narrateResult.skipped,
@@ -79,18 +88,24 @@ export const handler: Handler = async (event) => {
       });
     }
 
-    // Wave 2D (CR-8) — stamp status from the scan's budget flag so a
-    // truncated run never swaps _latest (writeSnapshot's partial-safe
-    // guard), mirroring runProphetSnapshot on the largecap path.
-    let status: 'complete' | 'partial' = scan.budgetExceeded ? 'partial' : 'complete';
-    const warnings = [...scan.warnings];
+    // Wave 2D (CR-8) — stamp status from the sieve's per-stage partial
+    // flags. Any stage that ran out of budget means a truncated result, so
+    // the snapshot must not swap _latest (writeSnapshot's partial-safe guard).
+    const sievePartial =
+      sieveResult.meta.stage1.partial ||
+      sieveResult.meta.stage2.partial ||
+      sieveResult.meta.stage3.partial;
+    let status: 'complete' | 'partial' = sievePartial ? 'partial' : 'complete';
+    const warnings = [...sieveResult.warnings];
     let degraded: boolean | undefined;
     let degradedReason: string | undefined;
 
     if (status === 'complete') {
       const decision = assessSnapshotPublish({
-        resultCount: scan.picks.length,
-        universeChecked: scan.universeChecked,
+        resultCount: sieveResult.picks.length,
+        // Wave 4A (M8) — the guard's denominator is the universe size at
+        // scan start, not the scored count (which universeChecked carries).
+        universeChecked: sieveResult.universeSize,
       });
       if (decision.action === 'skip') {
         log.warn('publish_guard_skip', { reason: decision.reason });
@@ -106,31 +121,52 @@ export const handler: Handler = async (event) => {
     const { snapshotId, promotedToLatest } = await writeSnapshot('prophet', STORE_KEY, {
       modelVersion: MODEL_VERSION,
       generatedAt: new Date().toISOString(),
-      scanDurationMs: scan.scanDurationMs,
-      // runProphetScan's universeChecked is the universe size; the
-      // single-pass scan has no separate scored count (a truncated run
-      // is stamped status:'partial' instead). Stamp universeSize so
-      // consumers read a consistent shape across Prophet universes.
-      universeChecked: scan.universeChecked,
-      universeSize: scan.universeChecked,
-      results: scan.picks,
+      scanDurationMs: sieveResult.scanDurationMs,
+      // Wave 4A (M8) — honest coverage: universeChecked is Stage 1's
+      // actually-scored count; universeSize is the full universe.
+      universeChecked: sieveResult.universeChecked,
+      universeSize: sieveResult.universeSize,
+      results: sieveResult.picks,
       freshnessBudgetMs: FRESHNESS_BUDGETS_MS.prophet,
       warnings,
       degraded,
       degradedReason,
       status,
+      sieve: {
+        stage1: {
+          scored: sieveResult.meta.stage1.scored,
+          survived: sieveResult.meta.stage1.survived,
+          thresholdScore: sieveResult.meta.stage1.thresholdScore,
+          budgetMs: sieveResult.meta.stage1.budgetMs,
+          partial: sieveResult.meta.stage1.partial,
+        },
+        stage2: {
+          scored: sieveResult.meta.stage2.scored,
+          survived: sieveResult.meta.stage2.survived,
+          thresholdScore: sieveResult.meta.stage2.thresholdScore,
+          budgetMs: sieveResult.meta.stage2.budgetMs,
+          partial: sieveResult.meta.stage2.partial,
+        },
+        stage3: {
+          scored: sieveResult.meta.stage3.scored,
+          survived: sieveResult.meta.stage3.survived,
+          budgetMs: sieveResult.meta.stage3.budgetMs,
+          partial: sieveResult.meta.stage3.partial,
+        },
+      },
     });
 
-    const count = scan.picks.length;
-    const narratedCount = scan.picks.filter((p) => p.narrative).length;
+    const count = sieveResult.picks.length;
+    const narratedCount = sieveResult.picks.filter((p) => p.narrative).length;
     log.info('snapshot_written', {
       snapshotId,
       status,
       promotedToLatest,
       picks: count,
       narrated: narratedCount,
-      universeChecked: scan.universeChecked,
-      scanDurationMs: scan.scanDurationMs,
+      universeChecked: sieveResult.universeChecked,
+      universeSize: sieveResult.universeSize,
+      scanDurationMs: sieveResult.scanDurationMs,
       overallDurationMs: Date.now() - overallStart,
     });
 
@@ -160,8 +196,8 @@ export const handler: Handler = async (event) => {
         promotedToLatest,
         picks: count,
         narrated: narratedCount,
-        universeChecked: scan.universeChecked,
-        scanDurationMs: scan.scanDurationMs,
+        universeChecked: sieveResult.universeChecked,
+        scanDurationMs: sieveResult.scanDurationMs,
         warnings,
       }),
     };

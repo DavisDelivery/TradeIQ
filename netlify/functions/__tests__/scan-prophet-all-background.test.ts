@@ -1,25 +1,31 @@
-// Wave 2D (CR-7/CR-8) — Prophet 'all' background worker tests.
+// Wave 3 (track-3 critical #7 follow-up) — Prophet 'all' background worker.
 //
-// The worker carries the old scheduled handler's scan body (runProphetScan
-// + narrateAll) and adds the partial-publish discipline the russell/all
-// paths were missing:
-//   1. budgetExceeded ⇒ writeSnapshot receives status:'partial' (which
-//      the store refuses to promote) — the CR-8 pin.
-//   2. A hollow "complete" result (0 picks over a large universe) is
-//      demoted to partial by the real assessSnapshotPublish guard.
-//   3. The inline narrate step is preserved in the background worker.
+// The worker now runs the 3-stage SIEVE (not a single-pass scan) so the
+// ~2,200-name 'all' universe completes a promotable `complete` snapshot
+// instead of perpetually truncating to status:'partial' (the cause of the
+// stale _latest/all). These tests pin:
+//   1. an all-stages-in-budget sieve ⇒ status:complete, promoted;
+//   2. any stage partial ⇒ status:partial ⇒ store refuses to promote;
+//   3. a hollow "complete" result (0 picks over the large universe) is
+//      demoted to partial by the real assessSnapshotPublish guard;
+//   4. inline narration + keep-daily-close prune discipline preserved.
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
-  runProphetScanMock: vi.fn(),
+  runProphetSieveMock: vi.fn(),
+  resolveUniverseMock: vi.fn(),
   writeSnapshotMock: vi.fn(),
   pruneOldSnapshotsMock: vi.fn(),
   narrateAllMock: vi.fn(),
 }));
 
 vi.mock('../shared/scan-prophet', () => ({
-  runProphetScan: mocks.runProphetScanMock,
+  resolveProphetUniverse: mocks.resolveUniverseMock,
+}));
+
+vi.mock('../shared/prophet-sieve', () => ({
+  runProphetSieve: mocks.runProphetSieveMock,
 }));
 
 // Keep the REAL assessSnapshotPublish so the guard tests exercise the
@@ -47,26 +53,31 @@ function evt(method = 'POST') {
   return { httpMethod: method, queryStringParameters: {}, headers: {}, body: '{}' } as any;
 }
 
-function fakeScan(overrides: Record<string, unknown> = {}) {
+function stage(partial = false) {
+  return { scored: 100, survived: 20, thresholdScore: 60, budgetMs: 100, partial };
+}
+
+function fakeSieve(overrides: Record<string, unknown> = {}) {
   return {
     picks: [
       { ticker: 'NVDA', composite: 88, conviction: 'high' },
       { ticker: 'AAPL', composite: 64, conviction: 'medium' },
     ],
     scanDurationMs: 120,
-    universeChecked: 2200,
-    tickersScanned: 2200,
+    universeChecked: 1900, // Stage-1 actually-scored
+    universeSize: 2200, // full universe
     warnings: [],
-    budgetExceeded: false,
-    regime: null,
+    meta: { stage1: stage(), stage2: stage(), stage3: stage() },
     ...overrides,
   };
 }
 
 beforeEach(() => {
-  mocks.runProphetScanMock.mockReset();
+  mocks.runProphetSieveMock.mockReset();
+  mocks.resolveUniverseMock.mockReset();
+  mocks.resolveUniverseMock.mockReturnValue([{ ticker: 'NVDA' }, { ticker: 'AAPL' }]);
   mocks.writeSnapshotMock.mockReset();
-  mocks.writeSnapshotMock.mockResolvedValue({ snapshotId: 'all-2026-06-10-1800', promotedToLatest: true });
+  mocks.writeSnapshotMock.mockResolvedValue({ snapshotId: 'all-2026-06-12-1800', promotedToLatest: true });
   mocks.pruneOldSnapshotsMock.mockReset();
   mocks.pruneOldSnapshotsMock.mockResolvedValue({ deleted: 0, kept: 0 });
   mocks.narrateAllMock.mockReset();
@@ -77,64 +88,69 @@ afterEach(() => {
   delete process.env.ANTHROPIC_API_KEY;
 });
 
-describe('scan-prophet-all-background (worker)', () => {
+describe('scan-prophet-all-background (worker, sieve)', () => {
   it('refuses non-POST', async () => {
     const res = (await handler(evt('GET'), {} as any, () => {})) as any;
     expect(res.statusCode).toBe(405);
-    expect(mocks.runProphetScanMock).not.toHaveBeenCalled();
+    expect(mocks.runProphetSieveMock).not.toHaveBeenCalled();
   });
 
-  it('writes status:complete and promotes on an in-budget scan', async () => {
-    mocks.runProphetScanMock.mockResolvedValue(fakeScan());
+  it('drives the full universe through the sieve (universe: all)', async () => {
+    mocks.runProphetSieveMock.mockResolvedValue(fakeSieve());
+    await handler(evt(), {} as any, () => {});
+    expect(mocks.runProphetSieveMock).toHaveBeenCalledOnce();
+    expect(mocks.runProphetSieveMock.mock.calls[0][0]).toMatchObject({ universe: 'all' });
+    expect(mocks.resolveUniverseMock).toHaveBeenCalledWith('all');
+  });
+
+  it('writes status:complete and promotes when all stages stay in budget', async () => {
+    mocks.runProphetSieveMock.mockResolvedValue(fakeSieve());
     const res = (await handler(evt(), {} as any, () => {})) as any;
     expect(res.statusCode).toBe(200);
-    expect(mocks.writeSnapshotMock).toHaveBeenCalledOnce();
     expect(mocks.writeSnapshotMock.mock.calls[0][0]).toBe('prophet');
     expect(mocks.writeSnapshotMock.mock.calls[0][1]).toBe('all');
-    expect(mocks.writeSnapshotMock.mock.calls[0][2]).toMatchObject({ status: 'complete' });
-    const body = JSON.parse(res.body);
-    expect(body.status).toBe('complete');
-    expect(body.promotedToLatest).toBe(true);
+    const written = mocks.writeSnapshotMock.mock.calls[0][2];
+    expect(written).toMatchObject({ status: 'complete', universeChecked: 1900, universeSize: 2200 });
+    expect(written.sieve.stage1.scored).toBe(100);
+    expect(JSON.parse(res.body).status).toBe('complete');
   });
 
-  it('CR-8: budgetExceeded ⇒ writeSnapshot receives status:partial ⇒ not promoted', async () => {
-    mocks.runProphetScanMock.mockResolvedValue(fakeScan({ budgetExceeded: true }));
-    mocks.writeSnapshotMock.mockResolvedValue({ snapshotId: 'all-2026-06-10-1800', promotedToLatest: false });
+  it('CR-8: any stage partial ⇒ status:partial ⇒ not promoted', async () => {
+    mocks.runProphetSieveMock.mockResolvedValue(
+      fakeSieve({ meta: { stage1: stage(true), stage2: stage(), stage3: stage() } }),
+    );
+    mocks.writeSnapshotMock.mockResolvedValue({ snapshotId: 'all-x', promotedToLatest: false });
     const res = (await handler(evt(), {} as any, () => {})) as any;
-    expect(res.statusCode).toBe(200);
     expect(mocks.writeSnapshotMock.mock.calls[0][2]).toMatchObject({ status: 'partial' });
-    const body = JSON.parse(res.body);
-    expect(body.status).toBe('partial');
-    expect(body.promotedToLatest).toBe(false);
+    expect(JSON.parse(res.body).promotedToLatest).toBe(false);
   });
 
   it('CR-8: a hollow complete result (0 picks / 2200 names) is demoted to partial by the publish guard', async () => {
-    mocks.runProphetScanMock.mockResolvedValue(fakeScan({ picks: [], budgetExceeded: false }));
-    mocks.writeSnapshotMock.mockResolvedValue({ snapshotId: 'all-2026-06-10-1800', promotedToLatest: false });
-    const res = (await handler(evt(), {} as any, () => {})) as any;
-    expect(res.statusCode).toBe(200);
+    mocks.runProphetSieveMock.mockResolvedValue(fakeSieve({ picks: [] }));
+    mocks.writeSnapshotMock.mockResolvedValue({ snapshotId: 'all-x', promotedToLatest: false });
+    await handler(evt(), {} as any, () => {});
     const written = mocks.writeSnapshotMock.mock.calls[0][2];
     expect(written.status).toBe('partial');
     expect(written.warnings).toContainEqual(expect.stringContaining('publish guard'));
   });
 
-  it('preserves the inline narrate step in the background worker', async () => {
-    const scan = fakeScan();
-    mocks.runProphetScanMock.mockResolvedValue(scan);
+  it('preserves the inline narrate step', async () => {
+    const sieve = fakeSieve();
+    mocks.runProphetSieveMock.mockResolvedValue(sieve);
     await handler(evt(), {} as any, () => {});
     expect(mocks.narrateAllMock).toHaveBeenCalledOnce();
-    expect(mocks.narrateAllMock).toHaveBeenCalledWith(scan.picks, expect.objectContaining({ concurrency: 4 }));
+    expect(mocks.narrateAllMock).toHaveBeenCalledWith(sieve.picks, expect.objectContaining({ concurrency: 4 }));
   });
 
   it('skips narration when ANTHROPIC_API_KEY is unset', async () => {
     delete process.env.ANTHROPIC_API_KEY;
-    mocks.runProphetScanMock.mockResolvedValue(fakeScan());
+    mocks.runProphetSieveMock.mockResolvedValue(fakeSieve());
     await handler(evt(), {} as any, () => {});
     expect(mocks.narrateAllMock).not.toHaveBeenCalled();
   });
 
-  it('returns 500 without writing when the scan throws', async () => {
-    mocks.runProphetScanMock.mockRejectedValue(new Error('boom'));
+  it('returns 500 without writing when the sieve throws', async () => {
+    mocks.runProphetSieveMock.mockRejectedValue(new Error('boom'));
     const res = (await handler(evt(), {} as any, () => {})) as any;
     expect(res.statusCode).toBe(500);
     expect(mocks.writeSnapshotMock).not.toHaveBeenCalled();
@@ -142,15 +158,13 @@ describe('scan-prophet-all-background (worker)', () => {
   });
 
   it('Wave 4A: prunes the runs/ history in keep-daily-close mode after the write', async () => {
-    mocks.runProphetScanMock.mockResolvedValue(fakeScan());
+    mocks.runProphetSieveMock.mockResolvedValue(fakeSieve());
     await handler(evt(), {} as any, () => {});
-    expect(mocks.pruneOldSnapshotsMock).toHaveBeenCalledWith('prophet', 'all', {
-      mode: 'keep-daily-close',
-    });
+    expect(mocks.pruneOldSnapshotsMock).toHaveBeenCalledWith('prophet', 'all', { mode: 'keep-daily-close' });
   });
 
   it('Wave 4A: a prune failure is best-effort — the worker still returns 200', async () => {
-    mocks.runProphetScanMock.mockResolvedValue(fakeScan());
+    mocks.runProphetSieveMock.mockResolvedValue(fakeSieve());
     mocks.pruneOldSnapshotsMock.mockRejectedValue(new Error('firestore down'));
     const res = (await handler(evt(), {} as any, () => {})) as any;
     expect(res.statusCode).toBe(200);
