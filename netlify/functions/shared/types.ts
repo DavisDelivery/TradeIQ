@@ -85,6 +85,13 @@ export interface EngineTestResponse {
   durationMs: number;
   target: Target | null;
   analysts: Record<string, AnalystOutput>;
+  /** Macro regime computed for the run (engine-test computes it for the
+   *  macro-bias input; surfaced so the UI's Macro Regime panel renders). */
+  regime?: Regime;
+  /** Daily bars loaded for the ticker (footer telemetry). */
+  barsLoaded?: number;
+  /** Total non-meta signal keys across all analysts (footer telemetry). */
+  totalSignals?: number;
   error?: string;
 }
 
