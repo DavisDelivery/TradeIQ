@@ -35,6 +35,19 @@
 [functions."catalyst-board"]
   timeout = 26
 
+# Lynch board runs a ~150-ticker GARP scan with a 24s budget. Without this
+# override it ran on Netlify's DEFAULT 10s ceiling, so its scan budget could
+# never finish and a cold index=all load reliably 504'd. Match the other
+# scan boards at 26s so the live path can complete.
+[functions."lynch-board"]
+  timeout = 26
+
+# Williams board runs a partial live scan (200/2435 names) on index=all,
+# ~16s warm. Same as lynch — it had no timeout stanza, so it ran on the 10s
+# default and was one slow provider away from a 504. Give it the 26s ceiling.
+[functions."williams-board"]
+  timeout = 26
+
 # Phase 6 PR-G0 — stock-detail fans out to ~10 providers in parallel
 # (bars × 3, fundamentals, earnings × 2, news, insider, sector-medians,
 # ticker-info). Each call is bounded internally by withTimeoutStatus
