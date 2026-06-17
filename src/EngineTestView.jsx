@@ -139,38 +139,42 @@ export const EngineTestView = () => {
             </div>
           )}
 
-          {Object.entries(result.analysts || {}).map(([name, data]) => (
-            <div key={name} className="border border-neutral-800 p-5">
-              <div className="flex items-center justify-between mb-3">
-                <div className="text-[10px] uppercase tracking-[0.2em] text-neutral-500 font-mono">{name}-analyst</div>
-                <div className="text-[11px] font-mono text-neutral-400">{data.signalCount} signal{data.signalCount !== 1 ? 's' : ''}</div>
-              </div>
-              {data.indicators && (
-                <div className="grid grid-cols-3 md:grid-cols-5 gap-3 mb-3 text-[11px] font-mono">
-                  {Object.entries(data.indicators).filter(([, v]) => v !== undefined).map(([k, v]) => (
-                    <div key={k}>
-                      <div className="text-neutral-500 uppercase tracking-widest text-[9px]">{k}</div>
-                      <div className="text-neutral-100">{v}</div>
-                    </div>
-                  ))}
+          {Object.entries(result.analysts || {}).map(([name, data]) => {
+            // The endpoint keys analysts by id (e.g. "technical-analyst") and
+            // emits { score, direction, confidence, rationale, signals } where
+            // `signals` is an OBJECT keyed by indicator name (meta keys are
+            // prefixed with "_"). Render the real fields the analyst produced.
+            const sig = Object.entries(data.signals || {}).filter(([k]) => !k.startsWith('_'));
+            return (
+              <div key={name} className="border border-neutral-800 p-5">
+                <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
+                  <div className="text-[10px] uppercase tracking-[0.2em] text-neutral-500 font-mono">{name.replace(/-/g, ' ')}</div>
+                  <div className="flex items-center gap-2">
+                    {Number.isFinite(data.score) && (
+                      <span className="font-mono text-sm text-emerald-400">{Math.round(data.score)}</span>
+                    )}
+                    {data.direction && <DirectionPill direction={data.direction} />}
+                    <span className="text-[11px] font-mono text-neutral-500">{sig.length} signal{sig.length !== 1 ? 's' : ''}</span>
+                  </div>
                 </div>
-              )}
-              {data.signals && data.signals.length > 0 && (
-                <div className="space-y-2">
-                  {data.signals.map((s, i) => (
-                    <div key={i} className="border-l-2 border-neutral-700 pl-3 py-1">
-                      <div className="flex items-center gap-2 text-[12px]">
-                        <span className="font-mono text-neutral-200">{s.type}</span>
-                        <span className="font-mono text-emerald-400">{s.score}</span>
-                        <DirectionPill direction={s.direction} />
+                {data.rationale && (
+                  <p className="text-[11px] text-neutral-400 leading-relaxed mb-3">{data.rationale}</p>
+                )}
+                {sig.length > 0 && (
+                  <div className="grid grid-cols-3 md:grid-cols-5 gap-3 text-[11px] font-mono">
+                    {sig.map(([k, v]) => (
+                      <div key={k}>
+                        <div className="text-neutral-500 uppercase tracking-widest text-[9px]">{k}</div>
+                        <div className="text-neutral-100">
+                          {typeof v === 'number' ? (Number.isInteger(v) ? v : v.toFixed(2)) : String(v)}
+                        </div>
                       </div>
-                      <div className="text-[11px] text-neutral-500 mt-0.5">{s.rationale}</div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          ))}
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })}
 
           <div className="text-[10px] font-mono text-neutral-600 uppercase tracking-widest text-center py-3">
             Loaded {result.barsLoaded} bars · {result.totalSignals} total signals · {result.durationMs}ms

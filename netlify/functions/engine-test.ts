@@ -36,6 +36,14 @@ export const handler: Handler = async (event) => {
       } as EngineTestResponse);
     }
 
+    // Surface the regime (already computed above for macroBias) + footer
+    // telemetry the UI renders. Without these the Macro Regime panel never
+    // showed and the footer read "Loaded undefined bars · undefined total
+    // signals".
+    const totalSignals = Object.values(analysts).reduce(
+      (n, a) => n + Object.keys(a.signals ?? {}).filter((k) => !k.startsWith('_')).length,
+      0,
+    );
     const response: EngineTestResponse = {
       ticker,
       price: target.price,
@@ -43,6 +51,9 @@ export const handler: Handler = async (event) => {
       durationMs: Date.now() - t0,
       target,
       analysts,
+      regime,
+      barsLoaded: barCache[ticker]?.length ?? 0,
+      totalSignals,
     };
     log.info('response', { status: 200, ticker, composite: target.composite, durationMs: Date.now() - t0 });
     return json(200, response);
