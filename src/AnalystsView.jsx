@@ -33,7 +33,7 @@ export const AnalystsView = ({ analysts }) => (
             <div className="mt-4 grid grid-cols-3 gap-4 pt-4 border-t border-neutral-800/60">
               <div>
                 <div className="text-[10px] uppercase tracking-widest text-neutral-500 font-mono">Signals 24h</div>
-                <div className="font-mono text-lg text-neutral-100 mt-1">{a.signalsToday}</div>
+                <div className="font-mono text-lg text-neutral-100 mt-1">{Number.isFinite(a.signalsToday) ? a.signalsToday : '—'}</div>
               </div>
               <div>
                 <div className="text-[10px] uppercase tracking-widest text-neutral-500 font-mono">Accuracy 7d</div>

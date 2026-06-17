@@ -12,6 +12,7 @@ import { LogButton } from './components/LogButton.jsx';
 import { FreshnessPill } from './components/FreshnessPill.jsx';
 import { SieveCoverageStrip } from './components/SieveCoverageStrip.jsx';
 import { useProphet } from './hooks/useProphet.js';
+import { useRegime } from './hooks/useRegime.js';
 import { useGenerateNarrative } from './hooks/useGenerateNarrative.js';
 import { FundamentalsStrip } from './components/detail/FundamentalsStrip.jsx';
 
@@ -43,6 +44,11 @@ export const ProphetView = () => {
   const [expandedTicker, setExpandedTicker] = useState(null);
   const { data, error, isLoading: loading, isFetching, forceRescan } =
     useProphet(universe, minConviction);
+  // The prophet-picks snapshot intentionally carries no macro regime (it
+  // would bolt a live FRED/VIX fetch onto the snapshot hot path). Pull the
+  // regime from the shared macro query instead — same cached entry the
+  // TopBar badge and Alerts view already use, so this adds no extra request.
+  const { data: regime } = useRegime();
   const isRescanning = isFetching && !loading;
 
   return (
@@ -73,21 +79,21 @@ export const ProphetView = () => {
       </div>
 
       {/* Regime header */}
-      {data?.regime && (
+      {regime?.regime && (
         <div className={`border p-2.5 mb-3 flex items-baseline justify-between ${
-          data.regime.regime === 'risk_on' ? 'border-emerald-500/30 bg-emerald-500/5' :
-          data.regime.regime === 'risk_off' ? 'border-rose-500/30 bg-rose-500/5' :
+          regime.regime === 'risk_on' ? 'border-emerald-500/30 bg-emerald-500/5' :
+          regime.regime === 'risk_off' ? 'border-rose-500/30 bg-rose-500/5' :
           'border-neutral-700 bg-neutral-900/40'
         }`}>
           <div className="flex items-baseline gap-2">
             <span className="text-[9px] font-mono text-neutral-500 uppercase tracking-widest">Regime</span>
             <span className={`text-[12px] font-bold uppercase tracking-wider ${
-              data.regime.regime === 'risk_on' ? 'text-emerald-400' :
-              data.regime.regime === 'risk_off' ? 'text-rose-400' : 'text-neutral-300'
-            }`}>{data.regime.regime?.replace('_', ' ')}</span>
-            <span className="text-[10px] text-neutral-500">({data.regime.conviction})</span>
+              regime.regime === 'risk_on' ? 'text-emerald-400' :
+              regime.regime === 'risk_off' ? 'text-rose-400' : 'text-neutral-300'
+            }`}>{regime.regime?.replace('_', ' ')}</span>
+            <span className="text-[10px] text-neutral-500">({regime.conviction})</span>
           </div>
-          <span className="text-[10px] font-mono text-neutral-500">VIX {data.regime.vol?.level?.toFixed(1)}</span>
+          <span className="text-[10px] font-mono text-neutral-500">VIX {regime.vol?.level?.toFixed(1)}</span>
         </div>
       )}
 

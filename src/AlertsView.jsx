@@ -17,11 +17,15 @@ export const AlertsView = () => {
   const earn = useEarnings(7);
   const reg = useRegime();
 
-  // Refresh = hand back to the underlying queries' refetch. Boards have
-  // forceRescan; non-board hooks use refetch.
+  // Refresh = hand back to the underlying queries. Boards expose forceRescan
+  // (matches the dedicated board views' refresh affordance); the non-board
+  // hooks only have refetch. Both board universes here are snapshot-backed
+  // (sp500), so forceRescan re-serves the latest snapshot rather than kicking
+  // an over-budget live scan. forceRescan returns a promise — swallow rejects
+  // so one failing board doesn't blow up the others.
   const refreshAll = () => {
-    board.refetch?.();
-    cat.refetch?.();
+    board.forceRescan?.().catch(() => {});
+    cat.forceRescan?.().catch(() => {});
     earn.refetch?.();
     reg.refetch?.();
   };
