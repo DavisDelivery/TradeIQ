@@ -143,7 +143,7 @@ export const OptionsFlowView = () => {
                 </div>
                 <div>
                   <div className="text-neutral-500 uppercase tracking-widest text-[9px]">ATM Strike</div>
-                  <div className="text-neutral-200 text-sm">${o.approxAtmStrike}</div>
+                  <div className="text-neutral-200 text-sm">{Number.isFinite(o.approxAtmStrike) ? `$${o.approxAtmStrike}` : '—'}</div>
                 </div>
               </div>
 

@@ -12,12 +12,17 @@ export const SettingsView = () => (
     <div className="border border-neutral-800 p-5">
       <h3 className="font-serif text-lg mb-4">Data Sources</h3>
       <div className="space-y-3">
+        {/* Status reflects the deployed Netlify env config. The four live
+            providers below are confirmed wired (they serve the prices,
+            earnings/insider, macro-rate, and narrative surfaces today);
+            TradeStation OAuth is the one integration still pending — the
+            options-flow surface runs in underlying-proxy mode until it lands. */}
         {[
-          { name: 'Polygon.io Stocks Advanced', purpose: 'Bulk scanning, prices, fundamentals, news', status: 'pending' },
+          { name: 'Polygon.io Stocks Advanced', purpose: 'Bulk scanning, prices, fundamentals, news', status: 'connected' },
           { name: 'TradeStation API', purpose: 'Real-time quotes, options chains, execution', status: 'pending' },
-          { name: 'Finnhub Premium', purpose: 'Earnings, revisions, insider transactions', status: 'pending' },
-          { name: 'FRED', purpose: 'Macro rates data (free)', status: 'pending' },
-          { name: 'Claude API', purpose: 'News sentiment, geopolitical synthesis, narratives', status: 'pending' },
+          { name: 'Finnhub Premium', purpose: 'Earnings, revisions, insider transactions', status: 'connected' },
+          { name: 'FRED', purpose: 'Macro rates data (free)', status: 'connected' },
+          { name: 'Claude API', purpose: 'News sentiment, geopolitical synthesis, narratives', status: 'connected' },
         ].map(s => (
           <div key={s.name} className="flex items-center justify-between py-2">
             <div className="flex items-center gap-3">
@@ -31,7 +36,7 @@ export const SettingsView = () => (
               s.status === 'connected' ? 'text-emerald-400 border-emerald-500/30 bg-emerald-500/10' :
               'text-amber-400 border-amber-500/30 bg-amber-500/10'
             }`}>
-              {s.status === 'connected' ? 'CONNECTED' : 'ADD KEY'}
+              {s.status === 'connected' ? 'CONNECTED' : 'PENDING'}
             </span>
           </div>
         ))}
