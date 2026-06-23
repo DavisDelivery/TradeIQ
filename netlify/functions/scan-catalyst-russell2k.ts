@@ -1,78 +1,84 @@
-// Per-universe scheduled scan: catalyst board.
-// Catalyst is the heaviest scan (4 providers per ticker — Quiver insider,
-// congressional, contracts, patents — plus setup detection). Per-universe
-// isolation is most important here; russell2k alone was blowing the 15-min cap.
+// Scheduled trigger for the russell2k catalyst scan.
 //
-// Board:    catalyst
-// Universe: russell2k (stored as 'russell2k')
-// Schedule: 0,30 13-21 * * 1-5
+// Cron: `0,30 13-21 * * 1-5` (every 30 min during market hours, weekdays).
+// Kept at the original russell2k slot.
 //
-// Split from Phase 1's multi-universe scan-catalyst.ts so each universe gets
-// its own 15-min Netlify background container instead of competing for one.
+// Previously this file ran the scan inline via `runCatalystScan`. Catalyst
+// is the heaviest board (4 providers/ticker); russell2k (~1928 names ×
+// 4 providers) blew well past Netlify's 15-min background ceiling and wrote
+// no snapshot from 2026-06-07 onward. It now adopts the same checkpoint-
+// resume pattern as the russell2k insider/target scans: a thin scheduled
+// trigger fires a background worker that batches the universe, checkpoints a
+// cursor in Firestore, and self-reinvokes via `Context.waitUntil` until the
+// sweep completes.
+//
+// The actual scan lives in `scan-catalyst-russell2k-background.ts`. The
+// trigger fires that worker with an empty body (fresh-start payload); the
+// worker generates its own runId and chains itself until the universe is done.
 
 import { schedule } from '@netlify/functions';
-import { runCatalystScan, type CatalystUniverseKey } from './shared/scan-catalyst';
-import { writeSnapshot, FRESHNESS_BUDGETS_MS, type UniverseKey } from './shared/snapshot-store';
-import { MODEL_VERSION } from './shared/model-version';
 import { logger } from './shared/logger';
+import { getAdminDb } from './shared/firebase-admin';
+import { recoverStuckRuns } from './shared/scan-resume/finalize';
 
-// 14 min — leaves 60s margin under the 15-min Netlify background timeout.
-const PER_SCAN_BUDGET_MS = 14 * 60_000;
-
-const UNIVERSE: CatalystUniverseKey = 'russell2k';
-const STORE_KEY: UniverseKey = 'russell2k';
+const WORKER_PATH = '/.netlify/functions/scan-catalyst-russell2k-background';
+const RUN_ID_PREFIX = 'catalyst-russell2k-';
 
 export const handler = schedule('0,30 13-21 * * 1-5', async () => {
-  const log = logger.child({ fn: 'scan-catalyst-russell2k', universe: UNIVERSE });
-  const overallStart = Date.now();
-  log.info('scheduled_scan_started', { board: 'catalyst', universe: UNIVERSE });
+  const log = logger.child({
+    fn: 'scan-catalyst-russell2k',
+    universe: 'russell2k',
+    schedule: '0,30 13-21 * * 1-5',
+  });
+  const origin = process.env.URL ?? 'https://tradeiq-alpha.netlify.app';
+  const url = `${origin}${WORKER_PATH}`;
+
+  // Recover stuck runs before dispatching a fresh scan. Best-effort; never
+  // blocks the fresh dispatch.
+  try {
+    const report = await recoverStuckRuns({
+      db: getAdminDb(),
+      runIdPrefix: RUN_ID_PREFIX,
+    });
+    if (report.recovered.length > 0) {
+      log.warn('stuck_runs_recovered', {
+        inspected: report.inspected,
+        recovered: report.recovered,
+      });
+    } else {
+      log.info('stuck_run_sweep_clean', { inspected: report.inspected });
+    }
+  } catch (err: any) {
+    log.error('stuck_run_recovery_failed', { err: String(err?.message ?? err) });
+  }
 
   try {
-    const scan = await runCatalystScan({
-      universe: UNIVERSE,
-      scanBudgetMs: PER_SCAN_BUDGET_MS,
-      concurrency: 8,
-      logger: log,
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
     });
-
-    const { snapshotId } = await writeSnapshot('catalyst', STORE_KEY, {
-      modelVersion: MODEL_VERSION,
-      generatedAt: new Date().toISOString(),
-      scanDurationMs: scan.scanDurationMs,
-      universeChecked: scan.universeChecked,
-      results: scan.picks,
-      freshnessBudgetMs: FRESHNESS_BUDGETS_MS.catalyst,
-      warnings: scan.warnings,
-    });
-
-    const count = scan.picks.length;
-    log.info('snapshot_written', {
-      snapshotId,
-      picks: count,
-      universeChecked: scan.universeChecked,
-      scanDurationMs: scan.scanDurationMs,
-      overallDurationMs: Date.now() - overallStart,
-    });
-
+    const body = await res.text();
+    log.info('worker_dispatched', { status: res.status, body: body.slice(0, 200) });
     return {
       statusCode: 200,
       body: JSON.stringify({
         ok: true,
         board: 'catalyst',
-        universe: UNIVERSE,
-        snapshotId,
-        picks: count,
-        universeChecked: scan.universeChecked,
-        scanDurationMs: scan.scanDurationMs,
-        warnings: scan.warnings,
+        universe: 'russell2k',
+        workerStatus: res.status,
       }),
     };
   } catch (err: any) {
-    const msg = String(err?.message ?? err);
-    log.error('scheduled_scan_failed', { err: msg, universe: UNIVERSE });
+    log.error('worker_dispatch_failed', { err: String(err?.message ?? err) });
     return {
       statusCode: 500,
-      body: JSON.stringify({ ok: false, board: 'catalyst', universe: UNIVERSE, error: msg }),
+      body: JSON.stringify({
+        ok: false,
+        board: 'catalyst',
+        universe: 'russell2k',
+        error: String(err?.message ?? err),
+      }),
     };
   }
 });
