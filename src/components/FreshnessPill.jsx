@@ -10,6 +10,7 @@
 
 import React from 'react';
 import { RefreshCw } from 'lucide-react';
+import { useQueryClient } from '@tanstack/react-query';
 
 function formatAge(ageMs) {
   if (ageMs == null || !Number.isFinite(ageMs)) return null;
@@ -24,9 +25,21 @@ function formatAge(ageMs) {
 }
 
 export function FreshnessPill({ meta, isRescanning = false, onForceRescan }) {
+  const qc = useQueryClient();
   const source = meta?.source;
   const ageMs = meta?.ageMs;
   const ageLabel = formatAge(ageMs);
+  // The endpoint sets this when a forced rescan kicked the background
+  // re-scan worker (snapshot-only universes can't inline-scan a full index).
+  const rescanDispatched = meta?.rescanDispatched === true;
+
+  // Force rescan also refreshes the live-price overlay immediately so the
+  // user sees something move even while composites re-scan in the bg.
+  const handleForceRescan = () => {
+    // Partial key — refresh every cached live-quote set across boards.
+    qc.invalidateQueries({ queryKey: ['tradeiq', 'liveQuotes'] });
+    if (onForceRescan) onForceRescan();
+  };
 
   let color = 'text-neutral-500 border-neutral-700 bg-neutral-950/40';
   let label = '—';
@@ -34,10 +47,12 @@ export function FreshnessPill({ meta, isRescanning = false, onForceRescan }) {
 
   if (source === 'snapshot') {
     color = 'text-emerald-400 border-emerald-500/40 bg-emerald-500/5';
-    label = ageLabel ? `Live · ${ageLabel}` : 'Live';
-    title = `Served from snapshot${meta?.modelVersion ? ' · model ' + meta.modelVersion : ''}${
+    // Honest: this is the SCAN age (prices are overlaid live separately).
+    // Calling a 16h-old scan "Live" was misleading.
+    label = ageLabel ? `Scan · ${ageLabel}` : 'Scan';
+    title = `Composites from the last scan${meta?.modelVersion ? ' · model ' + meta.modelVersion : ''}${
       meta?.generatedAt ? ' · ' + meta.generatedAt : ''
-    }`;
+    } · prices are live`;
   } else if (source === 'snapshot-stale') {
     // Phase 4h W2 — large universes never inline-scan; if the snapshot is
     // past its freshness budget we serve it stale-flagged so the user
@@ -79,15 +94,23 @@ export function FreshnessPill({ meta, isRescanning = false, onForceRescan }) {
       >
         {label}
       </span>
+      {rescanDispatched && !isRescanning && (
+        <span
+          className="px-2 py-1 text-[11px] font-medium border border-sky-500/40 bg-sky-500/5 text-sky-400 tracking-wide"
+          title="A full re-scan is running in the background; composites refresh in a few minutes. Prices are already live."
+        >
+          Rescan started
+        </span>
+      )}
       {onForceRescan && (
         <button
-          onClick={onForceRescan}
+          onClick={handleForceRescan}
           disabled={isRescanning}
           className="flex items-center gap-1 px-2 py-1 text-[11px] font-medium border border-neutral-800 bg-neutral-950/40 text-neutral-400 hover:border-neutral-700 hover:text-neutral-200 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-          title="Run a fresh capped scan, ignoring snapshot"
+          title="Refresh prices now and kick a full background re-scan (composites update in a few minutes)"
         >
           <RefreshCw className={`h-3 w-3 ${isRescanning ? 'animate-spin' : ''}`} />
-          {isRescanning ? 'Scanning…' : 'Force rescan'}
+          {isRescanning ? 'Refreshing…' : 'Force rescan'}
         </button>
       )}
     </div>

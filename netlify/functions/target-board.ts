@@ -32,6 +32,7 @@ import {
 } from './shared/snapshot-store';
 import { logger } from './shared/logger';
 import { MODEL_VERSION } from './shared/model-version';
+import { dispatchRescan } from './shared/rescan-dispatch';
 
 const PASS1_MAX_LIVE = 80;
 const PASS2_MAX_LIVE = 20;
@@ -69,8 +70,12 @@ export const handler: Handler = async (event) => {
   // bg-worker is the only thing that actually rescores large universes.
   if (force) {
     if (SNAPSHOT_ONLY_UNIVERSES.has(universe)) {
-      log.info('forced_rescan_redirected_to_snapshot', { universe });
-      return serveSnapshotOrEmpty(universe, snapshotUniverse, limit, log);
+      // Can't inline-scan a full index in a web request — kick the
+      // checkpoint-resume bg worker instead and serve the current snapshot
+      // with rescanDispatched:true so the UI says "rescan started".
+      const dispatched = await dispatchRescan('target-board', snapshotUniverse, log);
+      log.info('forced_rescan_dispatched', { universe, dispatched });
+      return serveSnapshotOrEmpty(universe, snapshotUniverse, limit, log, dispatched);
     }
     log.info('forced_partial_scan');
     return runLiveAndRespond(universe, limit, 'forced-partial', log);
@@ -171,6 +176,7 @@ function serveSnapshotOrEmpty(
   snapshotUniverse: UniverseKey,
   limit: number,
   log: ReturnType<typeof logger.child>,
+  rescanDispatched = false,
 ) {
   return (async () => {
     let snap;
@@ -194,6 +200,7 @@ function serveSnapshotOrEmpty(
         tickersScanned: 0,
         warnings: [],
         warning: 'no snapshot available yet',
+        rescanDispatched,
       });
     }
     const results = snap.results as any[];
@@ -211,6 +218,7 @@ function serveSnapshotOrEmpty(
       universeSize: snap.universeChecked,
       tickersScanned: snap.universeChecked ?? results.length,
       warnings: snap.warnings ?? [],
+      rescanDispatched,
     });
   })();
 }

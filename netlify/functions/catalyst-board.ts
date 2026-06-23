@@ -24,6 +24,7 @@ import {
 } from './shared/snapshot-store';
 import { logger } from './shared/logger';
 import { MODEL_VERSION } from './shared/model-version';
+import { dispatchRescan } from './shared/rescan-dispatch';
 
 type Filter = 'cluster' | 'patents' | 'political' | 'contracts' | 'setup' | 'all';
 type MinConviction = 'low' | 'medium' | 'high';
@@ -47,6 +48,7 @@ function catalystSnapshotResponse(
   source: 'snapshot' | 'snapshot-stale',
   ageMs: number,
   stale: boolean,
+  rescanDispatched = false,
 ) {
   const all = snap.results as CatalystPick[];
   const filtered = filterCatalystPicks(all, filter, minConviction);
@@ -58,6 +60,7 @@ function catalystSnapshotResponse(
     filter,
     minConviction,
     cached: true,
+    rescanDispatched,
     ...(stale ? { stale: true } : {}),
     generatedAt: snap.generatedAt,
     source,
@@ -109,10 +112,12 @@ export const handler: Handler = async (event) => {
   }
 
   if (snapshotUniverse && SNAPSHOT_ONLY_UNIVERSES.has(snapshotUniverse)) {
+    // Forced rescan can't inline-scan a full index — kick the bg worker.
+    const dispatched = force ? await dispatchRescan('catalyst', snapshotUniverse, log) : false;
     if (snap) {
       const ageMs = snapshotAgeMs(snap);
-      log.warn('snapshot_stale_serving_stale', { ageMs });
-      return catalystSnapshotResponse(snap, filter, minConviction, limit, 'snapshot-stale', ageMs, true);
+      log.warn('snapshot_stale_serving_stale', { ageMs, rescanDispatched: dispatched });
+      return catalystSnapshotResponse(snap, filter, minConviction, limit, 'snapshot-stale', ageMs, true, dispatched);
     }
     log.warn('snapshot_missing_no_inline_scan', { universe: snapshotUniverse });
     return json(200, {
@@ -128,6 +133,7 @@ export const handler: Handler = async (event) => {
       ageMs: 0,
       modelVersion: MODEL_VERSION,
       warning: 'no snapshot built yet for this universe; next scheduled scan will populate it',
+      rescanDispatched: dispatched,
     });
   }
 

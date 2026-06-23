@@ -27,6 +27,7 @@ import {
 } from './shared/snapshot-store';
 import { logger } from './shared/logger';
 import { MODEL_VERSION } from './shared/model-version';
+import { dispatchRescan } from './shared/rescan-dispatch';
 import type { InsiderBoardResponse, InsiderBoardRow } from './shared/types';
 
 const ALLOWED_WINDOWS = [30, 60, 90, 180] as const;
@@ -52,6 +53,7 @@ function insiderSnapshotResponse(
   source: 'snapshot' | 'snapshot-stale',
   ageMs: number,
   stale: boolean,
+  rescanDispatched = false,
 ) {
   const allRows = snap.results as InsiderBoardRow[];
   const windowed =
@@ -64,6 +66,7 @@ function insiderSnapshotResponse(
     windowDays,
     generatedAt: snap.generatedAt,
     cached: true,
+    rescanDispatched,
     ...(stale ? { stale: true } : {}),
     source,
     ageMs,
@@ -112,10 +115,12 @@ export const handler: Handler = async (event) => {
 
   // Large single universes: never live-scan — serve the snapshot (stale-flagged) or empty.
   if (snapshotUniverse && SNAPSHOT_ONLY_UNIVERSES.has(snapshotUniverse)) {
+    // Forced rescan can't inline-scan a full index — kick the bg worker.
+    const dispatched = force ? await dispatchRescan('insider', snapshotUniverse, log) : false;
     if (snap) {
       const ageMs = snapshotAgeMs(snap);
-      log.warn('snapshot_stale_serving_stale', { ageMs });
-      return insiderSnapshotResponse(snap, windowDays, limit, 'snapshot-stale', ageMs, true);
+      log.warn('snapshot_stale_serving_stale', { ageMs, rescanDispatched: dispatched });
+      return insiderSnapshotResponse(snap, windowDays, limit, 'snapshot-stale', ageMs, true, dispatched);
     }
     log.warn('snapshot_missing_no_inline_scan', { universe: snapshotUniverse });
     return json(200, {
@@ -128,6 +133,7 @@ export const handler: Handler = async (event) => {
       ageMs: 0,
       modelVersion: MODEL_VERSION,
       warning: 'no snapshot built yet for this universe; next scheduled scan will populate it',
+      rescanDispatched: dispatched,
     });
   }
 
