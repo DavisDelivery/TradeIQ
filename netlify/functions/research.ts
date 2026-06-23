@@ -24,6 +24,13 @@ const TTL_MS = 30 * 60 * 1000; // 30 min
 
 const SYSTEM_PROMPT = `You are an equity analyst writing a concise research brief. Be specific, cite real price levels and dates when present. No hype.
 
+Temporal grounding: the user message states today's date. Treat any event dated
+before today as ALREADY OCCURRED — never describe a past earnings date or event as
+"upcoming", "to watch", or a future catalyst. \`key_catalyst\` must be a genuinely
+FUTURE event (after today); if the only dated event in the source material is in the
+past, say so plainly (e.g. "Q1 already reported on <date>; next catalyst unconfirmed")
+rather than presenting the stale date as forward-looking.
+
 Output ONLY valid JSON matching this schema:
 {
   "summary": "2-3 sentences: the net thesis",
@@ -75,7 +82,12 @@ export const handler: Handler = async (event) => {
 
     const priceBlock = prev ? `Current ${ticker}: $${prev.c.toFixed(2)}, day ${((prev.c - prev.o) / prev.o * 100).toFixed(2)}%, volume ${(prev.v / 1e6).toFixed(1)}M.` : `Ticker ${ticker}, recent close unavailable.`;
 
-    const user = `${priceBlock}\n\nRecent news:\n${newsBlock}\n\nWrite the brief.`;
+    // Anchor the model to the real current date. Without this the model has
+    // no way to tell a past earnings date from an upcoming one and will
+    // present stale dates (e.g. a 3-month-old print) as a future "catalyst"
+    // — especially for thin-news microcaps. UTC date matches our snapshots.
+    const todayIso = new Date().toISOString().slice(0, 10);
+    const user = `Today's date is ${todayIso}.\n\n${priceBlock}\n\nRecent news:\n${newsBlock}\n\nWrite the brief.`;
 
     let data: { content: Array<{ type: string; text?: string }> };
     try {
