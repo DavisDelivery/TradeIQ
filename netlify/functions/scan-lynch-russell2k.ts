@@ -1,76 +1,84 @@
-// Per-universe scheduled scan: lynch board (daily, after US close).
+// Scheduled trigger for the russell2k lynch scan.
 //
-// Board:    lynch
-// Universe: russell2k (stored as 'russell2k')
-// Schedule: 0 22 * * 1-5
+// Cron: `0 22 * * 1-5` (22:00 UTC, weekdays, after US close). Kept at the
+// original russell2k slot.
 //
-// Split from Phase 1's multi-universe scan-lynch.ts so each universe gets
-// its own 15-min Netlify background container instead of competing for one.
+// Previously this file ran the scan inline via `runLynchScan`. After PR #66
+// grew russell2k to ~1928 names, the single-pass scan exceeded Netlify's
+// 15-min background ceiling and wrote no snapshot from 2026-06-09 onward.
+// It now adopts the same checkpoint-resume pattern as the insider/target
+// russell2k scans: a thin scheduled trigger fires a background worker that
+// batches the universe, checkpoints a cursor in Firestore, and self-
+// reinvokes via `Context.waitUntil` until the sweep completes.
+//
+// The actual scan lives in `scan-lynch-russell2k-background.ts`. The
+// trigger fires that worker with an empty body (fresh-start payload); the
+// worker generates its own runId and chains itself until the universe is
+// done.
 
 import { schedule } from '@netlify/functions';
-import { runLynchScan, type LynchUniverseKey } from './shared/scan-lynch';
-import { writeSnapshot, FRESHNESS_BUDGETS_MS, type UniverseKey } from './shared/snapshot-store';
-import { MODEL_VERSION } from './shared/model-version';
 import { logger } from './shared/logger';
+import { getAdminDb } from './shared/firebase-admin';
+import { recoverStuckRuns } from './shared/scan-resume/finalize';
 
-// 14 min — leaves 60s margin under the 15-min Netlify background timeout.
-const PER_SCAN_BUDGET_MS = 14 * 60_000;
-
-const UNIVERSE: LynchUniverseKey = 'russell2k';
-const STORE_KEY: UniverseKey = 'russell2k';
+const WORKER_PATH = '/.netlify/functions/scan-lynch-russell2k-background';
+const RUN_ID_PREFIX = 'lynch-russell2k-';
 
 export const handler = schedule('0 22 * * 1-5', async () => {
-  const log = logger.child({ fn: 'scan-lynch-russell2k', universe: UNIVERSE });
-  const overallStart = Date.now();
-  log.info('scheduled_scan_started', { board: 'lynch', universe: UNIVERSE });
+  const log = logger.child({
+    fn: 'scan-lynch-russell2k',
+    universe: 'russell2k',
+    schedule: '0 22 * * 1-5',
+  });
+  const origin = process.env.URL ?? 'https://tradeiq-alpha.netlify.app';
+  const url = `${origin}${WORKER_PATH}`;
+
+  // Recover stuck runs before dispatching a fresh scan. Best-effort; never
+  // blocks the fresh dispatch.
+  try {
+    const report = await recoverStuckRuns({
+      db: getAdminDb(),
+      runIdPrefix: RUN_ID_PREFIX,
+    });
+    if (report.recovered.length > 0) {
+      log.warn('stuck_runs_recovered', {
+        inspected: report.inspected,
+        recovered: report.recovered,
+      });
+    } else {
+      log.info('stuck_run_sweep_clean', { inspected: report.inspected });
+    }
+  } catch (err: any) {
+    log.error('stuck_run_recovery_failed', { err: String(err?.message ?? err) });
+  }
 
   try {
-    const scan = await runLynchScan({
-      universe: UNIVERSE,
-      scanBudgetMs: PER_SCAN_BUDGET_MS,
-      concurrency: 8,
-      minConfidence: 0,
-      logger: log,
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
     });
-
-    const { snapshotId } = await writeSnapshot('lynch', STORE_KEY, {
-      modelVersion: MODEL_VERSION,
-      generatedAt: new Date().toISOString(),
-      scanDurationMs: scan.scanDurationMs,
-      universeChecked: scan.universeChecked,
-      results: scan.candidates,
-      freshnessBudgetMs: FRESHNESS_BUDGETS_MS.lynch,
-      warnings: scan.warnings,
-    });
-
-    const count = scan.candidates.length;
-    log.info('snapshot_written', {
-      snapshotId,
-      candidates: count,
-      universeChecked: scan.universeChecked,
-      scanDurationMs: scan.scanDurationMs,
-      overallDurationMs: Date.now() - overallStart,
-    });
-
+    const body = await res.text();
+    log.info('worker_dispatched', { status: res.status, body: body.slice(0, 200) });
     return {
       statusCode: 200,
       body: JSON.stringify({
         ok: true,
         board: 'lynch',
-        universe: UNIVERSE,
-        snapshotId,
-        candidates: count,
-        universeChecked: scan.universeChecked,
-        scanDurationMs: scan.scanDurationMs,
-        warnings: scan.warnings,
+        universe: 'russell2k',
+        workerStatus: res.status,
       }),
     };
   } catch (err: any) {
-    const msg = String(err?.message ?? err);
-    log.error('scheduled_scan_failed', { err: msg, universe: UNIVERSE });
+    log.error('worker_dispatch_failed', { err: String(err?.message ?? err) });
     return {
       statusCode: 500,
-      body: JSON.stringify({ ok: false, board: 'lynch', universe: UNIVERSE, error: msg }),
+      body: JSON.stringify({
+        ok: false,
+        board: 'lynch',
+        universe: 'russell2k',
+        error: String(err?.message ?? err),
+      }),
     };
   }
 });

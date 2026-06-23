@@ -54,12 +54,122 @@ export interface RunLynchScanResult {
   budgetExceeded: boolean;
 }
 
+// Universe meta entry the Lynch scan iterates over (ticker + display +
+// sector). Kept structural so both the full scan and the batch slice
+// share the same shape.
+type LynchUniverseEntry = { ticker: string; name: string; sector: string };
+
+/** Resolve the ordered universe ticker list for a Lynch universe key.
+ *  The order is stable, so a checkpoint-resume worker can slice it by
+ *  index across invocations and never double-scan or skip a ticker. */
+export function resolveLynchUniverse(universe: LynchUniverseKey): LynchUniverseEntry[] {
+  return (universe === 'all' ? UNIVERSE : inIndex(universe)) as LynchUniverseEntry[];
+}
+
+// Score a single ticker. Shared by the full single-pass scan and the
+// checkpoint-resume batch worker so both produce identical candidates.
+// Returns null when the candidate falls below minConfidence.
+async function scoreLynchTicker(
+  t: LynchUniverseEntry,
+  minConfidence: number,
+): Promise<LynchCandidate | null> {
+  const ticker = t.ticker;
+  const [fund, earnings, snap] = await Promise.all([
+    getFundamentals(ticker).catch(() => null),
+    getEarningsHistory(ticker, 4).catch(() => []),
+    getPreviousClose(ticker).catch(() => null),
+  ]);
+  const s = runLynch({
+    ticker,
+    peRatio: fund?.ttmEps && snap ? snap.c / fund.ttmEps : undefined,
+    epsGrowthTTM: fund?.epsGrowthTTM,
+    revenueGrowthYoY: fund?.revenueGrowthYoY,
+    debtToEquity: fund?.debtToEquity,
+    operatingMargin: fund?.operatingMargin,
+    earningsHistory: earnings,
+    marketCapUsd: undefined,
+    recentReturnPct: undefined,
+    sector: t.sector,
+  });
+  if (s.confidence < minConfidence) return null;
+  const signal = deriveLynchSignalFromAnalyst(
+    { score: s.score, signals: s.signals },
+    { currentPrice: snap?.c, ttmEps: fund?.ttmEps },
+  );
+  return {
+    ticker,
+    name: t.name,
+    sector: t.sector,
+    score: s.score,
+    confidence: s.confidence,
+    rationale: s.rationale,
+    signals: s.signals,
+    side: sideFromScore(s.score),
+    signal,
+    price: snap?.c ?? null,
+  };
+}
+
+export interface RunLynchScanBatchOpts {
+  universe: LynchUniverseKey;
+  /** Index into the resolved universe to start this batch at. */
+  startIdx: number;
+  /** Number of tickers to consume this batch. */
+  batchSize: number;
+  concurrency?: number;
+  pacingMs?: number;
+  minConfidence?: number;
+  logger?: Logger;
+}
+
+export interface RunLynchScanBatchResult {
+  candidates: LynchCandidate[];
+  /** Tickers actually consumed (clamped at the universe boundary). The
+   *  resume worker advances its cursor by this. */
+  tickersConsumed: number;
+  warnings: string[];
+}
+
+/** Score one contiguous slice of the universe. Stateless — the
+ *  checkpoint-resume worker owns cursor/partial persistence and calls this
+ *  per batch. No internal time budget: the worker's watchdog bounds the
+ *  invocation, and a batch is small enough to finish well inside it. */
+export async function runLynchScanBatch(
+  opts: RunLynchScanBatchOpts,
+): Promise<RunLynchScanBatchResult> {
+  const log = opts.logger;
+  const all = resolveLynchUniverse(opts.universe);
+  const slice = all.slice(opts.startIdx, opts.startIdx + opts.batchSize);
+  const minConfidence = opts.minConfidence ?? 0;
+  const warnings: string[] = [];
+  const candidates: LynchCandidate[] = [];
+
+  const byTicker = new Map(slice.map((t) => [t.ticker, t]));
+  await mapWithConcurrency(
+    slice.map((t) => t.ticker),
+    async (ticker) => {
+      const cand = await scoreLynchTicker(byTicker.get(ticker)!, minConfidence);
+      if (cand) candidates.push(cand);
+      return cand;
+    },
+    {
+      batchSize: opts.concurrency ?? 8,
+      pacingMs: opts.pacingMs,
+      onError: (err, ticker) => {
+        log?.warn('lynch_ticker_error', { ticker, err: String(err) });
+      },
+    },
+  );
+
+  return { candidates, tickersConsumed: slice.length, warnings };
+}
+
 export async function runLynchScan(opts: RunLynchScanOpts): Promise<RunLynchScanResult> {
   const log = opts.logger;
   const start = Date.now();
   const warnings: string[] = [];
 
-  const all = opts.universe === 'all' ? UNIVERSE : inIndex(opts.universe);
+  const all = resolveLynchUniverse(opts.universe);
   const universeChecked = all.length;
   const cap = opts.scanCap ?? Infinity;
   const scanList = isFinite(cap) ? all.slice(0, cap) : all;
@@ -75,45 +185,12 @@ export async function runLynchScan(opts: RunLynchScanOpts): Promise<RunLynchScan
   let budgetExceeded = false;
   const candidates: LynchCandidate[] = [];
 
+  const byTicker = new Map(scanList.map((t) => [t.ticker, t]));
   await mapWithConcurrency(
     scanList.map((t) => t.ticker),
     async (ticker) => {
-      const t = scanList.find((x) => x.ticker === ticker)!;
-      const [fund, earnings, snap] = await Promise.all([
-        getFundamentals(ticker).catch(() => null),
-        getEarningsHistory(ticker, 4).catch(() => []),
-        getPreviousClose(ticker).catch(() => null),
-      ]);
-      const s = runLynch({
-        ticker,
-        peRatio: fund?.ttmEps && snap ? snap.c / fund.ttmEps : undefined,
-        epsGrowthTTM: fund?.epsGrowthTTM,
-        revenueGrowthYoY: fund?.revenueGrowthYoY,
-        debtToEquity: fund?.debtToEquity,
-        operatingMargin: fund?.operatingMargin,
-        earningsHistory: earnings,
-        marketCapUsd: undefined,
-        recentReturnPct: undefined,
-        sector: t.sector,
-      });
-      if (s.confidence < minConfidence) return null;
-      const signal = deriveLynchSignalFromAnalyst(
-        { score: s.score, signals: s.signals },
-        { currentPrice: snap?.c, ttmEps: fund?.ttmEps },
-      );
-      const cand: LynchCandidate = {
-        ticker,
-        name: t.name,
-        sector: t.sector,
-        score: s.score,
-        confidence: s.confidence,
-        rationale: s.rationale,
-        signals: s.signals,
-        side: sideFromScore(s.score),
-        signal,
-        price: snap?.c ?? null,
-      };
-      candidates.push(cand);
+      const cand = await scoreLynchTicker(byTicker.get(ticker)!, minConfidence);
+      if (cand) candidates.push(cand);
       return cand;
     },
     {
