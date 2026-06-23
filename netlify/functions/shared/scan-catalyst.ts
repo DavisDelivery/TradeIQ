@@ -80,6 +80,121 @@ function patentStub(ticker: string): PatentActivity {
   };
 }
 
+// Universe meta entry the catalyst scan iterates over.
+type CatalystUniverseEntry = { ticker: string; name: string; sector: string };
+
+/** Resolve the ordered universe ticker list for a catalyst universe key.
+ *  Stable order so a checkpoint-resume worker can slice it by index across
+ *  invocations without double-scan or skip. */
+export function resolveCatalystUniverse(
+  universe: CatalystUniverseKey,
+): CatalystUniverseEntry[] {
+  return (universe === 'all' ? UNIVERSE : inIndex(universe)) as CatalystUniverseEntry[];
+}
+
+// Score a single ticker. Shared by the full single-pass scan and the
+// checkpoint-resume batch worker so both produce identical picks.
+// `providerNull` is true when a TRANSPORT failure on insider/political/
+// contracts caused the ticker to be skipped (NOT scored neutral).
+async function scoreCatalystTicker(
+  t: CatalystUniverseEntry,
+  from: string,
+  to: string,
+): Promise<{ pick: CatalystPick | null; providerNull: boolean }> {
+  const ticker = t.ticker;
+  const [insider, political, contracts, bars] = await Promise.all([
+    getInsiderActivity(ticker, 90).catch(() => null),
+    getPoliticalActivity(ticker, 180).catch(() => null),
+    getGovContractActivity(ticker, 180).catch(() => null),
+    getDailyBars(ticker, from, to).catch(() => [] as Awaited<ReturnType<typeof getDailyBars>>),
+  ]);
+  const patents = patentStub(ticker);
+  if (!insider || !political || !contracts) {
+    return { pick: null, providerNull: true };
+  }
+  if (bars.length < 60) return { pick: null, providerNull: false };
+
+  const setups = detectSetups(bars);
+  const cat = scoreCatalysts({ ticker, insider, patents, political, contracts, setups });
+
+  const latest = bars.at(-1)!;
+  const prev = bars.at(-2);
+  const priceChangePct = prev ? ((latest.c - prev.c) / prev.c) * 100 : 0;
+
+  const pick: CatalystPick = {
+    ...cat,
+    name: t.name,
+    sector: t.sector,
+    price: +latest.c.toFixed(2),
+    priceChangePct: +priceChangePct.toFixed(2),
+    setupLabels: setups.map((s) => s.label),
+  };
+  return { pick, providerNull: false };
+}
+
+// Bar-lookback window dates, computed from wall-clock. Exposed so the
+// resume worker can derive the same window per batch.
+export function catalystBarWindow(): { from: string; to: string } {
+  const to = new Date().toISOString().slice(0, 10);
+  const from = new Date(Date.now() - CATALYST_BAR_LOOKBACK_DAYS * 86400000)
+    .toISOString()
+    .slice(0, 10);
+  return { from, to };
+}
+
+export interface RunCatalystScanBatchOpts {
+  universe: CatalystUniverseKey;
+  startIdx: number;
+  batchSize: number;
+  concurrency?: number;
+  pacingMs?: number;
+  logger?: Logger;
+}
+
+export interface RunCatalystScanBatchResult {
+  picks: CatalystPick[];
+  tickersConsumed: number;
+  /** TRANSPORT-failure skips this batch (insider/political/contracts null). */
+  providerNullSkips: number;
+  warnings: string[];
+}
+
+/** Score one contiguous slice of the universe. Stateless — the
+ *  checkpoint-resume worker owns cursor/partial persistence and calls this
+ *  per batch. No internal time budget: the worker's watchdog bounds the
+ *  invocation. */
+export async function runCatalystScanBatch(
+  opts: RunCatalystScanBatchOpts,
+): Promise<RunCatalystScanBatchResult> {
+  const log = opts.logger;
+  const all = resolveCatalystUniverse(opts.universe);
+  const slice = all.slice(opts.startIdx, opts.startIdx + opts.batchSize);
+  const { from, to } = catalystBarWindow();
+  const warnings: string[] = [];
+  const picks: CatalystPick[] = [];
+  let providerNullSkips = 0;
+
+  const byTicker = new Map(slice.map((t) => [t.ticker, t]));
+  await mapWithConcurrency(
+    slice.map((t) => t.ticker),
+    async (ticker) => {
+      const { pick, providerNull } = await scoreCatalystTicker(byTicker.get(ticker)!, from, to);
+      if (providerNull) providerNullSkips += 1;
+      if (pick) picks.push(pick);
+      return pick;
+    },
+    {
+      batchSize: opts.concurrency ?? 8,
+      pacingMs: opts.pacingMs,
+      onError: (err, ticker) => {
+        log?.warn('catalyst_ticker_error', { ticker, err: String(err) });
+      },
+    },
+  );
+
+  return { picks, tickersConsumed: slice.length, providerNullSkips, warnings };
+}
+
 export async function runCatalystScan(
   opts: RunCatalystScanOpts,
 ): Promise<RunCatalystScanResult> {
@@ -87,7 +202,7 @@ export async function runCatalystScan(
   const start = Date.now();
   const warnings: string[] = [];
 
-  const all = opts.universe === 'all' ? UNIVERSE : inIndex(opts.universe);
+  const all = resolveCatalystUniverse(opts.universe);
   const universeChecked = all.length;
   const cap = opts.scanCap ?? Infinity;
   const scanList = isFinite(cap) ? all.slice(0, cap) : all;
@@ -99,10 +214,7 @@ export async function runCatalystScan(
     budgetMs: opts.scanBudgetMs,
   });
 
-  const to = new Date().toISOString().slice(0, 10);
-  const from = new Date(Date.now() - CATALYST_BAR_LOOKBACK_DAYS * 86400000)
-    .toISOString()
-    .slice(0, 10);
+  const { from, to } = catalystBarWindow();
 
   let budgetExceeded = false;
   // M8 follow-through: providers now resolve null on TRANSPORT failures
@@ -112,46 +224,13 @@ export async function runCatalystScan(
   let providerNullSkips = 0;
   const picks: CatalystPick[] = [];
 
+  const byTicker = new Map(scanList.map((t) => [t.ticker, t]));
   await mapWithConcurrency(
     scanList.map((t) => t.ticker),
     async (ticker) => {
-      const t = scanList.find((x) => x.ticker === ticker)!;
-      const [insider, political, contracts, bars] = await Promise.all([
-        getInsiderActivity(ticker, 90).catch(() => null),
-        getPoliticalActivity(ticker, 180).catch(() => null),
-        getGovContractActivity(ticker, 180).catch(() => null),
-        getDailyBars(ticker, from, to).catch(() => [] as Awaited<ReturnType<typeof getDailyBars>>),
-      ]);
-      const patents = patentStub(ticker);
-      if (!insider || !political || !contracts) {
-        providerNullSkips += 1;
-        return null;
-      }
-      if (bars.length < 60) return null;
-
-      const setups = detectSetups(bars);
-      const cat = scoreCatalysts({
-        ticker,
-        insider,
-        patents,
-        political,
-        contracts,
-        setups,
-      });
-
-      const latest = bars.at(-1)!;
-      const prev = bars.at(-2);
-      const priceChangePct = prev ? ((latest.c - prev.c) / prev.c) * 100 : 0;
-
-      const pick: CatalystPick = {
-        ...cat,
-        name: t.name,
-        sector: t.sector,
-        price: +latest.c.toFixed(2),
-        priceChangePct: +priceChangePct.toFixed(2),
-        setupLabels: setups.map((s) => s.label),
-      };
-      picks.push(pick);
+      const { pick, providerNull } = await scoreCatalystTicker(byTicker.get(ticker)!, from, to);
+      if (providerNull) providerNullSkips += 1;
+      if (pick) picks.push(pick);
       return pick;
     },
     {
