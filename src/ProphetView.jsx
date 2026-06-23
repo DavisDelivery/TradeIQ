@@ -12,6 +12,7 @@ import { LogButton } from './components/LogButton.jsx';
 import { FreshnessPill } from './components/FreshnessPill.jsx';
 import { SieveCoverageStrip } from './components/SieveCoverageStrip.jsx';
 import { useProphet } from './hooks/useProphet.js';
+import { useLiveRows } from './hooks/useLiveQuotes.js';
 import { useRegime } from './hooks/useRegime.js';
 import { useGenerateNarrative } from './hooks/useGenerateNarrative.js';
 import { FundamentalsStrip } from './components/detail/FundamentalsStrip.jsx';
@@ -50,6 +51,9 @@ export const ProphetView = () => {
   // TopBar badge and Alerts view already use, so this adds no extra request.
   const { data: regime } = useRegime();
   const isRescanning = isFetching && !loading;
+  // Overlay live price/%-change so picks show a current quote even when the
+  // prophet snapshot is hours old.
+  const livePicks = useLiveRows(data?.picks);
 
   return (
     <div className="px-3 py-4 sm:p-6 max-w-[1400px] mx-auto pb-20 sm:pb-6">
@@ -172,9 +176,9 @@ export const ProphetView = () => {
         </div>
       )}
 
-      {data?.picks && data.picks.length > 0 && (
+      {livePicks && livePicks.length > 0 && (
         <div className="space-y-2">
-          {data.picks.map((p) => (
+          {livePicks.map((p) => (
             <ProphetRow
               key={p.ticker}
               pick={p}

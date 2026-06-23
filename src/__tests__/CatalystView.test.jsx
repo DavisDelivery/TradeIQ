@@ -17,6 +17,13 @@ vi.mock('../hooks/useCatalyst.js', () => ({
   useCatalyst: (...args) => mockUseCatalyst(...args),
 }));
 
+// Live-quote overlay is orthogonal to this render smoke test and pulls in
+// TanStack Query (needs a provider); stub it as a pass-through.
+vi.mock('../hooks/useLiveQuotes.js', () => ({
+  useLiveRows: (rows) => rows ?? [],
+  useLiveQuotes: () => ({ quotesByTicker: {}, isFetching: false }),
+}));
+
 vi.mock('../components/FreshnessPill.jsx', () => ({
   FreshnessPill: () => <div data-testid="freshness-pill" />,
 }));

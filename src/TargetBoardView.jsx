@@ -19,6 +19,7 @@ import { useStockDetailsFanout, FANOUT_METRIC_FIELDS } from './hooks/useStockDet
 import { fmtMcap, fmtNum1, fmtNum2, fmtPct1 } from './lib/formatters.jsx';
 import { useSortable, SortableTh } from './lib/useSortable.jsx';
 import { useTargetBoard } from './hooks/useTargetBoard.js';
+import { useLiveRows } from './hooks/useLiveQuotes.js';
 import { useBreakpoint } from './hooks/useBreakpoint.js';
 import { MasterDetail } from './layout/MasterDetail.jsx';
 
@@ -272,20 +273,24 @@ export const TargetBoardView = ({ targets, onOpenTarget, scanMeta, freshnessPill
   const [filterDirection, setFilterDirection] = useState('all');
   const { isDesktop } = useBreakpoint();
 
+  // Overlay live price/%-change onto the scored targets so the cards show
+  // a current quote even when the scan snapshot is hours old.
+  const liveTargets = useLiveRows(targets);
+
   const filtered = useMemo(() => {
-    return targets
+    return liveTargets
       .filter(t => filterTier === 'all' || t.tier === filterTier)
       .filter(t => filterDirection === 'all' || t.direction === filterDirection)
       .sort((a, b) => b.composite - a.composite);
-  }, [targets, filterTier, filterDirection]);
+  }, [liveTargets, filterTier, filterDirection]);
 
   const breakdown = useMemo(() => ({
-    A: targets.filter(t => t.tier === 'A').length,
-    B: targets.filter(t => t.tier === 'B').length,
-    C: targets.filter(t => t.tier === 'C').length,
-    long: targets.filter(t => t.direction === 'long').length,
-    short: targets.filter(t => t.direction === 'short').length,
-  }), [targets]);
+    A: liveTargets.filter(t => t.tier === 'A').length,
+    B: liveTargets.filter(t => t.tier === 'B').length,
+    C: liveTargets.filter(t => t.tier === 'C').length,
+    long: liveTargets.filter(t => t.direction === 'long').length,
+    short: liveTargets.filter(t => t.direction === 'short').length,
+  }), [liveTargets]);
 
   return (
     <div className={isDesktop ? 'px-6 py-5' : 'px-3 py-4 sm:p-6 max-w-[1600px] mx-auto'}>
