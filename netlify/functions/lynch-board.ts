@@ -10,6 +10,7 @@ import {
 } from './shared/snapshot-store';
 import { logger } from './shared/logger';
 import { MODEL_VERSION } from './shared/model-version';
+import { dispatchRescan } from './shared/rescan-dispatch';
 
 const SCAN_BUDGET_MS = 24_000;
 const LIVE_SCAN_CAP = 150;
@@ -30,6 +31,7 @@ function lynchSnapshotResponse(
   source: 'snapshot' | 'snapshot-stale',
   ageMs: number,
   stale: boolean,
+  rescanDispatched = false,
 ) {
   const all = snap.results as any[];
   const filtered = all.filter((r) => r.confidence >= minConfidence);
@@ -39,6 +41,7 @@ function lynchSnapshotResponse(
     generatedAt: snap.generatedAt,
     source,
     cached: true,
+    rescanDispatched,
     ...(stale ? { stale: true } : {}),
     ageMs,
     modelVersion: snap.modelVersion,
@@ -86,10 +89,13 @@ export const handler: Handler = async (event) => {
   }
 
   if (snapshotUniverse && SNAPSHOT_ONLY_UNIVERSES.has(snapshotUniverse)) {
+    // Forced rescan can't inline-scan a full index — kick the bg worker
+    // (only russell2k has one today; sp500 lynch stays serve-snapshot).
+    const dispatched = force ? await dispatchRescan('lynch', snapshotUniverse, log) : false;
     if (snap) {
       const ageMs = snapshotAgeMs(snap);
-      log.warn('snapshot_stale_serving_stale', { ageMs });
-      return lynchSnapshotResponse(snap, indexFilter, minConfidence, limit, 'snapshot-stale', ageMs, true);
+      log.warn('snapshot_stale_serving_stale', { ageMs, rescanDispatched: dispatched });
+      return lynchSnapshotResponse(snap, indexFilter, minConfidence, limit, 'snapshot-stale', ageMs, true, dispatched);
     }
     log.warn('snapshot_missing_no_inline_scan', { universe: snapshotUniverse });
     return json(200, {
@@ -106,6 +112,7 @@ export const handler: Handler = async (event) => {
       count: 0,
       candidates: [],
       warning: 'no snapshot built yet for this universe; next scheduled scan will populate it',
+      rescanDispatched: dispatched,
     });
   }
 
