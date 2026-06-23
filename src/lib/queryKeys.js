@@ -13,6 +13,11 @@
 export const queryKeys = {
   all: ['tradeiq'],
 
+  // Live price/%-change overlay (useLiveQuotes). Keyed by the sorted,
+  // comma-joined ticker set so distinct board views share a cache when
+  // they request the same symbols.
+  liveQuotes: (key) => ['tradeiq', 'liveQuotes', key],
+
   // Board queries — keyed by universe so switching universes doesn't
   // pollute the previous universe's cache.
   targetBoard: (universe) => ['tradeiq', 'targetBoard', universe],

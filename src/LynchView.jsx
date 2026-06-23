@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Shield } from 'lucide-react';
 import { FreshnessPill } from './components/FreshnessPill.jsx';
 import { useLynch } from './hooks/useLynch.js';
+import { useLiveRows } from './hooks/useLiveQuotes.js';
 import { useSortable, SortableTh } from './lib/useSortable.jsx';
 import { useBreakpoint } from './hooks/useBreakpoint.js';
 import { MasterDetail } from './layout/MasterDetail.jsx';
@@ -39,7 +40,9 @@ export const LynchView = ({ universe = 'sp500' }) => {
   const { sortKey, sortDir, sortBy, sortRows } = useSortable('verdictRank', 'desc');
   const { isDesktop } = useBreakpoint();
 
-  const baseRows = (data?.candidates ?? []).map(normalize);
+  // Overlay live price onto each candidate (lynch shows current price for
+  // comparison to the fair-value band; no intraday %-change column).
+  const baseRows = useLiveRows((data?.candidates ?? []).map(normalize), { pctKey: null });
   // Phase 6 PR-G — enrich rows with fundamentals metrics so MCap/PE/PS/ROE/DE
   // columns sort cleanly. Shares queryKeys with FundamentalsStrip → one
   // ticker = one fetch across both surfaces.

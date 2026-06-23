@@ -6,6 +6,7 @@ import {
 import { useSortable, SortableTh } from './lib/useSortable.jsx';
 import { FreshnessPill } from './components/FreshnessPill.jsx';
 import { useInsider } from './hooks/useInsider.js';
+import { useLiveRows } from './hooks/useLiveQuotes.js';
 import { useBreakpoint } from './hooks/useBreakpoint.js';
 import { FundamentalsStrip } from './components/detail/FundamentalsStrip.jsx';
 
@@ -84,7 +85,9 @@ export const InsiderBoardView = ({ universe = 'all' }) => {
     window.history.replaceState({}, '', u.toString());
   }, [windowDays, view]);
 
-  const rows = data?.rows ?? [];
+  // Overlay live price onto each row (insider shows price but no
+  // %-change, so only the price field is refreshed).
+  const rows = useLiveRows(data?.rows ?? [], { pctKey: null });
 
   // Apply view filter BEFORE sort so the count + sortRows agree.
   const filtered = useMemo(() => {

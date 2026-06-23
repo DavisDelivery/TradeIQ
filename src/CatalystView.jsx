@@ -7,6 +7,7 @@ import { CatalystBadges, ConvictionChip, CatalystChip } from './components/Catal
 import { LogButton } from './components/LogButton.jsx';
 import { FreshnessPill } from './components/FreshnessPill.jsx';
 import { useCatalyst } from './hooks/useCatalyst.js';
+import { useLiveRows } from './hooks/useLiveQuotes.js';
 import { FundamentalsStrip } from './components/detail/FundamentalsStrip.jsx';
 
 const FILTER_OPTIONS = [
@@ -31,6 +32,9 @@ export const CatalystView = ({ universe = 'sp500', onNavigate }) => {
   const { data, error, isLoading: loading, isFetching, forceRescan } =
     useCatalyst(universe, filter, minConviction);
   const isRescanning = isFetching && !loading;
+  // Overlay live price/%-change so picks show a current quote even when the
+  // catalyst snapshot is hours old.
+  const livePicks = useLiveRows(data?.picks);
 
   return (
     <div className="px-3 py-4 sm:p-6 max-w-[1400px] mx-auto pb-20 sm:pb-6">
@@ -85,12 +89,12 @@ export const CatalystView = ({ universe = 'sp500', onNavigate }) => {
 
       {data && data.picks && (
         <div className="space-y-2">
-          {data.picks.length === 0 ? (
+          {livePicks.length === 0 ? (
             <div className="text-center text-neutral-500 py-12 text-sm">
               No tickers match these filters. Try widening conviction or signal.
             </div>
           ) : (
-            data.picks.map((p) => (
+            livePicks.map((p) => (
               <CatalystRow
                 key={p.ticker}
                 pick={p}
