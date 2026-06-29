@@ -244,7 +244,14 @@ export function scoreInsiderActivity(a: InsiderActivity): {
     const biggest = a.clusters.reduce((x, y) => (y.buyerCount > x.buyerCount ? y : x));
     raw += Math.min(40, biggest.buyerCount * 10);
     tags.push(`${biggest.buyerCount}-insider cluster`);
-    parts.push(`${biggest.buyerCount} insiders bought within 14d ($${fmtK(biggest.totalDollarValue)})`);
+    // "14d" here is the CLUSTER span (insiders buying within 14 days of each
+    // other), NOT "within the last 14 days" — the cluster can sit anywhere in
+    // the lookback window. State the latest buy date so the rationale never
+    // implies a recency it doesn't have (the old "bought within 14d" wording
+    // read as last-14-days and was misleading on a weeks-old cluster).
+    parts.push(
+      `${biggest.buyerCount}-insider cluster, latest buy ${biggest.windowEnd} ($${fmtK(biggest.totalDollarValue)})`,
+    );
   }
 
   // C-suite detection only fires if a downstream caller fills `position`.
