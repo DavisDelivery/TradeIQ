@@ -305,6 +305,14 @@
   to = "/.netlify/functions/backtest-runs-trigger"
   status = 200
 
+# FIX-1 W1 — zombie-run recovery sweep (POST only, enforced in-function).
+# Marks stale running/pending backtestRuns docs failed. Like /start, this
+# literal segment MUST precede the dynamic :runId route.
+[[redirects]]
+  from = "/api/backtest-runs/recover"
+  to = "/.netlify/functions/backtest-runs-recover"
+  status = 200
+
 # Detail endpoint: /api/backtest-runs/:runId → handler reads runId from
 # queryStringParameters (Netlify path-param convention).
 [[redirects]]

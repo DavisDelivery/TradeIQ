@@ -341,6 +341,34 @@ async function persistSubcollection<T>(
   }
 }
 
+/**
+ * FIX-1 W2 — terminal write for a run the validity guard rejected.
+ * Distinct from 'failed' (infrastructure/exception death): an 'invalid'
+ * run RAN to completion but measured nothing (no PIT path / ≥90% null
+ * candidates). NO metrics are written — an invalid run must never
+ * render official numbers (the avaa64 failure mode).
+ */
+export async function persistRunInvalid(
+  runId: string,
+  reason: string,
+  extras: { warnings?: string[]; nullRatePct?: number } = {},
+): Promise<void> {
+  await db()
+    .collection(COLLECTION)
+    .doc(runId)
+    .set(
+      {
+        status: 'invalid',
+        invalidAt: new Date().toISOString(),
+        error: reason,
+        ...(extras.nullRatePct !== undefined ? { nullRatePct: extras.nullRatePct } : {}),
+        ...(extras.warnings ? { warnings: extras.warnings.slice(0, 50) } : {}),
+        cursor: null,
+      },
+      { merge: true },
+    );
+}
+
 export async function persistRunFailure(
   runId: string,
   error: string,

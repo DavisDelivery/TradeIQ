@@ -47,18 +47,24 @@ import { DesktopShell } from './layout/DesktopShell.jsx';
 import { RegimeStrip } from './layout/RegimeStrip.jsx';
 
 
-const APP_VERSION = '0.19.26-alpha';
+// FIX-1 — APP_VERSION now lives in the shared module so /api/health and
+// the frontend report the same version. Bump it THERE.
+import { APP_VERSION } from '../netlify/functions/shared/app-version';
 
 // Phase 4k W1 — single navigation source-of-truth shared by the mobile
 // TopBar and the desktop Sidebar. Mobile renders the same array as a
 // horizontal scroller; desktop renders it as the vertical sidebar nav.
+// FIX-1 W4 — verdict enforcement: Williams + Lynch measured NO VALIDATED
+// EDGE (see netlify/functions/shared/verdicts.ts) and are demoted off the
+// default nav into the trailing "Unvalidated" section. Target stays in
+// place with a PENDING chip until the W3 composite runs land; its nav
+// fate then follows the pre-committed rule in
+// reports/fix-1/composite-verdict.md.
 const VIEWS = [
   { id: 'board', label: 'Target Board', shortLabel: 'Board', icon: Target },
   { id: 'prophet', label: 'Prophet', shortLabel: 'Prophet', icon: Sparkles },
   { id: 'catalyst', label: 'Catalyst', shortLabel: 'Catalyst', icon: Zap },
   { id: 'insiders', label: 'Insiders', shortLabel: 'Insiders', icon: Eye },
-  { id: 'williams', label: 'Williams', shortLabel: 'Williams', icon: Activity },
-  { id: 'lynch', label: 'Lynch', shortLabel: 'Lynch', icon: Shield },
   { id: 'earnings', label: 'Earnings', shortLabel: 'Earnings', icon: Zap },
   { id: 'history', label: 'History', shortLabel: 'History', icon: Clock },
   { id: 'options', label: 'Options Flow', shortLabel: 'Options', icon: Cpu },
@@ -70,6 +76,8 @@ const VIEWS = [
   { id: 'alerts', label: 'Alerts', shortLabel: 'Alerts', icon: Bell },
   { id: 'journal', label: 'Journal', shortLabel: 'Journal', icon: BookMarked },
   { id: 'settings', label: 'Settings', shortLabel: 'Settings', icon: Settings },
+  { id: 'williams', label: 'Williams', shortLabel: 'Williams', icon: Activity, section: 'unvalidated' },
+  { id: 'lynch', label: 'Lynch', shortLabel: 'Lynch', icon: Shield, section: 'unvalidated' },
 ];
 
 // ======================================================================
@@ -158,19 +166,30 @@ const TopBar = ({ activeView, setActiveView, regime, universeStats }) => {
         {/* Desktop: inline nav (tabs fit on one row) */}
         <nav className="hidden sm:block flex-1 min-w-0 overflow-x-auto scrollbar-hide">
           <div className="flex items-center justify-end gap-1 whitespace-nowrap">
-            {views.map(v => (
-              <button
-                key={v.id}
-                onClick={() => setActiveView(v.id)}
-                className={`flex items-center gap-1.5 px-3 h-8 text-[13px] font-medium transition-all flex-shrink-0 ${
-                  activeView === v.id
-                    ? 'text-emerald-400 bg-emerald-500/10 border-b-2 border-emerald-400'
-                    : 'text-neutral-400 hover:text-neutral-200 border-b-2 border-transparent'
-                }`}
-              >
-                <v.icon className="h-3.5 w-3.5" />
-                {v.label}
-              </button>
+            {views.map((v, i) => (
+              <React.Fragment key={v.id}>
+                {v.section === 'unvalidated' && views[i - 1]?.section !== 'unvalidated' && (
+                  <span
+                    className="px-2 text-[9px] font-mono uppercase tracking-widest text-neutral-600 border-l border-neutral-800 ml-1 pl-3"
+                    title="Boards with a measured NO VALIDATED EDGE verdict"
+                  >
+                    Unvalidated
+                  </span>
+                )}
+                <button
+                  onClick={() => setActiveView(v.id)}
+                  className={`flex items-center gap-1.5 px-3 h-8 text-[13px] font-medium transition-all flex-shrink-0 ${
+                    activeView === v.id
+                      ? 'text-emerald-400 bg-emerald-500/10 border-b-2 border-emerald-400'
+                      : v.section === 'unvalidated'
+                        ? 'text-neutral-600 hover:text-neutral-400 border-b-2 border-transparent'
+                        : 'text-neutral-400 hover:text-neutral-200 border-b-2 border-transparent'
+                  }`}
+                >
+                  <v.icon className="h-3.5 w-3.5" />
+                  {v.label}
+                </button>
+              </React.Fragment>
             ))}
           </div>
         </nav>
@@ -201,7 +220,9 @@ const TopBar = ({ activeView, setActiveView, regime, universeStats }) => {
                 className={`relative shrink-0 snap-center flex items-center justify-center gap-1.5 h-11 px-3.5 transition-colors ${
                   active
                     ? 'text-emerald-400'
-                    : 'text-neutral-500 active:text-neutral-300'
+                    : v.section === 'unvalidated'
+                      ? 'text-neutral-700 active:text-neutral-400'
+                      : 'text-neutral-500 active:text-neutral-300'
                 }`}
               >
                 {active && (

@@ -1,34 +1,47 @@
-// Checkpoint-resume background worker for the russell2k catalyst scan.
+// Checkpoint-resume background worker for the earnings board scan.
 //
-// Why this exists: catalyst is the heaviest board (4 providers/ticker).
-// PR #66 grew russell2k to ~1928 names; the old single-shot
-// `scan-catalyst-russell2k` (1928 × 4 providers) then far exceeded
-// Netlify's 15-min background-container ceiling and wrote NO snapshot from
-// 2026-06-07 onward (catalyst/russell2k went stale → /api/health 503).
-// This worker brings russell2k catalyst onto the checkpoint-resume
-// machinery the russell2k insider/target scans already use to survive
-// full-index sizes.
+// FIX-1 W1 — adapted from `scan-lynch-russell2k-background.ts` (#96),
+// which is itself the #95/#97 pattern: the scheduled trigger
+// (`scan-earnings.ts`, cron `50 11,23 * * 1-5`) POSTs the initial
+// invocation with an empty body. Each invocation:
+//   1. Reads `scanRuns/{runId}` for an existing cursor; resumes if
+//      present, else starts fresh.
+//   2. FRESH START ONLY: resolves the calendar-driven universe ONCE
+//      (Finnhub calendar range, paced + 429-retried, watchlist-probe
+//      fallback) and persists the resolved entries on the run doc so
+//      every resumed invocation walks the SAME universe — the calendar
+//      may change between invocations, the run's universe must not.
+//      A FAILED calendar resolution ends the run `error` immediately
+//      and publishes nothing: the previous good `_latest` stays served.
+//      (The pre-FIX-1 monolith published the hollow snapshot instead —
+//      that unguarded write is the bug that blanked the earnings board.)
+//   3. Loops `runEarningsScanBatch` BATCH_SIZE entries at a time,
+//      writing scored setups to the partial subcollection; the cursor
+//      advances after each batch. Breaks when the 13-min watchdog
+//      trips; self-reinvokes via `Context.waitUntil(fetch(...))`.
+//   4. On the terminal (finalizing) invocation: reads back every
+//      partial doc, sorts by (date asc, ticker), runs the publish
+//      guard, writes ONE snapshot via `writeSnapshot` under the 'all'
+//      store key, prunes runs/ to 30, deletes partials. The guard
+//      decision is stamped on the run doc (`publishAction` /
+//      `publishReason`) so /api/scan-status can explain an `error` run.
 //
-// The scheduled trigger (`scan-catalyst-russell2k.ts`) POSTs the initial
-// invocation. Each invocation batches `runCatalystScanBatch`, checkpoints a
-// Firestore cursor, and self-reinvokes until the walk completes; a
-// dedicated finalizing invocation reads back the partials, sorts by
-// composite desc, writes ONE snapshot, and atomically swaps `_latest`.
-// Adapted from scan-insider-russell2k-background.ts — catalyst per-batch
-// function + pick shape; provider-null skips surface as a warning but do
-// NOT trip the publish guard's failure-rate branch (small-universe catalyst
-// runs routinely skip many tickers on transient Quiver gaps).
+// The previous complete snapshot stays served at `_latest` for the whole
+// scan; only the terminal step's guarded writeSnapshot flips the pointer.
+// NO Claude in the scan path (rule-based scoring only).
 
 import type { Handler } from '@netlify/functions';
 import { logger } from './shared/logger';
 import { getAdminDb } from './shared/firebase-admin';
 import { MODEL_VERSION } from './shared/model-version';
 import {
-  runCatalystScanBatch,
-  resolveCatalystUniverse,
-  type CatalystUniverseKey,
-  type CatalystPick,
-} from './shared/scan-catalyst';
+  runEarningsScanBatch,
+  resolveEarningsScanUniverse,
+  EARNINGS_SCHEDULED_WINDOW_DAYS,
+  POST_PRINT_LOOKBACK_DAYS,
+  type EarningsCalendarEntry,
+} from './shared/scan-earnings';
+import type { EarningsSetup } from './shared/types';
 import {
   writeSnapshot,
   FRESHNESS_BUDGETS_MS,
@@ -55,16 +68,18 @@ import {
   type ReinvokeContext,
 } from './shared/backtest-resume/reinvoke';
 
-const UNIVERSE: CatalystUniverseKey = 'russell2k';
-const STORE_KEY: UniverseKey = 'russell2k';
-const BOARD = 'catalyst';
-const WORKER_PATH = '/.netlify/functions/scan-catalyst-russell2k-background';
+const STORE_KEY: UniverseKey = 'all';
+const BOARD = 'earnings';
+const UNIVERSE_LABEL = 'all';
 
-const BUDGET_MS = Number(process.env.CATALYST_SCAN_BUDGET_MS ?? 13 * 60_000);
-// Catalyst per-ticker work is 3 Quiver calls + a Polygon bars fetch + local
-// setup detection. 40 keeps each batch inside the watchdog window.
-const BATCH_SIZE = Number(process.env.CATALYST_SCAN_BATCH_SIZE ?? 40);
-const CONCURRENCY = Number(process.env.CATALYST_SCAN_CONCURRENCY ?? 8);
+// 13-min wall-clock budget leaves 90s margin under Netlify's 15-min
+// background-function kill ceiling.
+const BUDGET_MS = Number(process.env.EARNINGS_SCAN_BUDGET_MS ?? 13 * 60_000);
+// Earnings per-entry work is bars (Polygon) + earnings history (Finnhub,
+// paced through the shared token bucket). 40 keeps each batch well
+// inside the watchdog window even when the bucket is draining slowly.
+const BATCH_SIZE = Number(process.env.EARNINGS_SCAN_BATCH_SIZE ?? 40);
+const CONCURRENCY = Number(process.env.EARNINGS_SCAN_CONCURRENCY ?? 10);
 const RETENTION_KEEP = 30;
 
 interface WorkerPayload {
@@ -72,12 +87,27 @@ interface WorkerPayload {
   resume?: boolean;
 }
 
+/** Run-doc field where the fresh-start invocation persists the resolved
+ *  calendar universe for resumed invocations to read back. */
+const CALENDAR_FIELD = 'calendarEntries';
+
+async function readPersistedCalendar(
+  db: ReturnType<typeof getAdminDb>,
+  runId: string,
+): Promise<EarningsCalendarEntry[] | null> {
+  const snap = await db.collection('scanRuns').doc(runId).get();
+  if (!snap.exists) return null;
+  const data = snap.data();
+  const entries = data?.[CALENDAR_FIELD];
+  return Array.isArray(entries) ? (entries as EarningsCalendarEntry[]) : null;
+}
+
 export const handler: Handler = async (event, context) => {
   if (event.httpMethod !== 'POST') {
     return { statusCode: 405, body: 'Method Not Allowed' };
   }
 
-  const log = logger.child({ fn: 'scan-catalyst-russell2k-background', universe: UNIVERSE });
+  const log = logger.child({ fn: 'scan-earnings-background', universe: UNIVERSE_LABEL });
 
   let payload: WorkerPayload = {};
   try {
@@ -91,7 +121,7 @@ export const handler: Handler = async (event, context) => {
   const db = getAdminDb();
 
   const isResume = payload.resume === true && typeof payload.runId === 'string';
-  const runId = isResume ? (payload.runId as string) : newRunId(UNIVERSE);
+  const runId = isResume ? (payload.runId as string) : newRunId();
 
   let cursor: ScanCursor | null = null;
   if (isResume) {
@@ -105,17 +135,50 @@ export const handler: Handler = async (event, context) => {
     }
   }
 
-  const allTickers = resolveCatalystUniverse(UNIVERSE);
-  const totalTickers = allTickers.length;
+  const warnings: string[] = [];
+  let entries: EarningsCalendarEntry[];
 
   if (!cursor) {
+    // Fresh start — resolve the calendar universe ONCE and persist it.
+    const resolution = await resolveEarningsScanUniverse({
+      windowDays: EARNINGS_SCHEDULED_WINDOW_DAYS,
+      postPrintLookbackDays: POST_PRINT_LOOKBACK_DAYS,
+      logger: log,
+    });
+    warnings.push(...resolution.warnings);
+    entries = resolution.entries;
+
+    if (resolution.calendarFailed || entries.length === 0) {
+      // Publish guard, applied at the earliest possible point: a failed
+      // or empty calendar resolution means there is NOTHING trustworthy
+      // to scan. End the run as error with the reason stamped; the
+      // previous good `_latest` snapshot stays served.
+      const reason = resolution.calendarFailed
+        ? `earnings calendar resolution FAILED (${resolution.warnings.join('; ') || 'no detail'}); refusing to scan/publish`
+        : 'earnings calendar resolved to 0 entries; nothing to scan, not publishing';
+      log.warn('calendar_resolution_unusable', { runId, reason });
+      await clearScanCursor(db, runId, 'error', {
+        publishAction: 'skip',
+        publishReason: reason,
+      });
+      return {
+        statusCode: 200,
+        body: JSON.stringify({ ok: false, runId, skipped: true, reason }),
+      };
+    }
+
+    await db
+      .collection('scanRuns')
+      .doc(runId)
+      .set({ [CALENDAR_FIELD]: entries }, { merge: true });
+
     cursor = {
-      universe: UNIVERSE,
+      universe: UNIVERSE_LABEL,
       board: BOARD,
       status: 'running',
       phase: 'scanning',
       nextTickerIndex: 0,
-      totalTickers,
+      totalTickers: entries.length,
       invocationCount: 1,
       startedAt: new Date().toISOString(),
       lastInvocationStartedAt: new Date().toISOString(),
@@ -126,8 +189,19 @@ export const handler: Handler = async (event, context) => {
       apiErrors: 0,
     };
     await writeScanCursor(db, runId, cursor);
-    log.info('scan_started', { runId, universe: UNIVERSE, totalTickers });
+    log.info('scan_started', { runId, universe: UNIVERSE_LABEL, totalTickers: entries.length });
   } else {
+    const persisted = await readPersistedCalendar(db, runId);
+    if (!persisted || persisted.length === 0) {
+      const msg = 'resume without persisted calendar entries; failing run';
+      log.error('resume_calendar_missing', { runId });
+      await clearScanCursor(db, runId, 'error', {
+        publishAction: 'skip',
+        publishReason: msg,
+      });
+      return { statusCode: 500, body: JSON.stringify({ ok: false, runId, error: msg }) };
+    }
+    entries = persisted;
     cursor = {
       ...cursor,
       invocationCount: cursor.invocationCount + 1,
@@ -135,14 +209,18 @@ export const handler: Handler = async (event, context) => {
     };
     log.info('scan_resumed', {
       runId,
-      universe: UNIVERSE,
+      universe: UNIVERSE_LABEL,
       invocationCount: cursor.invocationCount,
       nextTickerIndex: cursor.nextTickerIndex,
-      totalTickers,
+      totalTickers: cursor.totalTickers,
       phase: getCursorPhase(cursor),
     });
   }
 
+  const totalTickers = cursor.totalTickers;
+
+  // Dedicated terminal-step invocation — the finalizing step gets its own
+  // fresh 15-min platform budget.
   if (getCursorPhase(cursor) === 'finalizing') {
     log.info('scan_finalizing_invocation', {
       runId,
@@ -151,7 +229,7 @@ export const handler: Handler = async (event, context) => {
       totalTickers,
     });
     await writeScanCursor(db, runId, cursor);
-    return await runTerminalStep({ db, log, runId, cursor, warnings: [] });
+    return await runTerminalStep({ db, log, runId, cursor, warnings });
   }
 
   let watchdogExpired = false;
@@ -165,15 +243,13 @@ export const handler: Handler = async (event, context) => {
   });
   watchdog.start();
 
-  const warnings: string[] = [];
   let batchesThisInvocation = 0;
-
   let activeCursor: ScanCursor = cursor;
   try {
     while (activeCursor.nextTickerIndex < totalTickers && !watchdog.isExpired()) {
       const batchStart: number = activeCursor.nextTickerIndex;
-      const batchResult = await runCatalystScanBatch({
-        universe: UNIVERSE,
+      const batchResult = await runEarningsScanBatch({
+        entries,
         startIdx: batchStart,
         batchSize: BATCH_SIZE,
         concurrency: CONCURRENCY,
@@ -181,12 +257,12 @@ export const handler: Handler = async (event, context) => {
       });
       warnings.push(...batchResult.warnings);
 
-      if (batchResult.picks.length > 0) {
-        await appendPartialBatch<CatalystPick>(
+      if (batchResult.setups.length > 0) {
+        await appendPartialBatch<EarningsSetup>(
           db,
           runId,
           activeCursor.partialBatchCount,
-          batchResult.picks,
+          batchResult.setups,
         );
       }
 
@@ -194,12 +270,10 @@ export const handler: Handler = async (event, context) => {
         ...activeCursor,
         nextTickerIndex: batchStart + batchResult.tickersConsumed,
         partialBatchCount:
-          activeCursor.partialBatchCount + (batchResult.picks.length > 0 ? 1 : 0),
-        scoredCount: activeCursor.scoredCount + batchResult.picks.length,
+          activeCursor.partialBatchCount + (batchResult.setups.length > 0 ? 1 : 0),
+        scoredCount: activeCursor.scoredCount + batchResult.setups.length,
         apiCalls: (activeCursor.apiCalls ?? 0) + batchResult.tickersConsumed,
-        // apiErrors carries provider-null skips for the terminal warning
-        // ONLY — it is NOT fed to the publish guard's failure-rate branch.
-        apiErrors: (activeCursor.apiErrors ?? 0) + batchResult.providerNullSkips,
+        apiErrors: (activeCursor.apiErrors ?? 0) + batchResult.tickersErrored,
       };
       batchesThisInvocation += 1;
       await writeScanCursor(db, runId, activeCursor);
@@ -224,9 +298,14 @@ export const handler: Handler = async (event, context) => {
       headers[k] = v ?? undefined;
     }
   }
-  const reinvokeUrl = inferFunctionUrl(headers, WORKER_PATH);
+  const reinvokeUrl = inferFunctionUrl(
+    headers,
+    '/.netlify/functions/scan-earnings-background',
+  );
   const reinvokeCtx: ReinvokeContext = context as unknown as ReinvokeContext;
 
+  // Universe walk complete — transition to 'finalizing' and reinvoke once
+  // more so the terminal step gets its own fresh 15-min platform budget.
   if (cursor.nextTickerIndex >= totalTickers) {
     log.info('scan_walk_complete_dispatching_finalizing', {
       runId,
@@ -265,6 +344,7 @@ export const handler: Handler = async (event, context) => {
     };
   }
 
+  // Non-terminal mid-walk — checkpoint and reinvoke.
   log.info('scan_batch_continuing', {
     runId,
     invocationCount: cursor.invocationCount,
@@ -305,6 +385,13 @@ export const handler: Handler = async (event, context) => {
   };
 };
 
+// ====================================================================
+// Terminal step — extracted so the finalizing-phase entry branch can
+// invoke it with a fresh 15-min platform budget. Idempotent: re-reading
+// the partials and re-writing the snapshot for the same runId is safe;
+// clearScanCursor runs only at the very end.
+// ====================================================================
+
 interface TerminalStepArgs {
   db: ReturnType<typeof getAdminDb>;
   log: ReturnType<typeof logger.child>;
@@ -326,19 +413,23 @@ async function runTerminalStep(args: TerminalStepArgs) {
     phase: getCursorPhase(cursor),
   });
 
-  const allRows = await readAllPartialBatches<CatalystPick>(db, runId);
-  allRows.sort((a, b) => b.composite - a.composite);
+  const allRows = await readAllPartialBatches<EarningsSetup>(db, runId);
+  // Stable presentation order: soonest report date first, then ticker
+  // (matches the calendar-driven order the single-pass scan produced).
+  allRows.sort((a, b) =>
+    a.reportDate === b.reportDate
+      ? a.ticker.localeCompare(b.ticker)
+      : a.reportDate < b.reportDate
+        ? -1
+        : 1,
+  );
 
-  // Failure-rate branch intentionally disabled (totalCalls/errors = 0):
-  // catalyst routinely skips many tickers on transient provider gaps, so
-  // only the empty-universe guard applies (don't overwrite _latest with a
-  // fully-empty scan).
   const decision = assessSnapshotPublish({
     resultCount: allRows.length,
     universeChecked: totalTickers,
-    totalCalls: 0,
-    rateLimitedCalls: 0,
-    errorCalls: 0,
+    totalCalls: cursor.apiCalls ?? 0,
+    rateLimitedCalls: cursor.apiRateLimited ?? 0,
+    errorCalls: cursor.apiErrors ?? 0,
   });
   log.info('publish_guard_decision', {
     runId,
@@ -346,14 +437,7 @@ async function runTerminalStep(args: TerminalStepArgs) {
     reason: decision.reason,
     resultCount: allRows.length,
     universeChecked: totalTickers,
-    providerNullSkips: cursor.apiErrors ?? 0,
   });
-
-  if ((cursor.apiErrors ?? 0) > 0) {
-    warnings.push(
-      `provider data unavailable (insider/political/contracts) for ${cursor.apiErrors} tickers — skipped, not scored as neutral`,
-    );
-  }
 
   let snapshotId: string | null = null;
   if (decision.action === 'skip') {
@@ -384,6 +468,9 @@ async function runTerminalStep(args: TerminalStepArgs) {
       results: sized.results,
       freshnessBudgetMs: FRESHNESS_BUDGETS_MS[BOARD],
       warnings,
+      degraded: decision.action === 'publish-degraded' ? true : undefined,
+      degradedReason:
+        decision.action === 'publish-degraded' ? decision.reason : undefined,
       truncated: sized.truncated ? true : undefined,
       originalResultCount: sized.truncated ? sized.originalCount : undefined,
     });
@@ -433,7 +520,7 @@ async function runTerminalStep(args: TerminalStepArgs) {
   };
 }
 
-function newRunId(universe: string): string {
+function newRunId(): string {
   const now = new Date();
   const yyyy = now.getUTCFullYear();
   const mm = String(now.getUTCMonth() + 1).padStart(2, '0');
@@ -441,8 +528,8 @@ function newRunId(universe: string): string {
   const hh = String(now.getUTCHours()).padStart(2, '0');
   const min = String(now.getUTCMinutes()).padStart(2, '0');
   const ss = String(now.getUTCSeconds()).padStart(2, '0');
-  return `catalyst-${universe}-${yyyy}${mm}${dd}-${hh}${min}${ss}`;
+  return `earnings-all-${yyyy}${mm}${dd}-${hh}${min}${ss}`;
 }
 
 // Exposed for tests.
-export const _internals = { BUDGET_MS, BATCH_SIZE, RETENTION_KEEP, newRunId };
+export const _internals = { BUDGET_MS, BATCH_SIZE, RETENTION_KEEP, newRunId, CALENDAR_FIELD };

@@ -409,7 +409,10 @@ async function runTerminalStep(args: TerminalStepArgs) {
   let snapshotId: string | null = null;
   if (decision.action === 'skip') {
     log.warn('publish_guard_skip', { runId, reason: decision.reason });
-    await clearScanCursor(db, runId, 'error');
+    await clearScanCursor(db, runId, 'error', {
+      publishAction: decision.action,
+      publishReason: decision.reason ?? null,
+    });
   } else {
     // Phase 4p W2 — size safety. InsiderBoardRow's `filings` array can
     // be fat for a high-activity ticker; combined with up to ~hundreds
@@ -444,7 +447,10 @@ async function runTerminalStep(args: TerminalStepArgs) {
       originalResultCount: sized.truncated ? sized.originalCount : undefined,
     });
     snapshotId = written.snapshotId;
-    await clearScanCursor(db, runId, 'done');
+    await clearScanCursor(db, runId, 'done', {
+      publishAction: decision.action,
+      publishReason: decision.reason ?? null,
+    });
   }
 
   // Partial-batch cleanup runs whether or not we published — the

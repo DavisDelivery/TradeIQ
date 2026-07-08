@@ -534,9 +534,16 @@ const DAILY_CLOSE_SLOTS: Partial<
 > = {
   // Only largecap scans daily; russell2k/all run the intraday sieve crons.
   prophet: { slot: { hourUtc: 22, minuteUtc: 0 }, universes: ['largecap'] },
+  // Insider slots are staggered per-universe (russell2k 21:30 … sp500
+  // 22:45 after FIX-1); 21:30 (the earliest) stays the conservative
+  // schedule-aware bound for the whole board.
   insider: { slot: { hourUtc: 21, minuteUtc: 30 } },
   lynch: { slot: { hourUtc: 22, minuteUtc: 0 } },
-  earnings: { slot: { hourUtc: 21, minuteUtc: 30 } },
+  // FIX-1 W1 — evening earnings scan moved 21:30 → 23:50 UTC, out of
+  // the Finnhub-contention window (see scan-earnings.ts). The evening
+  // slot is the schedule-aware freshness bound; the 11:50 morning run
+  // is covered by the 12h budget floor.
+  earnings: { slot: { hourUtc: 23, minuteUtc: 50 } },
 };
 
 /**

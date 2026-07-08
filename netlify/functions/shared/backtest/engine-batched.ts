@@ -34,6 +34,7 @@ import {
 import { buildPortfolio, diffPortfolios } from './portfolio';
 import { applyCosts } from './costs';
 import { computeMetrics } from './metrics';
+import { assessRunValidity, InvalidBacktestRunError } from './validity';
 import { _engineInternals, lastCloseAtOrBefore, barWindowIsImmutable } from './engine';
 import type {
   AttributionRecord,
@@ -101,6 +102,14 @@ export interface RegularBacktestState {
    * defaulting on resume: cursors persisted before Wave 3B predate it.
    */
   missingBarStreaks?: Record<string, number>;
+  /**
+   * FIX-1 W2 — attempts that produced a non-null ScoredCandidate, for
+   * the finalize-time validity guard (≥90%-null runs are invalid).
+   * Optional with `?? 0` defaulting: cursors persisted before FIX-1
+   * predate the field (their runs skip the null-rate rule via
+   * `undefined` → treated as not trackable, warning rule still applies).
+   */
+  scoredCandidateTotal?: number;
 }
 
 export interface ProcessBatchOptions {
@@ -379,6 +388,9 @@ export async function processRegularBatch(
       (state.scoredOutsideUniverseTotal ?? 0) +
       scored.filter((c) => c.metadata?.outsideCurrentUniverse === true).length;
 
+    // FIX-1 W2 — non-null candidate counter for the validity guard.
+    state.scoredCandidateTotal = (state.scoredCandidateTotal ?? 0) + scored.length;
+
     // 4. Portfolio target
     const target = buildPortfolio(scored, config.portfolio);
 
@@ -643,6 +655,24 @@ export function finalizeRegularBacktest(opts: FinalizeOptions): BacktestResult {
     if (first && last && first > 0) {
       benchTotalRet = (last - first) / first;
     }
+  }
+
+  // FIX-1 W2 — validity guard, mirrored from engine.ts. Throws
+  // InvalidBacktestRunError BEFORE any metrics exist; the bg-function
+  // catches it and persists status 'invalid' with no metrics (the
+  // avaa64 target run must never happen again). A resumed pre-FIX-1
+  // cursor has no scoredCandidateTotal — the null-rate rule is skipped
+  // for those (counter undefined ⇒ treated as fully-scored), while the
+  // no-PIT-path warning rule still applies via allWarnings.
+  const validity = assessRunValidity({
+    tickerAttemptTotal: state.tickerAttemptTotal,
+    scoredCandidateTotal: state.scoredCandidateTotal ?? state.tickerAttemptTotal,
+    tickerFailureTotal: state.tickerFailureTotal,
+    warnings,
+    config,
+  });
+  if (!validity.valid) {
+    throw new InvalidBacktestRunError(validity.reason ?? 'run assessed invalid');
   }
 
   const metrics = computeMetrics({

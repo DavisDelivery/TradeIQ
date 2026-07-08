@@ -10,6 +10,7 @@ import { fmt, tierColor, tierGlow, analystIcon, analystLabel, safeTimestamp } fr
 import { ConvictionBadge, DirectionPill } from './components/Badges.jsx';
 import { ResearchPanel } from './components/ResearchPanel.jsx';
 import { FreshnessPill } from './components/FreshnessPill.jsx';
+import { VerdictChip } from './components/VerdictChip.jsx';
 import { LogButton } from './components/LogButton.jsx';
 import { AnalystContributions } from './components/AnalystContributions.jsx';
 import { CompanyInfo } from './components/CompanyInfo.jsx';
@@ -298,6 +299,7 @@ export const TargetBoardView = ({ targets, onOpenTarget, scanMeta, freshnessPill
         <div>
           <div className="flex items-center gap-3 mb-2">
             <div className="text-[10px] uppercase tracking-[0.2em] text-neutral-500 font-mono">Live Board</div>
+            <VerdictChip board="target" />
             {freshnessPill}
           </div>
           <h1 className="font-serif text-2xl sm:text-3xl font-bold tracking-tight">
@@ -573,11 +575,14 @@ const TargetDetailBody = ({ target }) => {
       <PriceChart ticker={target.ticker} />
 
       <div className="border-l-2 border-emerald-500/40 pl-4 py-2">
-        <div className="text-[10px] uppercase tracking-[0.2em] text-neutral-500 font-mono mb-2">Thesis</div>
+        <div className="flex items-center gap-2 mb-2">
+          <div className="text-[10px] uppercase tracking-[0.2em] text-neutral-500 font-mono">Thesis</div>
+          <VerdictChip board="target" compact />
+        </div>
         <p className="text-neutral-200 leading-relaxed">{target.rationale}</p>
       </div>
 
-      <ResearchPanel ticker={target.ticker} />
+      <ResearchPanel ticker={target.ticker} board="target" />
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <div className="border border-neutral-800 p-4">

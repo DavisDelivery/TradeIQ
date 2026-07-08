@@ -17,6 +17,9 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 vi.mock('../data-provider', () => ({
   getEarningsCalendarRange: vi.fn(),
+  // FIX-1 W1 — the scan resolves its universe through the status-aware
+  // variant; delegated to the legacy mock in beforeEach below.
+  getEarningsCalendarRangeWithStatus: vi.fn(),
   getDailyBars: vi.fn(),
   getEarningsHistory: vi.fn(),
   getUpcomingEarnings: vi.fn(),
@@ -24,7 +27,8 @@ vi.mock('../data-provider', () => ({
 
 import { runEarningsScan } from '../scan-earnings';
 import {
-  getEarningsCalendarRange, getDailyBars, getEarningsHistory, getUpcomingEarnings,
+  getEarningsCalendarRange, getEarningsCalendarRangeWithStatus,
+  getDailyBars, getEarningsHistory, getUpcomingEarnings,
 } from '../data-provider';
 
 const DAY = 86400000;
@@ -50,6 +54,12 @@ beforeEach(() => {
   vi.useFakeTimers();
   vi.setSystemTime(new Date('2026-06-11T00:00:00Z'));
   (getUpcomingEarnings as any).mockResolvedValue(null);
+  // FIX-1 W1 — delegate the status-aware calendar variant to the legacy
+  // mock so the per-test mockResolvedValue([...]) setups keep working.
+  (getEarningsCalendarRangeWithStatus as any).mockImplementation(async (...args: unknown[]) => {
+    const entries = await (getEarningsCalendarRange as any)(...args);
+    return { entries: entries ?? [], ok: true, httpStatus: 200, rateLimitExhausted: false };
+  });
 });
 
 afterEach(() => {

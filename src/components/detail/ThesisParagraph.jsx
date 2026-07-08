@@ -8,12 +8,21 @@
 // empty thesis falls back to an honest no-read line — never silent.
 
 import React from 'react';
+import { VerdictChip } from '../VerdictChip.jsx';
+import { BOARD_VERDICTS } from '../../../netlify/functions/shared/verdicts';
 
-export function ThesisParagraph({ thesis, loading, error, onRetry }) {
+// FIX-1 W4 — every AI thesis render carries the board's measured-edge
+// chip. Narrative confidence ≠ measured edge; the prose below never
+// outranks the registry.
+export function ThesisParagraph({ thesis, loading, error, onRetry, board }) {
+  const hasVerdict = board && BOARD_VERDICTS[board];
   return (
     <div className="border-l-2 border-emerald-500/40 pl-4 py-2">
-      <div className="text-[10px] uppercase tracking-[0.2em] text-neutral-500 font-mono mb-2">
-        Thesis
+      <div className="flex items-center gap-2 mb-2">
+        <div className="text-[10px] uppercase tracking-[0.2em] text-neutral-500 font-mono">
+          Thesis
+        </div>
+        {hasVerdict ? <VerdictChip board={board} compact /> : null}
       </div>
 
       {loading ? (

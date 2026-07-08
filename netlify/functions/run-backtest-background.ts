@@ -33,6 +33,7 @@ import {
   processRegularBatch,
   type RegularBacktestState,
 } from './shared/backtest/engine-batched';
+import { InvalidBacktestRunError } from './shared/backtest/validity';
 import type { BacktestConfig } from './shared/backtest/types';
 import {
   appendAttributionRows,
@@ -41,6 +42,7 @@ import {
   appendTradeRows,
   appendWarningRows,
   persistRunFailure,
+  persistRunInvalid,
   persistRunRunning,
   persistRunSummary,
   readAllAttributionRows,
@@ -390,6 +392,19 @@ export const handler: Handler = withSentry(async (event, context) => {
       }),
     };
   } catch (err: any) {
+    // FIX-1 W2 — the finalize-time validity guard throws
+    // InvalidBacktestRunError BEFORE metrics exist. Persist status
+    // 'invalid' (never 'failed', never metrics) and clear the cursor so
+    // the run terminates cleanly instead of zombie-ing at 'running'.
+    if (err instanceof InvalidBacktestRunError) {
+      log.error('background_run_invalid', { runId, reason: err.message });
+      await persistRunInvalid(runId, err.message).catch(() => {});
+      await clearCursor(db, COLLECTION, runId).catch(() => {});
+      return {
+        statusCode: 200,
+        body: JSON.stringify({ ok: false, runId, status: 'invalid', reason: err.message }),
+      };
+    }
     log.error('background_run_failed', { runId, err: String(err?.message ?? err) });
     // Persist failure status so the run doc doesn't stay stuck at 'running'.
     await persistRunFailure(runId, String(err?.message ?? err)).catch(() => {});

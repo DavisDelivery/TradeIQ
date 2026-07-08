@@ -13,15 +13,26 @@ import {
   type UniverseKey,
 } from './shared/snapshot-store';
 import { logger } from './shared/logger';
+import { APP_VERSION } from './shared/app-version';
 
+// FIX-1 W1 — check each board under the universe keys its producer
+// ACTUALLY writes. The previous table checked prophet + earnings under
+// the four index keys, but the prophet producers store under
+// 'largecap' / 'russell2k' / 'all' (see prophet-snapshot-runner.ts,
+// scan-prophet-{largecap,russell,all}.ts) and the earnings scan stores
+// ONE calendar-driven snapshot under 'all' (see scan-earnings.ts). The
+// mismatch made /api/health report prophet sp500/ndx/dow and all four
+// earnings universes as permanently NULL even while the scans were
+// publishing on schedule — a false "degraded" that masked the real
+// outages (insider sp500/russell2k, empty earnings snapshots).
 const BOARD_UNIVERSES: Record<BoardName, UniverseKey[]> = {
   'target-board': ['sp500', 'ndx', 'dow', 'russell2k'],
-  prophet: ['sp500', 'ndx', 'dow', 'russell2k'],
+  prophet: ['largecap', 'russell2k', 'all'],
   catalyst: ['sp500', 'ndx', 'dow', 'russell2k'],
   insider: ['sp500', 'ndx', 'dow', 'russell2k'],
   williams: ['sp500', 'ndx', 'dow', 'russell2k'],
   lynch: ['sp500', 'ndx', 'dow', 'russell2k'],
-  earnings: ['sp500', 'ndx', 'dow', 'russell2k'],
+  earnings: ['all'],
 };
 
 export const handler: Handler = async () => {
@@ -77,7 +88,7 @@ export const handler: Handler = async () => {
       ok,
       status: ok ? 'healthy' : degraded ? 'degraded' : 'misconfigured',
       service: 'tradeiq-alpha',
-      version: '0.10.0-alpha',
+      version: APP_VERSION,
       checks: apiKeys,
       snapshots,
       snapshotsError,
