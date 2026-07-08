@@ -37,8 +37,10 @@ import {
   persistRunStart,
   persistRunResult,
   persistRunFailure,
+  persistRunInvalid,
   persistMLTrainingRows,
 } from './persistence';
+import { assessRunValidity, InvalidBacktestRunError } from './validity';
 import type {
   BacktestConfig,
   BacktestResult,
@@ -393,6 +395,8 @@ export async function runBacktest(
     const tickerFailureSample: TickerFailure[] = [];
     let tickerFailureTotal = 0;
     let tickerAttemptTotal = 0;
+    // FIX-1 W2 — attempts that produced a non-null ScoredCandidate.
+    let scoredCandidateTotal = 0;
     const FAILURE_SAMPLE_CAP = 20;
     // CR-2 — candidates scored for pool tickers outside the current
     // universe seed (delisted/acquired historical members). Counted so
@@ -502,6 +506,8 @@ export async function runBacktest(
         },
         { batchSize: scoringConcurrency },
       );
+
+      scoredCandidateTotal += scored.length;
 
       // Surface a per-rebalance warning when failures dominate the
       // pool — useful for spotting widespread issues (rate limits,
@@ -745,6 +751,29 @@ export async function runBacktest(
       );
     }
 
+    // FIX-1 W2 — validity guard. An invalid run (no PIT scoring path /
+    // ≥90% null candidates on a non-discrete run) must NOT have metrics
+    // computed or persisted: run bt_20260519233423_avaa64 "completed"
+    // with official metrics over an all-null candidate stream. Persists
+    // status 'invalid' then throws.
+    const validity = assessRunValidity({
+      tickerAttemptTotal,
+      scoredCandidateTotal,
+      warnings,
+      config,
+    });
+    if (!validity.valid) {
+      const reason = validity.reason ?? 'run assessed invalid';
+      options.onProgress?.({ phase: 'invalid', msg: reason });
+      if (!options.noPersist) {
+        await persistRunInvalid(runId, reason, {
+          warnings,
+          nullRatePct: validity.nullRatePct,
+        }).catch(() => {});
+      }
+      throw new InvalidBacktestRunError(reason);
+    }
+
     const metrics = computeMetrics({
       dailyEquity,
       trades,
@@ -791,7 +820,9 @@ export async function runBacktest(
     options.onProgress?.({ phase: 'complete', msg: `runId=${runId}` });
     return result;
   } catch (err) {
-    if (!options.noPersist) {
+    // FIX-1 W2 — an InvalidBacktestRunError already persisted status
+    // 'invalid'; do not downgrade/overwrite it to 'failed'.
+    if (!options.noPersist && !(err instanceof InvalidBacktestRunError)) {
       await persistRunFailure(runId, String(err)).catch(() => {});
     }
     throw err;

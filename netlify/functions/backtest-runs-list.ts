@@ -38,7 +38,9 @@ import { getAdminDb } from './shared/firebase-admin';
 const log = createLogger('backtest-runs-list');
 const headers = { 'Content-Type': 'application/json' };
 
-const ALLOWED_STATUSES = ['pending', 'running', 'complete', 'failed'] as const;
+// FIX-1 W2 — 'invalid': ran to completion but measured nothing (no PIT
+// path / ≥90% null candidates); persisted WITHOUT metrics.
+const ALLOWED_STATUSES = ['pending', 'running', 'complete', 'failed', 'invalid'] as const;
 type AllowedStatus = (typeof ALLOWED_STATUSES)[number];
 
 const QuerySchema = z.object({
