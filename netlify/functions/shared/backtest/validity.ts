@@ -47,6 +47,11 @@ export interface RunValidityInput {
   tickerAttemptTotal: number;
   /** Attempts that produced a ScoredCandidate (non-null, non-throw). */
   scoredCandidateTotal: number;
+  /** Attempts that THREW. Excluded from the null-rate denominator —
+   *  thrown failures are the HIGH-FAILURE-RATE warning's jurisdiction
+   *  (engine keeps its existing >50% loud-warning contract); this guard
+   *  owns silent nulls (the scorer ran fine and measured nothing). */
+  tickerFailureTotal: number;
   /** All warnings accumulated so far (checked for the no-PIT-path text). */
   warnings: string[];
   /** The run's config — `discreteSignalOnly` gates the null-rate rule. */
@@ -60,7 +65,7 @@ export interface RunValidityDecision {
 }
 
 export function assessRunValidity(input: RunValidityInput): RunValidityDecision {
-  const { tickerAttemptTotal, scoredCandidateTotal, warnings, config } = input;
+  const { tickerAttemptTotal, scoredCandidateTotal, tickerFailureTotal, warnings, config } = input;
 
   const noPitPath = warnings.some((w) => w.includes(NO_PIT_PATH_WARNING_FRAGMENT));
   if (noPitPath) {
@@ -72,9 +77,10 @@ export function assessRunValidity(input: RunValidityInput): RunValidityDecision 
     };
   }
 
-  if (tickerAttemptTotal > 0 && config.discreteSignalOnly !== true) {
-    const nullCount = Math.max(0, tickerAttemptTotal - scoredCandidateTotal);
-    const nullRate = nullCount / tickerAttemptTotal;
+  const nonThrowAttempts = Math.max(0, tickerAttemptTotal - tickerFailureTotal);
+  if (nonThrowAttempts > 0 && config.discreteSignalOnly !== true) {
+    const nullCount = Math.max(0, nonThrowAttempts - scoredCandidateTotal);
+    const nullRate = nullCount / nonThrowAttempts;
     const nullRatePct = +(nullRate * 100).toFixed(1);
     if (nullRate >= INVALID_NULL_RATE) {
       return {
@@ -82,8 +88,8 @@ export function assessRunValidity(input: RunValidityInput): RunValidityDecision 
         nullRatePct,
         reason:
           `${nullRatePct}% of ticker scoring attempts returned null ` +
-          `(${nullCount}/${tickerAttemptTotal}); a run scoring <10% of its universe ` +
-          `is not a valid measurement of board "${config.board}"`,
+          `(${nullCount}/${nonThrowAttempts} non-throwing attempts); a run scoring ` +
+          `<10% of its universe is not a valid measurement of board "${config.board}"`,
       };
     }
     return { valid: true, nullRatePct };

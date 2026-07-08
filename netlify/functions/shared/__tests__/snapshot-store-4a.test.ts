@@ -183,9 +183,9 @@ describe('dailyScanSlotFor — cadence classification (read from the cron files)
     expect(dailyScanSlotFor('prophet', undefined)).toBeNull();
   });
 
-  it('insider + earnings are daily at 21:30; lynch daily at 22:00', () => {
+  it('insider daily at 21:30, earnings at 23:50 (FIX-1 de-collision), lynch daily at 22:00', () => {
     expect(dailyScanSlotFor('insider', 'sp500')).toEqual({ hourUtc: 21, minuteUtc: 30 });
-    expect(dailyScanSlotFor('earnings', 'all')).toEqual({ hourUtc: 21, minuteUtc: 30 });
+    expect(dailyScanSlotFor('earnings', 'all')).toEqual({ hourUtc: 23, minuteUtc: 50 });
     expect(dailyScanSlotFor('lynch', 'russell2k')).toEqual({ hourUtc: 22, minuteUtc: 0 });
   });
 
@@ -273,11 +273,11 @@ describe('isSnapshotFresh — daily boards are schedule-aware (M2)', () => {
     expect(isSnapshotFresh(insider, ms('2026-06-16T12:00:00Z'))).toBe(false);
   });
 
-  it('earnings (12h budget, slot 21:30): Friday-evening snapshot survives the weekend', () => {
+  it('earnings (12h budget, slot 23:50 post-FIX-1): Friday-evening snapshot survives the weekend', () => {
     const earnings = snap({
       board: 'earnings',
       universe: 'all',
-      generatedAt: '2026-06-12T21:40:00Z',
+      generatedAt: '2026-06-12T23:55:00Z',
     });
     // Saturday morning: already past the 12h budget — schedule keeps it fresh.
     expect(isSnapshotFresh(earnings, ms('2026-06-13T11:00:00Z'))).toBe(true);

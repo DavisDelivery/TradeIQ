@@ -759,6 +759,7 @@ export async function runBacktest(
     const validity = assessRunValidity({
       tickerAttemptTotal,
       scoredCandidateTotal,
+      tickerFailureTotal,
       warnings,
       config,
     });

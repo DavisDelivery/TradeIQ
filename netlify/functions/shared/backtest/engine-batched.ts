@@ -667,6 +667,7 @@ export function finalizeRegularBacktest(opts: FinalizeOptions): BacktestResult {
   const validity = assessRunValidity({
     tickerAttemptTotal: state.tickerAttemptTotal,
     scoredCandidateTotal: state.scoredCandidateTotal ?? state.tickerAttemptTotal,
+    tickerFailureTotal: state.tickerFailureTotal,
     warnings,
     config,
   });

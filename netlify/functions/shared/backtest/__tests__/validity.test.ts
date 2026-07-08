@@ -25,6 +25,7 @@ describe('assessRunValidity', () => {
     const d = assessRunValidity({
       tickerAttemptTotal: 42000,
       scoredCandidateTotal: 0,
+      tickerFailureTotal: 0,
       warnings: [
         `Board "target" ${NO_PIT_PATH_WARNING_FRAGMENT}; ` +
           `prophet/williams/lynch are the supported boards. All candidates null.`,
@@ -39,6 +40,7 @@ describe('assessRunValidity', () => {
     const d = assessRunValidity({
       tickerAttemptTotal: 1000,
       scoredCandidateTotal: 0,
+      tickerFailureTotal: 0,
       warnings: [],
       config: baseConfig,
     });
@@ -51,6 +53,7 @@ describe('assessRunValidity', () => {
     const d = assessRunValidity({
       tickerAttemptTotal: 1000,
       scoredCandidateTotal: Math.round(1000 * (1 - INVALID_NULL_RATE)),
+      tickerFailureTotal: 0,
       warnings: [],
       config: baseConfig,
     });
@@ -61,6 +64,7 @@ describe('assessRunValidity', () => {
     const d = assessRunValidity({
       tickerAttemptTotal: 1000,
       scoredCandidateTotal: 110,
+      tickerFailureTotal: 0,
       warnings: [],
       config: baseConfig,
     });
@@ -72,6 +76,7 @@ describe('assessRunValidity', () => {
     const d = assessRunValidity({
       tickerAttemptTotal: 10000,
       scoredCandidateTotal: 100,
+      tickerFailureTotal: 0,
       warnings: [],
       config: { board: 'lynch', discreteSignalOnly: true } as typeof baseConfig,
     });
@@ -82,16 +87,29 @@ describe('assessRunValidity', () => {
     const d = assessRunValidity({
       tickerAttemptTotal: 10000,
       scoredCandidateTotal: 100,
+      tickerFailureTotal: 0,
       warnings: [`Board "catalyst" ${NO_PIT_PATH_WARNING_FRAGMENT}; all null.`],
       config: { board: 'catalyst', discreteSignalOnly: true } as typeof baseConfig,
     });
     expect(d.valid).toBe(false);
   });
 
+  it('thrown failures are NOT nulls: an all-throw run stays in the HIGH-FAILURE-RATE lane (valid here)', () => {
+    const d = assessRunValidity({
+      tickerAttemptTotal: 1000,
+      scoredCandidateTotal: 0,
+      tickerFailureTotal: 1000,
+      warnings: [],
+      config: baseConfig,
+    });
+    expect(d.valid).toBe(true);
+  });
+
   it('zero attempts ⇒ valid by this rule (nothing to assess; other guards own empty runs)', () => {
     const d = assessRunValidity({
       tickerAttemptTotal: 0,
       scoredCandidateTotal: 0,
+      tickerFailureTotal: 0,
       warnings: [],
       config: baseConfig,
     });
