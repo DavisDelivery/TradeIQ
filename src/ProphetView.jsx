@@ -10,6 +10,7 @@ import {
 } from 'recharts';
 import { LogButton } from './components/LogButton.jsx';
 import { FreshnessPill } from './components/FreshnessPill.jsx';
+import { VerdictChip } from './components/VerdictChip.jsx';
 import { SieveCoverageStrip } from './components/SieveCoverageStrip.jsx';
 import { useProphet } from './hooks/useProphet.js';
 import { useLiveRows } from './hooks/useLiveQuotes.js';
@@ -62,6 +63,7 @@ export const ProphetView = () => {
           <Sparkles className="h-4 w-4 text-emerald-400" />
           <h1 className="text-xl sm:text-2xl font-serif font-semibold text-neutral-100">Prophet</h1>
           <span className="text-[10px] font-mono text-neutral-600 uppercase tracking-wider">7-layer ensemble</span>
+          <VerdictChip board="prophet" />
           <div className="ml-auto">
             <FreshnessPill
               meta={data}
@@ -404,6 +406,7 @@ const ProphetDetail = ({ pick }) => {
         <div className="flex items-center gap-2 mb-1.5">
           <Brain className="h-3 w-3 text-emerald-400" />
           <span className="text-[9px] font-mono uppercase tracking-widest text-emerald-400">AI Thesis · Claude Opus</span>
+          <VerdictChip board="prophet" compact />
         </div>
         <p className="text-[12px] text-neutral-200 leading-relaxed whitespace-pre-wrap">{pick.narrative}</p>
       </div>

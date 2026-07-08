@@ -1,7 +1,12 @@
 import React, { useState } from 'react';
 import { Brain } from 'lucide-react';
+import { VerdictChip } from './VerdictChip.jsx';
+import { BOARD_VERDICTS } from '../../netlify/functions/shared/verdicts';
 
-export const ResearchPanel = ({ ticker }) => {
+// FIX-1 W4 — `board` stamps the measured-edge chip on the AI research
+// brief (default 'target': the brief reads board context from the
+// composite). Narrative confidence ≠ measured edge.
+export const ResearchPanel = ({ ticker, board = 'target' }) => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [brief, setBrief] = useState(null);
@@ -24,7 +29,10 @@ export const ResearchPanel = ({ ticker }) => {
   if (!requested) {
     return (
       <div className="border border-dashed border-neutral-800 p-5 text-center">
-        <div className="text-[10px] uppercase tracking-[0.2em] text-neutral-500 font-mono mb-3">AI Research Brief</div>
+        <div className="flex items-center justify-center gap-2 mb-3">
+          <div className="text-[10px] uppercase tracking-[0.2em] text-neutral-500 font-mono">AI Research Brief</div>
+          {BOARD_VERDICTS[board] ? <VerdictChip board={board} compact /> : null}
+        </div>
         <button
           onClick={() => load()}
           className="inline-flex items-center gap-2 px-4 py-2 bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/20 transition-colors text-[12px] font-medium"
@@ -60,7 +68,10 @@ export const ResearchPanel = ({ ticker }) => {
   return (
     <div className="border border-neutral-800 bg-neutral-950/40 p-4 sm:p-5 space-y-4">
       <div className="flex items-center justify-between">
-        <div className="text-[10px] uppercase tracking-[0.2em] text-neutral-500 font-mono">AI Research Brief</div>
+        <div className="flex items-center gap-2">
+          <div className="text-[10px] uppercase tracking-[0.2em] text-neutral-500 font-mono">AI Research Brief</div>
+          {BOARD_VERDICTS[board] ? <VerdictChip board={board} compact /> : null}
+        </div>
         <div className="flex items-center gap-3 text-[10px] font-mono text-neutral-600">
           {brief?.cached && <span>cached {Math.round(brief.cacheAgeMs / 60000)}m ago</span>}
           <button onClick={() => load(true)} className="text-neutral-400 hover:text-neutral-200 underline">refresh</button>

@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Activity } from 'lucide-react';
 import { FreshnessPill } from './components/FreshnessPill.jsx';
+import { VerdictChip } from './components/VerdictChip.jsx';
 import { useWilliams } from './hooks/useWilliams.js';
 import { useSortable, SortableTh } from './lib/useSortable.jsx';
 import { useBreakpoint } from './hooks/useBreakpoint.js';
@@ -83,6 +84,7 @@ export const WilliamsView = ({ universe = 'sp500' }) => {
           <h1 className="text-xl sm:text-2xl font-serif font-semibold text-neutral-100">
             Williams Setups
           </h1>
+          <VerdictChip board="williams" />
           <div className="ml-auto">
             <FreshnessPill
               meta={data}

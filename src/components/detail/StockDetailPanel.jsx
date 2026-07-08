@@ -76,6 +76,7 @@ export function StockDetailPanel({ board, ticker, row }) {
         loading={thesisLoading}
         error={thesisError}
         onRetry={() => rationaleQuery.refetch()}
+        board={board}
       />
 
       <DetailPriceChart ticker={ticker} />

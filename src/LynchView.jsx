@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Shield } from 'lucide-react';
 import { FreshnessPill } from './components/FreshnessPill.jsx';
+import { VerdictChip } from './components/VerdictChip.jsx';
 import { useLynch } from './hooks/useLynch.js';
 import { useLiveRows } from './hooks/useLiveQuotes.js';
 import { useSortable, SortableTh } from './lib/useSortable.jsx';
@@ -76,6 +77,7 @@ export const LynchView = ({ universe = 'sp500' }) => {
           <h1 className="text-xl sm:text-2xl font-serif font-semibold text-neutral-100">
             Peter Lynch Picks
           </h1>
+          <VerdictChip board="lynch" />
           <div className="ml-auto">
             <FreshnessPill
               meta={data}
