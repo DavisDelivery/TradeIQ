@@ -20,8 +20,12 @@ import type { Handler } from '@netlify/functions';
 import { getAdminDb } from './shared/firebase-admin';
 import { logger } from './shared/logger';
 
-const VALID_BOARDS = new Set(['target-board', 'insider']);
-const VALID_UNIVERSES = new Set(['sp500', 'ndx', 'dow', 'russell2k']);
+// FIX-1 W1 — lynch/catalyst/earnings gained checkpoint-resume workers
+// (#96/#97 + the earnings port); their scanRuns docs share the
+// `<board>-<universe>-YYYYMMDD-HHmmss` runId shape, so the same
+// diagnostic works. 'all' is the earnings store key.
+const VALID_BOARDS = new Set(['target-board', 'insider', 'lynch', 'catalyst', 'earnings']);
+const VALID_UNIVERSES = new Set(['sp500', 'ndx', 'dow', 'russell2k', 'all']);
 
 interface ScanRunSummary {
   runId: string;
@@ -35,6 +39,11 @@ interface ScanRunSummary {
   /** ms between cursor.startedAt and "now" — total scan wall-clock so
    *  far. Useful for spotting a chain that exceeds the nightly window. */
   scanAgeMs?: number;
+  /** FIX-1 W1 — terminal publish-guard decision ('publish' /
+   *  'publish-degraded' / 'skip') when the worker stamped it. */
+  publishAction?: string;
+  /** Guard reason accompanying a 'skip' / 'publish-degraded'. */
+  publishReason?: string | null;
 }
 
 /**
@@ -92,10 +101,10 @@ export const handler: Handler = async (event) => {
     // (insider) or `target-board-<universe>-...` (target-board). The
     // ID prefix is the most reliable filter — Firestore's `where`
     // doesn't support startsWith, so we use a range query on the doc ID.
-    const idPrefix =
-      board === 'insider'
-        ? `insider-${universe}-`
-        : `target-board-${universe}-`;
+    // Every checkpoint-resume worker names its runs
+    // `<board>-<universe>-YYYYMMDD-HHmmss` ('target-board' includes its
+    // own hyphen, so the generic template covers it too).
+    const idPrefix = `${board}-${universe}-`;
     const upperBound = idPrefix + '';
 
     const snap = await db
@@ -116,6 +125,11 @@ export const handler: Handler = async (event) => {
         cursor: cursor ?? null,
         updatedAt: data?.updatedAt,
         finishedAt: data?.finishedAt,
+        // FIX-1 W1 — terminal-step publish-guard decision, stamped by
+        // clearScanCursor's `extra` arg. Explains WHY a run ended
+        // status:'error' (e.g. "failure rate 60% exceeds skip threshold").
+        publishAction: data?.publishAction,
+        publishReason: data?.publishReason,
       };
       if (cursor) {
         const last = cursor.lastInvocationStartedAt;

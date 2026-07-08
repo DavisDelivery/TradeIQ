@@ -8,7 +8,8 @@
 // survived at 1928 tickers because it uses the checkpoint-resume
 // pattern; this worker brings sp500 onto the identical machinery.
 //
-// The scheduled trigger (`scan-insider-sp500.ts`, cron `35 21 * * 1-5`)
+// The scheduled trigger (`scan-insider-sp500.ts`, cron `45 22 * * 1-5`,
+// moved off 21:35 by FIX-1 to escape the russell2k chain's Finnhub window)
 // POSTs the initial invocation. Each invocation:
 //   1. Reads `scanRuns/{runId}` for an existing cursor; resumes if
 //      present, else starts fresh.
@@ -401,7 +402,10 @@ async function runTerminalStep(args: TerminalStepArgs) {
   let snapshotId: string | null = null;
   if (decision.action === 'skip') {
     log.warn('publish_guard_skip', { runId, reason: decision.reason });
-    await clearScanCursor(db, runId, 'error');
+    await clearScanCursor(db, runId, 'error', {
+      publishAction: decision.action,
+      publishReason: decision.reason ?? null,
+    });
   } else {
     // InsiderBoardRow's `filings` array can be fat for a high-activity
     // ticker; truncate by sorted order (highest buyDollars first) and
@@ -434,7 +438,10 @@ async function runTerminalStep(args: TerminalStepArgs) {
       originalResultCount: sized.truncated ? sized.originalCount : undefined,
     });
     snapshotId = written.snapshotId;
-    await clearScanCursor(db, runId, 'done');
+    await clearScanCursor(db, runId, 'done', {
+      publishAction: decision.action,
+      publishReason: decision.reason ?? null,
+    });
   }
 
   // Partial-batch cleanup runs whether or not we published.

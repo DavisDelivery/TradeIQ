@@ -13,7 +13,7 @@
 // requested window + composite threshold at read time. One snapshot covers
 // all 4 window variants (3/7/14/30) without 4× the API cost.
 
-import { getEarningsCalendarRange, getDailyBars, getEarningsHistory, getUpcomingEarnings } from './data-provider';
+import { getEarningsCalendarRangeWithStatus, getDailyBars, getEarningsHistory, getUpcomingEarnings } from './data-provider';
 import { CORE_WATCHLIST, UNIVERSE } from './universe';
 import type {
   EarningsSetup, EarningsPlayType,
@@ -57,6 +57,150 @@ export interface RunEarningsScanResult {
   budgetExceeded: boolean;
 }
 
+export interface EarningsCalendarEntry {
+  ticker: string;
+  date: string;
+  hour?: string;
+  epsEstimate?: number;
+  revenueEstimate?: number;
+}
+
+export interface EarningsScanUniverseResolution {
+  /** Calendar entries intersected with UNIVERSE (or the watchlist-probe fallback). */
+  entries: EarningsCalendarEntry[];
+  warnings: string[];
+  /** True when the Finnhub calendar call itself failed (HTTP error /
+   *  429-retries exhausted / thrown) AND the watchlist fallback also
+   *  produced nothing. A worker seeing this must NOT publish — an empty
+   *  snapshot over a failed calendar is the exact hollow-publish bug
+   *  FIX-1 W1 closes. */
+  calendarFailed: boolean;
+}
+
+/**
+ * FIX-1 W1 — resolve the calendar-driven earnings scan universe once,
+ * with failure visibility. Shared by the single-pass `runEarningsScan`
+ * (live fallback path) and the checkpoint-resume background worker
+ * (which persists the resolved entries on the run doc so every resumed
+ * invocation walks the SAME universe).
+ */
+export async function resolveEarningsScanUniverse(opts: {
+  windowDays: number;
+  postPrintLookbackDays?: number;
+  logger?: Logger;
+}): Promise<EarningsScanUniverseResolution> {
+  const log = opts.logger;
+  const lookAhead = opts.windowDays;
+  const lookBack = opts.postPrintLookbackDays ?? (opts.windowDays >= 7 ? POST_PRINT_LOOKBACK_DAYS : 0);
+  const warnings: string[] = [];
+
+  let entries: EarningsCalendarEntry[] = [];
+  let calendarCallFailed = false;
+  const cal = await getEarningsCalendarRangeWithStatus(lookAhead, lookBack);
+  if (!cal.ok) {
+    calendarCallFailed = true;
+    const detail = cal.errorMessage
+      ? cal.errorMessage
+      : cal.rateLimitExhausted
+        ? `HTTP 429 (retries exhausted)`
+        : `HTTP ${cal.httpStatus}`;
+    warnings.push(`calendar_range_failed: ${detail}`);
+    log?.warn('earnings_calendar_range_failed', {
+      httpStatus: cal.httpStatus,
+      rateLimitExhausted: cal.rateLimitExhausted,
+      err: cal.errorMessage,
+    });
+  } else {
+    const universeTickers = new Set(UNIVERSE.map((u) => u.ticker));
+    entries = cal.entries.filter((e) => universeTickers.has(e.ticker));
+  }
+
+  // Fallback for plans that gate the calendar range endpoint.
+  if (entries.length === 0) {
+    log?.info('earnings_calendar_fallback_to_watchlist_probe');
+    const probed = await Promise.all(
+      CORE_WATCHLIST.map((t) => getUpcomingEarnings(t, lookAhead).catch(() => null)),
+    );
+    entries = probed.filter((e): e is NonNullable<typeof e> => e !== null);
+  }
+
+  return {
+    entries,
+    warnings,
+    calendarFailed: calendarCallFailed && entries.length === 0,
+  };
+}
+
+export interface RunEarningsScanBatchOpts {
+  /** The pre-resolved calendar universe (persisted on the run doc). */
+  entries: EarningsCalendarEntry[];
+  /** Inclusive start index into `entries`. */
+  startIdx: number;
+  /** Max entries to consume in this batch. */
+  batchSize: number;
+  concurrency?: number;
+  logger?: Logger;
+}
+
+export interface RunEarningsScanBatchResult {
+  setups: EarningsSetup[];
+  tickersConsumed: number;
+  /** Per-ticker scoring failures in this batch (thrown errors, not
+   *  legit "no setup" nulls) — feeds the publish guard's error rate. */
+  tickersErrored: number;
+  warnings: string[];
+}
+
+/**
+ * FIX-1 W1 — process a contiguous slice of the resolved earnings
+ * calendar. Per-entry logic mirrors `runEarningsScan` exactly (same
+ * scoreEarningsForTicker call, same 400d bar window). Used by
+ * `scan-earnings-background.ts` under the checkpoint-resume machinery
+ * (#95/#96/#97 pattern).
+ */
+export async function runEarningsScanBatch(
+  opts: RunEarningsScanBatchOpts,
+): Promise<RunEarningsScanBatchResult> {
+  const log = opts.logger;
+  const concurrency = opts.concurrency ?? 10;
+  const slice = opts.entries.slice(opts.startIdx, opts.startIdx + opts.batchSize);
+  const warnings: string[] = [];
+
+  if (slice.length === 0) {
+    return { setups: [], tickersConsumed: 0, tickersErrored: 0, warnings };
+  }
+
+  const to = new Date().toISOString().slice(0, 10);
+  const from = new Date(Date.now() - 400 * 86400000).toISOString().slice(0, 10);
+
+  const setups: EarningsSetup[] = [];
+  let tickersErrored = 0;
+
+  for (let i = 0; i < slice.length; i += concurrency) {
+    const chunk = slice.slice(i, i + concurrency);
+    const batch = await Promise.all(
+      chunk.map(async (e) => {
+        try {
+          return await scoreEarningsForTicker(e, from, to);
+        } catch (err: any) {
+          tickersErrored += 1;
+          log?.warn('earnings_ticker_error', { ticker: e.ticker, err: String(err?.message ?? err) });
+          return null;
+        }
+      }),
+    );
+    for (const s of batch) if (s) setups.push(s);
+  }
+
+  if (tickersErrored > 0) {
+    warnings.push(
+      `earnings scoring errors on ${tickersErrored}/${slice.length} tickers in batch starting ${opts.startIdx}`,
+    );
+  }
+
+  return { setups, tickersConsumed: slice.length, tickersErrored, warnings };
+}
+
 export async function runEarningsScan(opts: RunEarningsScanOpts): Promise<RunEarningsScanResult> {
   const startedAt = Date.now();
   const log = opts.logger;
@@ -67,27 +211,19 @@ export async function runEarningsScan(opts: RunEarningsScanOpts): Promise<RunEar
 
   log?.info('earnings_scan_started', { windowDays: lookAhead, postPrintLookbackDays: lookBack, concurrency });
 
-  // ---- Resolve calendar universe ----
-  let inUniverse: { ticker: string; date: string; hour?: string }[] = [];
-  try {
-    const allEarnings = await getEarningsCalendarRange(lookAhead, lookBack);
-    const universeTickers = new Set(UNIVERSE.map((u) => u.ticker));
-    inUniverse = allEarnings.filter((e) => universeTickers.has(e.ticker));
-  } catch (err: any) {
-    warnings.push(`calendar_range_failed: ${err?.message ?? String(err)}`);
-    log?.warn('earnings_calendar_range_failed', { err: String(err?.message ?? err) });
-  }
+  // ---- Resolve calendar universe (shared with the bg-worker path) ----
+  const resolution = await resolveEarningsScanUniverse({
+    windowDays: lookAhead,
+    postPrintLookbackDays: lookBack,
+    logger: log,
+  });
+  warnings.push(...resolution.warnings);
+  const inUniverse: EarningsCalendarEntry[] = resolution.entries;
 
-  // Fallback for plans that gate the calendar range endpoint
-  if (inUniverse.length === 0) {
-    log?.info('earnings_calendar_fallback_to_watchlist_probe');
-    const probed = await Promise.all(
-      CORE_WATCHLIST.map((t) => getUpcomingEarnings(t, lookAhead).catch(() => null)),
-    );
-    inUniverse = probed.filter((e): e is NonNullable<typeof e> => e !== null);
-  }
-
-  log?.info('earnings_universe_resolved', { count: inUniverse.length });
+  log?.info('earnings_universe_resolved', {
+    count: inUniverse.length,
+    calendarFailed: resolution.calendarFailed,
+  });
 
   // ---- Per-ticker scan ----
   const setups: EarningsSetup[] = [];

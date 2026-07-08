@@ -1,8 +1,17 @@
 // Scheduled trigger for the sp500 insider scan.
 //
-// Cron: `35 21 * * 1-5` (21:35 UTC, weekdays, after US close). Kept at the
-// original sp500 slot — staggered from russell2k (21:30), ndx (21:40) and
-// dow (21:45) so the insider crons don't share a Finnhub-quota minute.
+// Cron: `45 22 * * 1-5` (22:45 UTC, weekdays, after US close).
+//
+// FIX-1 W1 -- moved from `35 21` (21:35 UTC). The 21:35 slot put this
+// 503-ticker Finnhub chain INSIDE the russell2k insider chain's window
+// (21:30 -> ~22:06): two containers each pacing their own 55-rpm token
+// bucket against Finnhub's single 60-rpm account limit = ~110 rpm
+// demand -> sustained 429 storms on BOTH chains -> failure rate over
+// the 50% publish-guard skip threshold -> both runs ended
+// `status: 'error'` (guard skip) every night from 2026-06-23 (the
+// night this port, #95, first contended) with no snapshot published.
+// 22:45 sits after the lynch 22:00 chains (also Finnhub-heavy) drain
+// and clears the 23:00 target-board chains with ~10 min of margin.
 //
 // Previously this file ran the scan inline via `runInsiderScan`. After PR
 // #66 expanded sp500 208→503, the single-pass scan exceeded Netlify's
@@ -24,11 +33,11 @@ import { recoverStuckRuns } from './shared/scan-resume/finalize';
 const WORKER_PATH = '/.netlify/functions/scan-insider-sp500-background';
 const RUN_ID_PREFIX = 'insider-sp500-';
 
-export const handler = schedule('35 21 * * 1-5', async () => {
+export const handler = schedule('45 22 * * 1-5', async () => {
   const log = logger.child({
     fn: 'scan-insider-sp500',
     universe: 'sp500',
-    schedule: '35 21 * * 1-5',
+    schedule: '45 22 * * 1-5',
   });
   const origin = process.env.URL ?? 'https://tradeiq-alpha.netlify.app';
   const url = `${origin}${WORKER_PATH}`;

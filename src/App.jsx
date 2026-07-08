@@ -47,7 +47,9 @@ import { DesktopShell } from './layout/DesktopShell.jsx';
 import { RegimeStrip } from './layout/RegimeStrip.jsx';
 
 
-const APP_VERSION = '0.19.26-alpha';
+// FIX-1 — APP_VERSION now lives in the shared module so /api/health and
+// the frontend report the same version. Bump it THERE.
+import { APP_VERSION } from '../netlify/functions/shared/app-version';
 
 // Phase 4k W1 — single navigation source-of-truth shared by the mobile
 // TopBar and the desktop Sidebar. Mobile renders the same array as a

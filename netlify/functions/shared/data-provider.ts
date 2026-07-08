@@ -819,23 +819,48 @@ export async function getUpcomingEarnings(
   }
 }
 
-export async function getEarningsCalendarRange(
+export interface EarningsCalendarRangeStatus {
+  /** Parsed calendar entries (empty when the call failed OR was genuinely empty). */
+  entries: UpcomingEarning[];
+  /** True iff the HTTP call returned 2xx and parsed. */
+  ok: boolean;
+  /** HTTP status of the final attempt (0 for network/thrown errors). */
+  httpStatus: number;
+  /** True if every 429-retry was exhausted. */
+  rateLimitExhausted: boolean;
+  /** Non-HTTP failure message, when thrown. */
+  errorMessage?: string;
+}
+
+/**
+ * FIX-1 W1 — status-aware variant of getEarningsCalendarRange.
+ *
+ * The earnings scan's production failure mode (diagnosed 2026-07-08 from
+ * the snapshot history) was this call silently returning `[]` on a
+ * non-OK response: the scan then "completed" in ~200ms with
+ * universeChecked=0 and PUBLISHED the hollow snapshot over a good
+ * `_latest`. This variant (a) paces through the shared Finnhub token
+ * bucket, (b) retries 429s via fetchWithRateLimit, and (c) surfaces the
+ * outcome so the checkpoint-resume worker can refuse to publish when
+ * calendar resolution failed.
+ */
+export async function getEarningsCalendarRangeWithStatus(
   daysAhead = 14,
   daysBack = 0,
-): Promise<UpcomingEarning[]> {
+): Promise<EarningsCalendarRangeStatus> {
   try {
+    await getFinnhubBucket().acquire();
     const from = new Date(Date.now() - Math.max(0, daysBack) * 86400000).toISOString().slice(0, 10);
     const to = new Date(Date.now() + daysAhead * 86400000).toISOString().slice(0, 10);
     const url = `${FINNHUB}/calendar/earnings?from=${from}&to=${to}&token=${finnhubKey()}`;
-    const res = await fetch(url);
+    const { res, rateLimitExhausted } = await fetchWithRateLimit(url, undefined);
     if (!res.ok) {
-      // 429 from Finnhub means the per-minute limit was hit by an adjacent
-      // function in the same cold-start. Log it so deploys surface this in
-      // function logs instead of silently returning empty.
       if (res.status === 429) {
-        console.warn('[earnings-cal] Finnhub 429 rate-limited; returning empty so caller skips cache');
+        console.warn('[earnings-cal] Finnhub 429 exhausted on calendar range; caller must not publish');
+      } else {
+        console.warn(`[earnings-cal] Finnhub calendar range HTTP ${res.status}; caller must not publish`);
       }
-      return [];
+      return { entries: [], ok: false, httpStatus: res.status, rateLimitExhausted };
     }
     const data = parseOrFallback(
       FinnhubEarningsCalendarResponseSchema,
@@ -843,16 +868,31 @@ export async function getEarningsCalendarRange(
       { provider: 'finnhub', endpoint: 'calendar/earnings/range' },
       { earningsCalendar: [] },
     );
-    return (data.earningsCalendar ?? []).map((e) => ({
+    const entries = (data.earningsCalendar ?? []).map((e) => ({
       ticker: e.symbol,
       date: e.date,
       hour: e.hour,
       epsEstimate: e.epsEstimate ?? undefined,
       revenueEstimate: e.revenueEstimate ?? undefined,
     }));
-  } catch {
-    return [];
+    return { entries, ok: true, httpStatus: res.status, rateLimitExhausted: false };
+  } catch (err: any) {
+    return {
+      entries: [],
+      ok: false,
+      httpStatus: 0,
+      rateLimitExhausted: false,
+      errorMessage: String(err?.message ?? err),
+    };
   }
+}
+
+export async function getEarningsCalendarRange(
+  daysAhead = 14,
+  daysBack = 0,
+): Promise<UpcomingEarning[]> {
+  const r = await getEarningsCalendarRangeWithStatus(daysAhead, daysBack);
+  return r.entries;
 }
 
 export interface EarningsSurprise {

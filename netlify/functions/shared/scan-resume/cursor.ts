@@ -133,12 +133,24 @@ export async function clearScanCursor(
   db: Firestore,
   runId: string,
   finalStatus: ScanStatus = 'done',
+  /** FIX-1 W1 — optional extra fields merged onto the run doc at the
+   *  terminal write (e.g. `{ publishAction, publishReason }`). Before
+   *  this, a run that ended `status: 'error'` because the publish guard
+   *  skipped left NO trace of WHY on the run doc — the insider
+   *  sp500/russell2k nightly guard-skips (Jun 23 → Jul 8) went
+   *  undiagnosable from /api/scan-status alone. */
+  extra?: Record<string, unknown>,
 ): Promise<void> {
   await db
     .collection(RUN_COLLECTION)
     .doc(runId)
     .set(
-      { cursor: null, status: finalStatus, finishedAt: new Date().toISOString() },
+      {
+        cursor: null,
+        status: finalStatus,
+        finishedAt: new Date().toISOString(),
+        ...(extra ?? {}),
+      },
       { merge: true },
     );
 }
