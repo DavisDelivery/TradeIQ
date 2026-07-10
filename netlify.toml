@@ -48,6 +48,17 @@
 [functions."williams-board"]
   timeout = 26
 
+# DESK-1 W1 — desk-stats derives watchlist stats from cached 1Y bars;
+# a cold cache (fresh watchlist) is up to 60 Polygon bar fetches at
+# concurrency 6, so it needs the scan-board ceiling, not the 10s default.
+[functions."desk-stats"]
+  timeout = 26
+
+# DESK-1 W1 — earnings-radar paces per-ticker Finnhub calls through the
+# 55rpm token bucket; a cold batch can sit in the bucket queue.
+[functions."earnings-radar"]
+  timeout = 26
+
 # Phase 6 PR-G0 — stock-detail fans out to ~10 providers in parallel
 # (bars × 3, fundamentals, earnings × 2, news, insider, sector-medians,
 # ticker-info). Each call is bounded internally by withTimeoutStatus
@@ -318,6 +329,26 @@
 [[redirects]]
   from = "/api/backtest-runs/:runId"
   to = "/.netlify/functions/backtest-runs-get"
+  status = 200
+
+# DESK-1 W1 — per-ticker derived stats for the Desk watchlist (spark,
+# ATR%, 52w distances, avg volume, mcap/sector/name).
+[[redirects]]
+  from = "/api/desk-stats"
+  to = "/.netlify/functions/desk-stats"
+  status = 200
+
+# DESK-1 W1 — earnings proximity + honest beat history for the Desk.
+[[redirects]]
+  from = "/api/earnings-radar"
+  to = "/.netlify/functions/earnings-radar"
+  status = 200
+
+# DESK-1 W3 — per-ticker 90d insider transactions for the dossier
+# INSIDER tab (net dollars + last 10 filings), daily-cached.
+[[redirects]]
+  from = "/api/insider-detail"
+  to = "/.netlify/functions/insider-detail"
   status = 200
 
 # SPA fallback

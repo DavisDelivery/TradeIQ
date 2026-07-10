@@ -77,24 +77,11 @@ export async function getEarningsIntel(
     }
   }
 
-  // Surprise metrics from the last 4 reports
-  const last4 = history.slice(0, 4);
-  const surprises = last4
-    .map((r) => r.surprisePct ?? safeSurprise(r.epsActual, r.epsEstimate))
-    .filter((n): n is number => Number.isFinite(n));
-
-  // 4c-1 bug fix: when Finnhub returns no usable surprise data for a ticker
-  // (common for small-caps and IPOs), the previous code emitted
-  // `beatsLast4: 0` which the UI rendered as "0/4 beats" — a misleading
-  // false claim that the company missed all 4 quarters. Emit null instead
-  // so the UI can distinguish "no data" from "real zero beats".
-  const beatsLast4: number | null =
-    surprises.length > 0 ? surprises.filter((s) => s > 0).length : null;
-  const beatsLast4Quarters = surprises.length;
-  const avgSurpriseMagnitude = surprises.length
-    ? surprises.reduce((a, b) => a + b, 0) / surprises.length
-    : undefined;
-  const latestSurprisePct = surprises[0];
+  // Surprise metrics from the last 4 reports — shared pure helper so
+  // /api/earnings-radar (DESK-1) reuses the exact same honest-denominator
+  // semantics instead of reimplementing them.
+  const { surprises, beatsLast4, beatsLast4Quarters, avgSurpriseMagnitude, latestSurprisePct } =
+    computeBeatMetrics(history);
 
   let streak: EarningsIntel['streak'];
   if (surprises.length >= 3) {
@@ -171,6 +158,42 @@ export async function getEarningsIntel(
     postEarningsDrift,
     flags,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Beat metrics — pure helper shared with /api/earnings-radar (DESK-1)
+// ---------------------------------------------------------------------------
+
+export interface BeatMetrics {
+  /** Usable surprise %s from the last (up to) 4 reports, newest first. */
+  surprises: number[];
+  /**
+   * 4c-1 bug fix semantics preserved: when Finnhub returns no usable
+   * surprise data (common for small-caps and IPOs), emit null — NOT 0 —
+   * so the UI can distinguish "no data" from "real zero beats".
+   */
+  beatsLast4: number | null;
+  /** The honest denominator (0-4): how many quarters we actually have. */
+  beatsLast4Quarters: number;
+  avgSurpriseMagnitude?: number;
+  latestSurprisePct?: number;
+}
+
+export function computeBeatMetrics(history: EarningsSurprise[]): BeatMetrics {
+  const last4 = history.slice(0, 4);
+  const surprises = last4
+    .map((r) => r.surprisePct ?? safeSurprise(r.epsActual, r.epsEstimate))
+    .filter((n): n is number => Number.isFinite(n));
+
+  const beatsLast4: number | null =
+    surprises.length > 0 ? surprises.filter((s) => s > 0).length : null;
+  const beatsLast4Quarters = surprises.length;
+  const avgSurpriseMagnitude = surprises.length
+    ? surprises.reduce((a, b) => a + b, 0) / surprises.length
+    : undefined;
+  const latestSurprisePct = surprises[0];
+
+  return { surprises, beatsLast4, beatsLast4Quarters, avgSurpriseMagnitude, latestSurprisePct };
 }
 
 function safeGrowth(a: number | undefined, b: number | undefined): number | undefined {

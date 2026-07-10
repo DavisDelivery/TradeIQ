@@ -66,6 +66,13 @@ export const queryKeys = {
   backtest: (lookback, tickers) => ['tradeiq', 'backtest', lookback, tickers],
   engineTest: (ticker) => ['tradeiq', 'engineTest', ticker],
 
+  // DESK-1 — Desk workstation queries. deskStats/earningsRadar are keyed
+  // by the sorted comma-joined ticker set (same convention as liveQuotes)
+  // so the watchlist table shares one cache entry per ticker set.
+  deskStats: (key) => ['tradeiq', 'deskStats', key],
+  earningsRadar: (key) => ['tradeiq', 'earningsRadar', key],
+  insiderDetail: (ticker) => ['tradeiq', 'insiderDetail', ticker],
+
   // Phase 4b — backtest run viewer (reads from backtestRuns/{runId} in
   // Firestore via /api/backtest-runs endpoints; separate from the legacy
   // engine-test "backtest" key above which talks to /api/backtest).

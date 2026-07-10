@@ -4,7 +4,8 @@ import {
   AlertTriangle, ChevronRight, CircleCheck, CircleX, Circle, Gauge,
   BarChart3, Brain, Newspaper, Globe2, Eye, Target, Clock, ArrowUpRight,
   ArrowDownRight, Minus, Shield, Cpu, LineChart as LineChartIcon, Filter, X,
-  Inbox, Bell, ExternalLink, Info, BookMarked, Sparkles, Landmark, FlaskConical
+  Inbox, Bell, ExternalLink, Info, BookMarked, Sparkles, Landmark, FlaskConical,
+  Monitor
 } from 'lucide-react';
 import {
   AreaChart, Area, LineChart, Line, BarChart, Bar, RadarChart,
@@ -26,6 +27,7 @@ import { readLog, logTrade, removeTrade, computeForwardReturns } from './tradeLo
 import { useSortable, SortableTh } from './lib/useSortable.jsx';
 import { captureException } from './lib/sentry.js';
 import { TargetBoardView, LiveTargetBoard } from './TargetBoardView.jsx';
+import { DeskView } from './DeskView.jsx';
 import { RegimeView } from './RegimeView.jsx';
 import { AnalystsView } from './AnalystsView.jsx';
 import { AlertsView } from './AlertsView.jsx';
@@ -61,6 +63,10 @@ import { APP_VERSION } from '../netlify/functions/shared/app-version';
 // fate then follows the pre-committed rule in
 // reports/fix-1/composite-verdict.md.
 const VIEWS = [
+  // DESK-1 — the trader workstation: tape + watchlist + focus dossier +
+  // positions/base rates. Same VIEWS entry renders in the mobile TopBar
+  // scroller AND the 4k Sidebar (Phase 4k single source of truth).
+  { id: 'desk', label: 'Desk', shortLabel: 'Desk', icon: Monitor },
   { id: 'board', label: 'Target Board', shortLabel: 'Board', icon: Target },
   { id: 'prophet', label: 'Prophet', shortLabel: 'Prophet', icon: Sparkles },
   { id: 'catalyst', label: 'Catalyst', shortLabel: 'Catalyst', icon: Zap },
@@ -331,6 +337,7 @@ export default function App() {
 
   const viewRouter = (
     <>
+      {activeView === 'desk' && <ErrorBoundary label="Desk"><DeskView /></ErrorBoundary>}
       {activeView === 'board' && <ErrorBoundary label="Board"><LiveTargetBoard universe={universe} /></ErrorBoundary>}
       {activeView === 'prophet' && <ErrorBoundary label="Prophet"><ProphetView /></ErrorBoundary>}
       {activeView === 'catalyst' && <ErrorBoundary label="Catalyst"><CatalystView universe={universe} onNavigate={setActiveView} /></ErrorBoundary>}

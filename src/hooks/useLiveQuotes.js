@@ -14,7 +14,15 @@ import { fetchWithRetry } from '../lib/validateResponse.js';
 // Returns { quotesByTicker } — a map { TICKER: { price, changePct } }. A
 // missing ticker means "no live quote"; callers fall back to the scored
 // value, so this hook never blocks or breaks a render.
-export function useLiveQuotes(tickers) {
+// DESK-1 — opts:
+//   refetchIntervalMs — poll cadence override (the Desk tape runs 15s
+//     vs the 30s board default). refetchIntervalInBackground stays false
+//     so polling pauses whenever the tab is hidden/unfocused — this is
+//     the Polygon-budget guard (visibilityState-driven via TanStack's
+//     focusManager).
+//   enabled — lets callers gate polling entirely (e.g. Desk unmount).
+export function useLiveQuotes(tickers, opts = {}) {
+  const { refetchIntervalMs = 30_000, enabled = true } = opts;
   const sorted = useMemo(
     () => [...new Set((tickers || []).map((t) => String(t || '').toUpperCase()).filter(Boolean))].sort(),
     [tickers],
@@ -23,23 +31,30 @@ export function useLiveQuotes(tickers) {
 
   const query = useQuery({
     queryKey: queryKeys.liveQuotes(key),
-    enabled: sorted.length > 0,
+    enabled: enabled && sorted.length > 0,
     queryFn: async ({ signal }) => {
       const r = await fetchWithRetry(`/api/quotes?tickers=${encodeURIComponent(key)}`, { signal });
       const json = await r.json();
       if (!r.ok) throw new Error(json.error || `HTTP ${r.status}`);
-      return json.quotes || {};
+      // Keep the server's asOf stamp — the Desk tape renders it so the
+      // UI is honest about quote age (snapshot, not "real-time").
+      return { quotes: json.quotes || {}, asOf: json.asOf ?? null };
     },
-    // Quotes move; refresh on a 30s cadence while the board is open. Keep
-    // the previous map during refetch so prices never flicker to the
-    // scored fallback mid-poll.
-    staleTime: 20_000,
-    refetchInterval: 30_000,
+    // Quotes move; refresh while the board is open. Keep the previous
+    // map during refetch so prices never flicker to the scored fallback
+    // mid-poll.
+    staleTime: Math.min(20_000, refetchIntervalMs),
+    refetchInterval: refetchIntervalMs,
     refetchIntervalInBackground: false,
     placeholderData: (prev) => prev,
   });
 
-  return { quotesByTicker: query.data || {}, isFetching: query.isFetching };
+  return {
+    quotesByTicker: query.data?.quotes || {},
+    quotesAsOf: query.data?.asOf ?? null,
+    dataUpdatedAt: query.dataUpdatedAt,
+    isFetching: query.isFetching,
+  };
 }
 
 // overlayQuotes — pure merge of a live-quote map onto a row list. Kept

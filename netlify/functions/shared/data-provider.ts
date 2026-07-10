@@ -89,6 +89,45 @@ export async function getDailyBars(
   return (data.results ?? []) as Bar[];
 }
 
+/**
+ * DESK-1 W1 — intraday aggregates for the 1D/5D chart ranges.
+ *
+ * Status-aware because intraday resolution is Polygon PLAN-GATED: a
+ * plan without minute aggregates returns 403/NOT_AUTHORIZED. Callers
+ * (price-history 1D/5D) must degrade gracefully — daily bars +
+ * `intradayUnavailable: true` — never error the chart.
+ *
+ * NOT PIT-relevant: intraday bars are a live-UI concern only; no scan
+ * or backtest path consumes them.
+ */
+export async function getIntradayBarsWithStatus(
+  ticker: string,
+  multiplier: number,
+  timespan: 'minute' | 'hour',
+  from: string,
+  to: string,
+): Promise<{ bars: Bar[]; unauthorized: boolean }> {
+  const url = `${POLYGON}/v2/aggs/ticker/${encodeURIComponent(ticker)}/range/${multiplier}/${timespan}/${from}/${to}?adjusted=true&sort=asc&limit=50000&apiKey=${polygonKey()}`;
+  const res = await fetch(url);
+  if (res.status === 403) {
+    // Plan-gated. Read the body defensively for logging parity but the
+    // status alone is the signal.
+    return { bars: [], unauthorized: true };
+  }
+  if (!res.ok) throw new Error(`Polygon intraday bars ${ticker}: ${res.status}`);
+  const body = await res.json();
+  if (body?.status === 'NOT_AUTHORIZED') {
+    return { bars: [], unauthorized: true };
+  }
+  const data = parseOrFallback(
+    PolygonAggregatesResponseSchema,
+    body,
+    { provider: 'polygon', endpoint: 'aggregates-intraday', ticker },
+    { results: [] },
+  );
+  return { bars: (data.results ?? []) as Bar[], unauthorized: false };
+}
+
 export async function getPreviousClose(ticker: string): Promise<Bar | null> {
   const url = `${POLYGON}/v2/aggs/ticker/${encodeURIComponent(ticker)}/prev?adjusted=true&apiKey=${polygonKey()}`;
   const res = await fetch(url);

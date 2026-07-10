@@ -17,6 +17,15 @@ service cloud.firestore {
       allow read, write: if request.time < timestamp.date(2026, 10, 1);
     }
 
+    // DESK-1 — Desk watchlist (one doc per ticker, {ticker, addedAt}).
+    // Same open-until-expiry posture as tradeLog. NOTE: until this block
+    // is published in the Firebase Console, watchlist cloud sync fails
+    // permission-denied and entries stay local-only (the UI still works,
+    // marked with a pending-sync dot).
+    match /watchlist/{ticker} {
+      allow read, write: if request.time < timestamp.date(2026, 10, 1);
+    }
+
     // Everything else: locked down
     match /{document=**} {
       allow read, write: if false;
