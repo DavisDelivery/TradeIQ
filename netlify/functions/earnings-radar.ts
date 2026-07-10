@@ -72,15 +72,34 @@ export const handler: Handler = async (event) => {
     await Promise.all(batch.map(async (ticker) => {
       try {
         const cached = await readCache(ticker);
-        if (cached && cached.asOfDate === today) {
+        // Read-side twin of the write guard below: a fully-empty cached
+        // entry (written by a pre-fix deploy during a Finnhub outage) is
+        // treated as a miss so it self-heals instead of serving "no
+        // data" for the rest of the day.
+        const cachedEmpty = cached
+          && cached.entry?.beatsLast4Quarters === 0
+          && cached.entry?.nextEarningsDate === null;
+        if (cached && cached.asOfDate === today && !cachedEmpty) {
           radar[ticker] = cached.entry;
           return;
         }
         const entry = await buildEntry(ticker);
         radar[ticker] = entry;
-        await writeCache(ticker, { asOfDate: today, entry }).catch((err) => {
-          log.warn('cache_write_failed', { ticker, err: String(err?.message ?? err) });
-        });
+        // Post-merge prod finding (PR #102 smoke, NVDA @ ~21:00 UTC cron
+        // contention): getEarningsHistory/getUpcomingEarnings silently
+        // return []/null on Finnhub transport failure, and caching that
+        // pinned a rate-limited moment as "no data" for the whole day.
+        // Same discipline as insider-detail: a fully-empty entry (no
+        // history AND no calendar hit) is indistinguishable from a
+        // failure — serve it, but do NOT cache it, so the next request
+        // retries. Genuinely data-less tickers just re-fetch (2 paced
+        // calls per open — acceptable).
+        const possiblyFailed = entry.beatsLast4Quarters === 0 && entry.nextEarningsDate === null;
+        if (!possiblyFailed) {
+          await writeCache(ticker, { asOfDate: today, entry }).catch((err) => {
+            log.warn('cache_write_failed', { ticker, err: String(err?.message ?? err) });
+          });
+        }
       } catch (err: any) {
         warnings.push({ ticker, error: String(err?.message ?? err) });
         log.warn('ticker_failed', { ticker, err: String(err?.message ?? err) });

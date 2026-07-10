@@ -129,6 +129,42 @@ describe('handler — daily cache', () => {
     expect(acquireMock).toHaveBeenCalledTimes(2); // history + calendar
   });
 
+  it('never caches a fully-empty entry (indistinguishable from a Finnhub failure)', async () => {
+    // Post-merge prod finding: a 429-storm moment returned []/null and got
+    // pinned as "no data" for the day. Empty entries must be served but
+    // NOT cached, so the next request retries.
+    getEarningsHistoryMock.mockResolvedValue([]);
+    getUpcomingEarningsMock.mockResolvedValue(null);
+    const res = await handler(evt({ tickers: 'NVDA' }), {} as any);
+    const body = JSON.parse(res!.body!);
+    expect(body.radar.NVDA.beatsLast4).toBeNull(); // still served honestly
+    expect(docs[`${_internals.COLLECTION}/NVDA`]).toBeUndefined(); // not cached
+  });
+
+  it('treats a same-day fully-empty cached entry as a miss (self-heal)', async () => {
+    const today = new Date().toISOString().slice(0, 10);
+    docs[`${_internals.COLLECTION}/NVDA`] = {
+      asOfDate: today,
+      entry: { ticker: 'NVDA', nextEarningsDate: null, daysUntil: null, epsEstimateNext: null, beatsLast4: null, beatsLast4Quarters: 0, lastSurprisePct: null, surpriseHistory: [] },
+    };
+    getEarningsHistoryMock.mockResolvedValue(H([2.0, 1.5, 0.8, 3.1]));
+    getUpcomingEarningsMock.mockResolvedValue({ ticker: 'NVDA', date: '2026-08-26' });
+    const res = await handler(evt({ tickers: 'NVDA' }), {} as any);
+    const body = JSON.parse(res!.body!);
+    expect(getEarningsHistoryMock).toHaveBeenCalledTimes(1); // refetched despite same-day doc
+    expect(body.radar.NVDA.beatsLast4).toBe(4);
+    expect(docs[`${_internals.COLLECTION}/NVDA`].entry.beatsLast4).toBe(4); // healed
+  });
+
+  it('caches an entry that has a calendar hit even without surprise history', async () => {
+    // A real newer ticker: no surprises yet but a known next report —
+    // that IS data, cache it.
+    getEarningsHistoryMock.mockResolvedValue([]);
+    getUpcomingEarningsMock.mockResolvedValue({ ticker: 'NEWIPO', date: '2026-08-15' });
+    await handler(evt({ tickers: 'NEWIPO' }), {} as any);
+    expect(docs[`${_internals.COLLECTION}/NEWIPO`]).toBeDefined();
+  });
+
   it('400s without tickers', async () => {
     const res = await handler(evt({}), {} as any);
     expect(res!.statusCode).toBe(400);
