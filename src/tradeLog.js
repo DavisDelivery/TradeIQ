@@ -133,6 +133,39 @@ export function logTrade(entry) {
   return enriched;
 }
 
+// DESK-1 W4 — additive patch of an existing entry (setup / stop / exit
+// fields). Same optimistic-local + background-cloud discipline as
+// logTrade; existing entries without the new fields render fine (all
+// consumers treat them as optional).
+export function updateTrade(id, patch) {
+  const log = readLocal();
+  const idx = log.findIndex((t) => t.id === id);
+  if (idx < 0) return null;
+
+  const updated = { ...log[idx], ...patch };
+  log[idx] = { ...updated, _pendingSync: true };
+  writeLocal(log);
+
+  (async () => {
+    const ops = await fbOps();
+    if (!ops) return; // offline, will drain later
+    try {
+      const { _pendingSync, ...clean } = log[idx];
+      await ops.write(`${FB_COLLECTION}/${id}`, clean);
+      const current = readLocal();
+      const i = current.findIndex((t) => t.id === id);
+      if (i >= 0) {
+        delete current[i]._pendingSync;
+        writeLocal(current);
+      }
+    } catch (err) {
+      console.warn('[tradeLog] cloud update failed, will retry:', err.message);
+    }
+  })();
+
+  return updated;
+}
+
 export function removeTrade(id) {
   // Remove from local immediately
   const log = readLocal().filter((t) => t.id !== id);

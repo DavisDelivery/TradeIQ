@@ -4,7 +4,7 @@ import {
   BookMarked, TrendingUp, TrendingDown, Minus, X, RefreshCw, AlertCircle,
   Zap, Briefcase, Activity, Shield, Target, Cloud, CloudOff,
 } from 'lucide-react';
-import { readLog, removeTrade, computeForwardReturns, daysBetween, cloudSyncState } from './tradeLog.js';
+import { readLog, logTrade, updateTrade, removeTrade, computeForwardReturns, daysBetween, cloudSyncState } from './tradeLog.js';
 import { useResearch } from './hooks/useResearch.js';
 import { queryKeys } from './lib/queryKeys.js';
 import { fetchWithRetry } from './lib/validateResponse.js';
@@ -17,6 +17,8 @@ const SOURCE_META = {
   williams: { label: 'Williams', icon: Activity, color: 'text-fuchsia-400 border-fuchsia-500/40 bg-fuchsia-500/5' },
   lynch: { label: 'Lynch', icon: Shield, color: 'text-violet-400 border-violet-500/40 bg-violet-500/5' },
   chart: { label: 'Chart', icon: TrendingUp, color: 'text-neutral-400 border-neutral-700 bg-neutral-900/40' },
+  // DESK-1 W4 — manual entries logged from the Journal form.
+  manual: { label: 'Manual', icon: BookMarked, color: 'text-neutral-300 border-neutral-600 bg-neutral-900/40' },
 };
 
 const WINDOWS = [
@@ -153,6 +155,11 @@ export const JournalView = () => {
         </p>
       </header>
 
+      {/* DESK-1 W4 — manual entry form. Optional setup tag + stop feed the
+          Desk's base-rate table and R-multiples; both fields are additive
+          (existing entries without them render exactly as before). */}
+      <ManualEntryForm onLogged={refresh} />
+
       {log.length === 0 ? (
         <div className="border border-neutral-800 p-10 text-center">
           <BookMarked className="h-8 w-8 text-neutral-700 mx-auto mb-2" />
@@ -262,6 +269,9 @@ export const JournalView = () => {
                         {t.reportDate && <KV k="Report" v={t.reportDate} />}
                         {t.bias && <KV k="Bias" v={t.bias.replace('_', ' ')} />}
                       </div>
+                      {/* DESK-1 W4 — setup tag + stop editor (additive
+                          optional fields) + exit status. */}
+                      <SetupStopEditor trade={t} onSaved={refresh} />
                       <div className="flex items-center gap-2">
                         <button
                           onClick={(ev) => { ev.stopPropagation(); handleRemove(t.id); }}
@@ -278,6 +288,128 @@ export const JournalView = () => {
           </div>
         </>
       )}
+    </div>
+  );
+};
+
+// DESK-1 W4 — manual trade entry: ticker + entry price + optional setup
+// tag + optional stop. Logged with source 'manual'.
+const ManualEntryForm = ({ onLogged }) => {
+  const [open, setOpen] = useState(false);
+  const [ticker, setTicker] = useState('');
+  const [price, setPrice] = useState('');
+  const [setup, setSetup] = useState('');
+  const [stop, setStop] = useState('');
+  const [err, setErr] = useState(null);
+
+  function submit(ev) {
+    ev.preventDefault();
+    const t = ticker.trim().toUpperCase();
+    const p = Number(price);
+    if (!t || !/^[A-Z][A-Z0-9.-]{0,9}$/.test(t)) { setErr('Enter a valid ticker'); return; }
+    if (!Number.isFinite(p) || p <= 0) { setErr('Enter a valid entry price'); return; }
+    const stopNum = stop.trim() === '' ? undefined : Number(stop);
+    if (stopNum !== undefined && (!Number.isFinite(stopNum) || stopNum <= 0)) {
+      setErr('Stop must be a positive number (or blank)');
+      return;
+    }
+    const entry = { ticker: t, source: 'manual', loggedPrice: p };
+    if (setup.trim()) entry.setup = setup.trim();
+    if (stopNum !== undefined) entry.stop = stopNum;
+    logTrade(entry);
+    setTicker(''); setPrice(''); setSetup(''); setStop(''); setErr(null); setOpen(false);
+    onLogged?.();
+  }
+
+  if (!open) {
+    return (
+      <div className="mb-4">
+        <button
+          onClick={() => setOpen(true)}
+          data-testid="journal-manual-open"
+          className="px-2.5 py-1 text-[11px] font-medium border bg-neutral-950/40 border-neutral-800 text-neutral-400 hover:border-neutral-700 transition-colors"
+        >
+          + Log trade manually
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <form onSubmit={submit} data-testid="journal-manual-form" className="mb-4 border border-neutral-800 bg-neutral-950/40 p-3 flex flex-wrap items-end gap-2 text-[11px] font-mono">
+      <label className="flex flex-col gap-1">
+        <span className="text-[9px] uppercase tracking-widest text-neutral-500">Ticker</span>
+        <input value={ticker} onChange={(e) => setTicker(e.target.value.toUpperCase())} maxLength={10} aria-label="Manual ticker"
+          className="w-24 h-7 px-1.5 bg-neutral-900/80 border border-neutral-700 text-neutral-200 focus:outline-none focus:border-emerald-500/50" />
+      </label>
+      <label className="flex flex-col gap-1">
+        <span className="text-[9px] uppercase tracking-widest text-neutral-500">Entry $</span>
+        <input value={price} onChange={(e) => setPrice(e.target.value)} inputMode="decimal" aria-label="Manual entry price"
+          className="w-24 h-7 px-1.5 bg-neutral-900/80 border border-neutral-700 text-neutral-200 tabular-nums focus:outline-none focus:border-emerald-500/50" />
+      </label>
+      <label className="flex flex-col gap-1">
+        <span className="text-[9px] uppercase tracking-widest text-neutral-500">Setup (optional)</span>
+        <input value={setup} onChange={(e) => setSetup(e.target.value)} maxLength={24} placeholder="e.g. breakout" aria-label="Setup tag"
+          className="w-32 h-7 px-1.5 bg-neutral-900/80 border border-neutral-700 text-neutral-200 placeholder:text-neutral-600 focus:outline-none focus:border-emerald-500/50" />
+      </label>
+      <label className="flex flex-col gap-1">
+        <span className="text-[9px] uppercase tracking-widest text-neutral-500">Stop (optional)</span>
+        <input value={stop} onChange={(e) => setStop(e.target.value)} inputMode="decimal" aria-label="Stop price"
+          className="w-24 h-7 px-1.5 bg-neutral-900/80 border border-neutral-700 text-neutral-200 tabular-nums focus:outline-none focus:border-emerald-500/50" />
+      </label>
+      <button type="submit" className="h-7 px-3 border border-emerald-500/40 text-emerald-400 text-[10px] uppercase tracking-widest hover:bg-emerald-500/10">
+        Log
+      </button>
+      <button type="button" onClick={() => { setOpen(false); setErr(null); }}
+        className="h-7 px-3 border border-neutral-800 text-neutral-500 text-[10px] uppercase tracking-widest hover:text-neutral-300">
+        Cancel
+      </button>
+      {err && <span className="text-rose-400">{err}</span>}
+    </form>
+  );
+};
+
+// DESK-1 W4 — per-entry setup/stop editor + exit status line.
+const SetupStopEditor = ({ trade, onSaved }) => {
+  const [setup, setSetup] = useState(trade.setup ?? '');
+  const [stop, setStop] = useState(trade.stop != null ? String(trade.stop) : '');
+  const [saved, setSaved] = useState(false);
+
+  function save(ev) {
+    ev.stopPropagation();
+    const patch = {};
+    patch.setup = setup.trim() || null;
+    const stopNum = stop.trim() === '' ? null : Number(stop);
+    patch.stop = Number.isFinite(stopNum) && stopNum > 0 ? stopNum : null;
+    updateTrade(trade.id, patch);
+    setSaved(true);
+    setTimeout(() => setSaved(false), 1500);
+    onSaved?.();
+  }
+
+  const closed = typeof trade.exitPrice === 'number' && Number.isFinite(trade.exitPrice) && !!trade.exitAt;
+
+  return (
+    <div className="flex flex-wrap items-end gap-2 text-[11px] font-mono" onClick={(e) => e.stopPropagation()}>
+      <label className="flex flex-col gap-1">
+        <span className="text-[9px] uppercase tracking-widest text-neutral-500">Setup tag</span>
+        <input value={setup} onChange={(e) => setSetup(e.target.value)} maxLength={24} aria-label={`Setup tag for ${trade.ticker}`}
+          className="w-32 h-7 px-1.5 bg-neutral-900/80 border border-neutral-700 text-neutral-200 focus:outline-none focus:border-emerald-500/50" />
+      </label>
+      <label className="flex flex-col gap-1">
+        <span className="text-[9px] uppercase tracking-widest text-neutral-500">Stop</span>
+        <input value={stop} onChange={(e) => setStop(e.target.value)} inputMode="decimal" aria-label={`Stop for ${trade.ticker}`}
+          className="w-24 h-7 px-1.5 bg-neutral-900/80 border border-neutral-700 text-neutral-200 tabular-nums focus:outline-none focus:border-emerald-500/50" />
+      </label>
+      <button onClick={save}
+        className="h-7 px-3 border border-neutral-700 text-neutral-300 text-[10px] uppercase tracking-widest hover:border-emerald-500/40 hover:text-emerald-400 transition-colors">
+        {saved ? '✓ Saved' : 'Save'}
+      </button>
+      <span className="text-[10px] text-neutral-600">
+        {closed
+          ? `closed ${new Date(trade.exitAt).toLocaleDateString()} @ $${trade.exitPrice.toFixed(2)}`
+          : 'open — record the exit from the Desk positions rail'}
+      </span>
     </div>
   );
 };

@@ -43,8 +43,9 @@ function mockOnce(payload, { ok = true, status = 200 } = {}) {
 }
 
 describe('PriceChart', () => {
-  it('exposes the canonical range set: 1M, 6M, 1Y, All — default 6M', () => {
-    expect(_internals.RANGES).toEqual(['1M', '6M', '1Y', 'All']);
+  it('exposes the canonical range set: 1D, 5D, 1M, 6M, 1Y, All — default 6M', () => {
+    // DESK-1 W3: 1D/5D intraday ranges added; default unchanged.
+    expect(_internals.RANGES).toEqual(['1D', '5D', '1M', '6M', '1Y', 'All']);
     expect(_internals.DEFAULT_RANGE).toBe('6M');
   });
 
@@ -61,17 +62,55 @@ describe('PriceChart', () => {
     expect(url).toContain('range=6M');
   });
 
-  it('renders all four range buttons', async () => {
+  it('renders all six range buttons', async () => {
     mockOnce({ ok: true, ticker: 'AAPL', range: '6M', bars: fakeBars() });
     render(<PriceChart ticker="AAPL" />);
     // Wait for first render to settle
     await waitFor(() =>
       expect(global.fetch).toHaveBeenCalled(),
     );
+    expect(screen.getByText('1D')).toBeInTheDocument();
+    expect(screen.getByText('5D')).toBeInTheDocument();
     expect(screen.getByText('1M')).toBeInTheDocument();
     expect(screen.getByText('6M')).toBeInTheDocument();
     expect(screen.getByText('1Y')).toBeInTheDocument();
     expect(screen.getByText('All')).toBeInTheDocument();
+  });
+
+  it('hides the 1D/5D toggles when the backend flags intradayUnavailable', async () => {
+    // DESK-1 W3 degrade contract: plan-gated intraday must not error the
+    // chart — the daily fallback renders and the toggles disappear.
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true, status: 200,
+      json: async () => ({
+        ok: true, ticker: 'AAPL', range: '6M', bars: fakeBars(), intradayUnavailable: true,
+      }),
+    });
+    render(<PriceChart ticker="AAPL" />);
+    await waitFor(() => expect(global.fetch).toHaveBeenCalled());
+    await waitFor(() => expect(screen.queryByText('1D')).not.toBeInTheDocument());
+    expect(screen.queryByText('5D')).not.toBeInTheDocument();
+    expect(screen.getByText('6M')).toBeInTheDocument();
+  });
+
+  it('renders the volume sub-pane when bars carry volume', async () => {
+    mockOnce({
+      ok: true, ticker: 'AAPL', range: '6M',
+      bars: fakeBars().map((b) => ({ ...b, volume: 5_000_000 })),
+    });
+    render(<PriceChart ticker="AAPL" />);
+    expect(await screen.findByTestId('volume-pane')).toBeInTheDocument();
+  });
+
+  it('RSI pane toggles on and off', async () => {
+    mockOnce({ ok: true, ticker: 'AAPL', range: '6M', bars: fakeBars() });
+    render(<PriceChart ticker="AAPL" />);
+    await waitFor(() => expect(global.fetch).toHaveBeenCalled());
+    expect(screen.queryByTestId('rsi-pane')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByLabelText('Toggle RSI pane'));
+    expect(screen.getByTestId('rsi-pane')).toBeInTheDocument();
+    fireEvent.click(screen.getByLabelText('Toggle RSI pane'));
+    expect(screen.queryByTestId('rsi-pane')).not.toBeInTheDocument();
   });
 
   it('clicking a different range refetches with the new range', async () => {
