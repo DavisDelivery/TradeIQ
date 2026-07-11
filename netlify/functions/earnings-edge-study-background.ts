@@ -23,6 +23,7 @@ import {
   writeStudyCursor,
   appendStudyEvents,
   readAllStudyEvents,
+  clearStudyEvents,
   readStudy,
   type StudyCursor,
 } from './shared/earnings-study-store';
@@ -106,6 +107,9 @@ export const handler: Handler = withSentry(async (event, context) => {
         };
 
     if (!isResume) {
+      // Fresh start: wipe any prior events so a re-dispatched run can't
+      // accumulate on top of an earlier chain's rows (v2 race fix).
+      await clearStudyEvents(studyId).catch(() => {});
       await persistStudyStatus(studyId, { status: 'running' }).catch(() => {});
     }
 

@@ -458,13 +458,31 @@ const EMPTY_REGIME_BUCKETS = (): Record<RegimeTag, BucketStats[]> => ({
  * Assemble the full study from the raw event set. Pure: the endpoint
  * gathers events (I/O), this turns them into the report + verdict inputs.
  */
+/**
+ * Collapse events to one per (ticker, announceDate). A print is a single
+ * economic event; if the persistence layer ever wrote it twice (two
+ * reinvoke chains racing the same studyId — the failure mode the v2
+ * liveness fix closes), counting it twice would inflate n and distort the
+ * t-stat. Deduping at finalize makes the statistics robust to that race
+ * regardless of how the events got written.
+ */
+export function dedupeEvents(events: StudyEvent[]): StudyEvent[] {
+  const seen = new Map<string, StudyEvent>();
+  for (const e of events) {
+    const key = `${e.ticker}|${e.announceDate}`;
+    if (!seen.has(key)) seen.set(key, e);
+  }
+  return Array.from(seen.values());
+}
+
 export function assembleStudy(
   universe: string,
   windowStart: string,
   windowEnd: string,
-  events: StudyEvent[],
+  rawEvents: StudyEvent[],
   survivorshipNote: string,
 ): EarningsStudyResult {
+  const events = dedupeEvents(rawEvents);
   const costBps = COST_MODEL_BPS[universe] ?? 20;
   const buckets = buildBuckets(events);
   const perRegime = EMPTY_REGIME_BUCKETS();

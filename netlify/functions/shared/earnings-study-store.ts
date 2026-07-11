@@ -48,9 +48,14 @@ function db() {
   return getAdminDb();
 }
 
+// Bump when the event/aggregation schema changes so a new run allocates a
+// FRESH doc + events subcollection instead of resuming a contaminated one.
+// v2: liveness-on-updatedAt + clear-events-on-fresh-start + finalize dedupe.
+export const STUDY_SCHEMA_VERSION = 'v2';
+
 /** Deterministic-per-day id so a same-day re-fire single-flights cleanly. */
 export function studyIdFor(universe: string, years: number, dayIso: string): string {
-  return `es_${universe}_${years}y_${dayIso.replace(/-/g, '')}`;
+  return `es_${universe}_${years}y_${STUDY_SCHEMA_VERSION}_${dayIso.replace(/-/g, '')}`;
 }
 
 export async function readStudy(studyId: string): Promise<StudyDoc | null> {
@@ -89,7 +94,23 @@ export async function findFreshCompleteStudy(
   return best;
 }
 
-/** Any pending/running study for this pair started within the TTL window. */
+/**
+ * A run is presumed DEAD (re-fireable) if its cursor hasn't advanced in
+ * this long. Liveness is measured on `updatedAt` — which every batch's
+ * cursor write bumps — NOT `startedAt`. Using startedAt was a real bug:
+ * a legitimate sp500 study runs 30-40 min, so a startedAt+30min window
+ * declared a still-live chain "dead" and a poll re-dispatched it, racing
+ * a second chain onto the same studyId. A batch can be mid-flight for up
+ * to the 13-min budget without writing, so 20 min covers a live batch
+ * with margin while still reaping a genuinely stalled chain.
+ */
+export const STUDY_STALL_MS = 20 * 60 * 1000;
+
+/**
+ * A pending/running study for this pair whose cursor advanced within the
+ * stall window — i.e. a genuinely live chain the caller must NOT re-fire.
+ * Returns null when the only matches are stalled (so the caller re-runs).
+ */
 export async function findInFlightStudy(
   universe: string,
   years: number,
@@ -105,9 +126,10 @@ export async function findInFlightStudy(
   let found: StudyDoc | null = null;
   snap.forEach((doc) => {
     const d = doc.data() as StudyDoc;
-    const startedMs = Date.parse(d.startedAt ?? '');
-    // A study stuck >30min is presumed dead; don't let it block a re-fire.
-    if (Number.isFinite(startedMs) && nowMs - startedMs < 30 * 60 * 1000) {
+    // Liveness on updatedAt (cursor advances bump it); fall back to
+    // startedAt for a just-created doc that hasn't batched yet.
+    const liveMs = Date.parse(d.updatedAt ?? d.startedAt ?? '');
+    if (Number.isFinite(liveMs) && nowMs - liveMs < STUDY_STALL_MS) {
       found = d;
     }
   });
@@ -183,4 +205,22 @@ export async function readAllStudyEvents(studyId: string): Promise<StudyEvent[]>
   const out: StudyEvent[] = [];
   snap.forEach((doc) => out.push(doc.data() as StudyEvent));
   return out;
+}
+
+/**
+ * Delete every event doc under a study. Called on a FRESH (non-resume)
+ * background start so a re-dispatched run can't accumulate on top of a
+ * prior run's events (the index-keyed append would otherwise interleave
+ * two chains). Idempotent; safe on an empty subcollection.
+ */
+export async function clearStudyEvents(studyId: string): Promise<void> {
+  const col = db().collection(STUDY_COLLECTION).doc(studyId).collection('events');
+  const snap = await col.get();
+  const docs = snap.docs;
+  const CHUNK = 400;
+  for (let i = 0; i < docs.length; i += CHUNK) {
+    const batch = db().batch();
+    docs.slice(i, i + CHUNK).forEach((d) => batch.delete(d.ref));
+    await batch.commit();
+  }
 }

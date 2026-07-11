@@ -19,6 +19,7 @@ import {
   reversalHypothesis,
   evaluateRule,
   assembleStudy,
+  dedupeEvents,
   buildEvent,
   announceBarIndex,
   COST_MODEL_BPS,
@@ -242,13 +243,36 @@ describe('evaluateRule — the pre-committed three-part gate', () => {
   });
 });
 
+describe('dedupeEvents', () => {
+  it('collapses duplicate (ticker, announceDate) pairs, keeps first', () => {
+    const events = [
+      ev({ ticker: 'AAA', announceDate: '2022-01-10', fwdRet20: 0.01 }),
+      ev({ ticker: 'AAA', announceDate: '2022-01-10', fwdRet20: 0.99 }), // dup
+      ev({ ticker: 'AAA', announceDate: '2022-04-10', fwdRet20: 0.02 }), // diff date
+      ev({ ticker: 'BBB', announceDate: '2022-01-10', fwdRet20: 0.03 }), // diff ticker
+    ];
+    const out = dedupeEvents(events);
+    expect(out.length).toBe(3);
+    expect(out.find((e) => e.ticker === 'AAA' && e.announceDate === '2022-01-10')!.fwdRet20).toBe(0.01);
+  });
+
+  it('assembleStudy dedupes before aggregating (n is not inflated by a race)', () => {
+    const one = ev({ ticker: 'ZZ', announceDate: '2022-02-02', surprisePct: 5, reaction0_1: 2, fwdRet20: 0.02 });
+    const study = assembleStudy('sp500', '2018-01-31', '2024-12-31', [one, { ...one }, { ...one }], 'seed');
+    expect(study.eventCount).toBe(1); // three copies → one event
+  });
+});
+
 describe('assembleStudy', () => {
   it('rolls up counts, regime cuts, reversal, and the anySurvives gate', () => {
     const events: StudyEvent[] = [];
     for (let i = 0; i < 30; i++) {
+      const month = String((i % 12) + 1).padStart(2, '0');
       events.push(
         ev({
           ticker: `T${i % 6}`,
+          // distinct (ticker, announceDate) per event so none dedupe away
+          announceDate: `20${20 + Math.floor(i / 12)}-${month}-15`,
           surprisePct: i - 15,
           reaction0_1: i % 2 === 0 ? 2 : -2,
           fwdRet20: 0.001 * (i - 15),
