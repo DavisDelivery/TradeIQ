@@ -67,7 +67,6 @@ const VIEWS = [
   // positions/base rates. Same VIEWS entry renders in the mobile TopBar
   // scroller AND the 4k Sidebar (Phase 4k single source of truth).
   { id: 'desk', label: 'Desk', shortLabel: 'Desk', icon: Monitor },
-  { id: 'board', label: 'Target Board', shortLabel: 'Board', icon: Target },
   { id: 'prophet', label: 'Prophet', shortLabel: 'Prophet', icon: Sparkles },
   { id: 'catalyst', label: 'Catalyst', shortLabel: 'Catalyst', icon: Zap },
   { id: 'insiders', label: 'Insiders', shortLabel: 'Insiders', icon: Eye },
@@ -82,6 +81,15 @@ const VIEWS = [
   { id: 'alerts', label: 'Alerts', shortLabel: 'Alerts', icon: Bell },
   { id: 'journal', label: 'Journal', shortLabel: 'Journal', icon: BookMarked },
   { id: 'settings', label: 'Settings', shortLabel: 'Settings', icon: Settings },
+  // FIX-1 W3 — the ten-analyst composite (Target Board) was measured with
+  // NO VALIDATED EDGE (+33.7% vs SPY +107.9% = −74.2pp, IC −0.0105 over
+  // 2018-2024; runId bt_20260711013530_q5qdh7). Per the pre-committed
+  // rule in reports/fix-1/composite-verdict.md it demotes to a SCREENER:
+  // moved out of the flagship/default position into the Unvalidated
+  // section alongside Williams + Lynch. It stays in VIEWS (still
+  // reachable as a screener); its VerdictChip now renders NO VALIDATED
+  // EDGE automatically from verdicts.ts. FIX-2 (earnings) is the product.
+  { id: 'board', label: 'Target Board', shortLabel: 'Board', icon: Target, section: 'unvalidated' },
   { id: 'williams', label: 'Williams', shortLabel: 'Williams', icon: Activity, section: 'unvalidated' },
   { id: 'lynch', label: 'Lynch', shortLabel: 'Lynch', icon: Shield, section: 'unvalidated' },
 ];
@@ -288,7 +296,9 @@ const TopBar = ({ activeView, setActiveView, regime, universeStats }) => {
 // ======================================================================
 
 export default function App() {
-  const [activeView, setActiveView] = useState('board');
+  // FIX-1 W3 — default landing moved off the demoted Target Board (now a
+  // screener in the Unvalidated section) to the Desk workstation.
+  const [activeView, setActiveView] = useState('desk');
   const [universe, setUniverse] = useState('sp500');
   const showUniverseBar = UNIVERSE_AWARE_VIEWS.has(activeView);
   const { isDesktop } = useBreakpoint();

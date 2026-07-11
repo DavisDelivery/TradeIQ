@@ -29,10 +29,10 @@ describe('VerdictChip', () => {
     );
   });
 
-  it('target renders PENDING', () => {
+  it('target renders NO VALIDATED EDGE after the FIX-1 W3 verdict', () => {
     render(<VerdictChip board="target" />);
     expect(screen.getByTestId('verdict-chip-target').textContent).toBe(
-      'EDGE PENDING VALIDATION',
+      'NO VALIDATED EDGE (IC -0.0105, −74.2pp vs SPY)',
     );
   });
 
