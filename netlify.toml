@@ -351,6 +351,15 @@
   to = "/.netlify/functions/insider-detail"
   status = 200
 
+# FIX-2 W2 — PEAD / earnings-reaction event study (base-rate engine).
+# GET fronts the -background runner; serves the cached study when fresh,
+# else dispatches a fresh per-ticker reinvoke-chain run. Poll the same
+# path with the returned studyId until status === 'complete'.
+[[redirects]]
+  from = "/api/earnings-edge-study"
+  to = "/.netlify/functions/earnings-edge-study"
+  status = 200
+
 # SPA fallback
 [[redirects]]
   from = "/*"
