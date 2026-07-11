@@ -81,6 +81,13 @@ import { runInsider } from '../../analysts/insider';
 import { runPatents } from '../../analysts/patents';
 import { runPolitical } from '../../analysts/political';
 import { composeTarget } from '../analyst-runner';
+import {
+  classifyEarnings,
+  scoreEarningsComposite,
+  computeDriftLean,
+  annVol,
+  chunksAnnVol,
+} from '../earnings-scoring';
 import type {
   AnalystOutput,
   Direction,
@@ -833,6 +840,186 @@ function confidenceFromConflict(
 // live ANALYST_WEIGHTS verbatim.
 export const _internalsTarget = { TARGET_ANALYST_WEIGHTS };
 
+// ---------------------------------------------------------------------------
+// Earnings-board PIT scoring — FIX-2 W1
+// ---------------------------------------------------------------------------
+//
+// The earnings board is EVENT-anchored, not always-on: a ticker only has
+// a tradable setup near an earnings print. At a rebalance date D we score
+// a ticker ONLY when it is inside an event window relative to D:
+//   - POST-PRINT: the most recent print (announcement date) is within
+//     EARNINGS_POST_PRINT_LOOKBACK_DAYS BEFORE D  (PEAD / reversal), or
+//   - PRE-PRINT:  the next scheduled print is within
+//     EARNINGS_SCHEDULED_WINDOW_DAYS AFTER D       (vol / drift).
+// Otherwise → null (no setup). Because most tickers have no setup on a
+// given monthly date, the earnings backtest runs with
+// `discreteSignalOnly: true` so the FIX-1 W2 null-rate guard treats
+// "no setup" as valid no-trade, not missing data.
+//
+// PIT integrity: bars are clipped to ≤ D; the earnings calendar uses the
+// asOfDate-aware getUpcomingEarnings / getEarningsHistory (announcement-
+// date filtered). daysUntil / postPrint are computed relative to D, NEVER
+// `Date.now()` — that is exactly the PIT-hostile line in the live scorer.
+// Classification + composite come from the pure shared `earnings-scoring`
+// module (same code as the live scan). EPS-actual restatement is the
+// residual caveat (surfaced in metadata + the verdict), same class as the
+// Lynch/target fundamentals caveat.
+
+const EARNINGS_MIN_BARS = 30;
+const EARNINGS_CONTEXT_DAYS = 300; // enough trailing bars for the RV-chunk history
+const EARNINGS_SCHEDULED_WINDOW_DAYS = 30;
+const EARNINGS_POST_PRINT_LOOKBACK_DAYS = 5;
+
+function daysBetweenIso(fromIso: string, toIso: string): number {
+  return (
+    Date.parse(`${toIso}T12:00:00Z`) - Date.parse(`${fromIso}T12:00:00Z`)
+  ) / 86_400_000;
+}
+
+async function scoreEarningsAtDate(
+  ticker: string,
+  asOfDate: string,
+  ctx: MarketContextAtDate,
+  opts: { discreteSignalOnly?: boolean } = {},
+): Promise<ScoredCandidate | null> {
+  const entry = resolveScoringEntry(ticker);
+  const to = asOfDate;
+  const from = addDays(asOfDate, -EARNINGS_CONTEXT_DAYS);
+
+  const barsKey: PitCacheKey = {
+    provider: 'polygon',
+    dataClass: 'bars',
+    ticker,
+    asOfDate,
+    extra: `from=${from}:earnings`,
+  };
+  const bars = await pitCacheWrap(barsKey, () => getDailyBars(ticker, from, to));
+  if (!bars || bars.length < EARNINGS_MIN_BARS) return null;
+
+  // Earnings calendar — PIT. Next scheduled print (≥ D, within window) and
+  // past prints announced ≤ D.
+  const [upcoming, history] = await Promise.all([
+    pitCacheWrap<unknown>(
+      { provider: 'finnhub', dataClass: 'upcoming_earnings', ticker, asOfDate, extra: `ahead=${EARNINGS_SCHEDULED_WINDOW_DAYS}:earnings` },
+      () => getUpcomingEarnings(ticker, EARNINGS_SCHEDULED_WINDOW_DAYS, { asOfDate }).catch(() => null),
+    ).then((v) => v as Awaited<ReturnType<typeof getUpcomingEarnings>> | null),
+    pitCacheWrap<unknown>(
+      { provider: 'finnhub', dataClass: 'earnings_history', ticker, asOfDate, extra: 'lb=8:earnings:v2announce' },
+      () => getEarningsHistory(ticker, 8, { asOfDate, withAnnounceDates: true }).catch(() => []),
+    ).then((v) => v as Awaited<ReturnType<typeof getEarningsHistory>>),
+  ]);
+
+  // Resolve the event window relative to D.
+  const lastAnnounce = history.find((h) => h.announceDate)?.announceDate ?? null;
+  const daysSinceLastPrint = lastAnnounce !== null ? daysBetweenIso(lastAnnounce, asOfDate) : null;
+  const postPrint =
+    daysSinceLastPrint !== null &&
+    daysSinceLastPrint >= 0 &&
+    daysSinceLastPrint <= EARNINGS_POST_PRINT_LOOKBACK_DAYS;
+
+  const daysUntilScheduled = upcoming?.date ? daysBetweenIso(asOfDate, upcoming.date) : null;
+  const prePrint =
+    !postPrint &&
+    daysUntilScheduled !== null &&
+    daysUntilScheduled >= 0 &&
+    daysUntilScheduled <= EARNINGS_SCHEDULED_WINDOW_DAYS;
+
+  // No event window around D ⇒ no setup. (discreteSignalOnly semantics:
+  // null = valid no-trade, not missing data.)
+  if (!postPrint && !prePrint) return null;
+
+  const daysUntil = postPrint
+    ? -Math.round(daysSinceLastPrint as number)
+    : Math.round(daysUntilScheduled as number);
+  const reportDate = postPrint ? (lastAnnounce as string) : (upcoming as { date: string }).date;
+
+  // ---- Metrics from bars ≤ D (PIT-clean) — mirrors scoreEarningsForTicker ----
+  const returns: number[] = [];
+  for (let j = 1; j < bars.length; j++) {
+    if (bars[j].c > 0 && bars[j - 1].c > 0) returns.push(Math.log(bars[j].c / bars[j - 1].c));
+  }
+  const rv20 = annVol(returns.slice(-20));
+  const chunked = chunksAnnVol(returns, 20).filter((v) => v > 0);
+  const rv90Min = chunked.length ? Math.min(...chunked) : 0;
+  const rv90Max = chunked.length ? Math.max(...chunked) : 0;
+  const rvRankRaw = rv90Max > rv90Min ? ((rv20 - rv90Min) / (rv90Max - rv90Min)) * 100 : 50;
+  const rvRank = Math.max(0, Math.min(100, Math.round(rvRankRaw)));
+  const expectedMove = (rv20 / Math.sqrt(252)) * Math.sqrt(2) * 100;
+
+  // Prior announcement-anchored T-1→T+1 reactions (all announce dates ≤ D).
+  const priorMoves: number[] = [];
+  let lastMove: number | null = null;
+  for (const [k, h] of history.slice(0, 6).entries()) {
+    if (!h.announceDate) continue;
+    const hd = Date.parse(`${h.announceDate}T12:00:00Z`);
+    const barIdx = bars.findIndex((b) => Math.abs(b.t - hd) < 3 * 86_400_000);
+    if (barIdx > 0 && barIdx < bars.length - 1) {
+      const pre = bars[barIdx - 1].c;
+      const post = bars[barIdx + 1].c;
+      if (pre > 0) {
+        const signed = ((post - pre) / pre) * 100;
+        priorMoves.push(Math.abs(signed));
+        if (k === 0) lastMove = signed;
+      }
+    }
+  }
+  const avgPriorMove = priorMoves.length > 0 ? avgArr(priorMoves) : null;
+
+  const last5 = bars.slice(-6);
+  const last20 = bars.slice(-21);
+  const drift5 = last5.length >= 6 && last5[0].c > 0 ? ((last5[last5.length - 1].c - last5[0].c) / last5[0].c) * 100 : 0;
+  const drift20 = last20.length >= 21 && last20[0].c > 0 ? ((last20[last20.length - 1].c - last20[0].c) / last20[0].c) * 100 : 0;
+
+  const recentVol = bars.slice(-5).reduce((a, b) => a + (b.v || 0), 0) / 5;
+  const avg20Vol = bars.slice(-25, -5).reduce((a, b) => a + (b.v || 0), 0) / 20;
+  const volRatio = avg20Vol > 0 ? recentVol / avg20Vol : 1;
+
+  // ---- Classify + score via the shared pure module (same as live scan) ----
+  const { lean: driftLean } = computeDriftLean(drift5, drift20);
+  const surprise = history[0]?.surprisePct ?? null;
+  const { playType, direction } = classifyEarnings({
+    postPrint, surprise, lastMove, volRatio, rvRank, avgPriorMove, expectedMove, drift20, driftLean,
+  });
+  const composite = scoreEarningsComposite(playType, {
+    rvRank, drift20, surprisePct: history[0]?.surprisePct ?? 0, daysUntil, postPrint,
+  });
+
+  // discreteSignalOnly: a 'skip' classification is a valid no-trade, dropped.
+  if (opts.discreteSignalOnly && playType === 'skip') return null;
+
+  const latestBar = bars[bars.length - 1];
+  return {
+    ticker,
+    composite,
+    layers: { earningsComposite: composite },
+    sector: entry.sector,
+    metadata: {
+      price: latestBar.c,
+      direction: direction ?? 'neutral',
+      playType,
+      postPrint,
+      daysUntil,
+      reportDate,
+      rvRank,
+      expectedMove: +expectedMove.toFixed(2),
+      drift20: +drift20.toFixed(2),
+      volRatio: +volRatio.toFixed(2),
+      surprisePct: surprise ?? undefined,
+      lastMove: lastMove ?? undefined,
+      regime: ctx.regime?.regime ?? null,
+      pitCaveat:
+        'earnings history EPS-actual may be restated (residual look-ahead); ' +
+        'news-coverage density lower in 2018',
+      ...universeFlag(entry),
+    },
+  };
+}
+
+/** Local pure mean (avoid importing `avg` name-collision into this module). */
+function avgArr(xs: number[]): number {
+  return xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0;
+}
+
 /**
  * Public entry point. Dispatches to per-board scoring.
  *
@@ -863,6 +1050,7 @@ export async function scoreTickerAtDate(
   if (board === 'williams') return scoreWilliamsAtDate(ticker, asOfDate, opts);
   if (board === 'lynch') return scoreLynchAtDate(ticker, asOfDate, opts);
   if (board === 'target') return scoreTargetAtDate(ticker, asOfDate, ctx);
+  if (board === 'earnings') return scoreEarningsAtDate(ticker, asOfDate, ctx, opts);
   // catalyst / insider remain stubs — no PIT path yet.
   return null;
 }

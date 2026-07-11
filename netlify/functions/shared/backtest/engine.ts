@@ -475,6 +475,7 @@ export async function runBacktest(
               config.board !== 'williams' &&
               config.board !== 'lynch' &&
               config.board !== 'target' &&
+              config.board !== 'earnings' &&
               !nonProphetBoardWarned
             ) {
               nonProphetBoardWarned = true;
