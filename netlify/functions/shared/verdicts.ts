@@ -86,19 +86,23 @@ export const BOARD_VERDICTS: Record<VerdictBoard, BoardVerdict> = {
   },
   target: {
     board: 'target',
-    status: 'PENDING',
-    window: '2018-01-31 → 2024-12-31, sp500 + russell2k, monthly top20 (runs not yet fired)',
-    excessVsSPYPp: null,
-    excessVsQQQPp: null,
-    ic: null,
+    status: 'NO_EDGE',
+    window: '2018-01-31 → 2024-12-31, sp500, monthly top20 equal-weight, net of costs',
+    excessVsSPYPp: -74.2,
+    excessVsQQQPp: -168.1,
+    ic: -0.0105,
     rollingWindowsWon: null,
-    runId: null,
-    date: null,
+    runId: 'bt_20260711013530_q5qdh7',
+    date: '2026-07-11',
     note:
-      'The only prior composite run (bt_20260519233423_avaa64) was INVALID — no PIT path, ' +
-      'all candidates null. The composite has never been validly backtested. ' +
-      'Verdict populates from the FIX-1 W3 runs under the pre-committed rule in ' +
-      'reports/fix-1/composite-verdict.md.',
+      'FIX-1 W3: the ten-analyst composite returned +33.68% vs SPY +107.90% (−74.2 pp) ' +
+      'over 2018-2024 net of costs, with a NEGATIVE information coefficient (IC −0.0105) — ' +
+      'the scores rank stocks worse than random. Loses in risk-on regimes; Sharpe 0.31, ' +
+      'IR −0.62. Same result class as Williams (−73.4 pp). Demoted to a screener; the ' +
+      'target board is no longer presented as edge. russell2k confirmation run did not ' +
+      'complete (reinvoke-chain infra); sp500 alone is decisive per the pre-committed ' +
+      'binding rule (reports/fix-1/composite-verdict.md). The prior avaa64 run was INVALID ' +
+      '(all-null candidates); this q5qdh7 run is the first valid composite backtest.',
   },
 };
 

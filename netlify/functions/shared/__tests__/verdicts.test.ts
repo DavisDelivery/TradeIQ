@@ -34,13 +34,17 @@ describe('BOARD_VERDICTS — seeded standing verdicts', () => {
     expect(v.rollingWindowsWon).toBe('4/8');
   });
 
-  it('target: PENDING with no numbers (populates from the FIX-1 W3 runs)', () => {
+  it('target: NO_EDGE after the FIX-1 W3 sp500 run (−74.2pp vs SPY, negative IC)', () => {
     const v = BOARD_VERDICTS.target;
-    expect(v.status).toBe('PENDING');
-    expect(v.excessVsSPYPp).toBeNull();
-    expect(v.ic).toBeNull();
-    expect(v.runId).toBeNull();
+    expect(v.status).toBe('NO_EDGE');
+    expect(v.excessVsSPYPp).toBe(-74.2);
+    expect(v.ic).toBe(-0.0105);
+    expect(v.runId).toBe('bt_20260711013530_q5qdh7');
+    expect(v.date).toBe('2026-07-11');
+    // The note records that the first valid run (q5qdh7) superseded the
+    // INVALID avaa64 run.
     expect(v.note).toMatch(/avaa64/);
+    expect(v.note).toMatch(/screener/);
   });
 });
 
@@ -54,16 +58,16 @@ describe('verdictLabel — the chip must carry the measured number, not just a w
   it('prophet label carries both benchmarks and rolling consistency', () => {
     expect(verdictLabel(BOARD_VERDICTS.prophet)).toBe('MIXED (+80.9pp vs SPY, −58pp vs QQQ, 4/8 windows)');
   });
-  it('target label is PENDING', () => {
-    expect(verdictLabel(BOARD_VERDICTS.target)).toBe('EDGE PENDING VALIDATION');
+  it('target label carries IC and pp-vs-SPY (NO_EDGE after W3)', () => {
+    expect(verdictLabel(BOARD_VERDICTS.target)).toBe('NO VALIDATED EDGE (IC -0.0105, −74.2pp vs SPY)');
   });
 });
 
 describe('isUnvalidated — nav demotion follows the registry', () => {
-  it('williams + lynch are demoted; prophet (MIXED) and target (PENDING) are not', () => {
+  it('williams + lynch + target are demoted; prophet (MIXED) is not', () => {
     expect(isUnvalidated('williams')).toBe(true);
     expect(isUnvalidated('lynch')).toBe(true);
+    expect(isUnvalidated('target')).toBe(true); // FIX-1 W3: composite demoted to a screener
     expect(isUnvalidated('prophet')).toBe(false);
-    expect(isUnvalidated('target')).toBe(false);
   });
 });
