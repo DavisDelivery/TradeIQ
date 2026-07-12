@@ -182,6 +182,51 @@ export async function findStalledResumableStudy(
   return best;
 }
 
+/**
+ * The single "leading" pending/running study for (universe, years): the
+ * one with the MOST progress (highest nextTickerIndex; a just-created doc
+ * with no cursor counts as 0). Also reports whether it is live (cursor
+ * advanced within the stall window). This collapses the coexisting-studies
+ * problem to one decision: the endpoint drives the leader (wait if live,
+ * resume if stalled) and ignores every lower-progress doc — so an
+ * abandoned earlier run can never steal the heartbeat from the real one.
+ */
+export async function findLeadingStudy(
+  universe: string,
+  years: number,
+  nowMs: number,
+): Promise<{ doc: StudyDoc; isLive: boolean; progress: number } | null> {
+  const snap = await db()
+    .collection(STUDY_COLLECTION)
+    .where('universe', '==', universe)
+    .where('years', '==', years)
+    .where('status', 'in', ['pending', 'running'])
+    .limit(10)
+    .get();
+  let best: StudyDoc | null = null;
+  let bestProgress = -1;
+  snap.forEach((doc) => {
+    const d = doc.data() as StudyDoc;
+    const idx = d.cursor?.nextTickerIndex ?? 0;
+    const liveMs = Date.parse(d.updatedAt ?? d.startedAt ?? '');
+    // Tiebreak equal progress by recency so a just-created doc (idx 0) that
+    // is live still counts as the leader over a dead idx-0 doc.
+    const better =
+      idx > bestProgress ||
+      (idx === bestProgress && best !== null &&
+        Number.isFinite(liveMs) &&
+        liveMs > Date.parse(best.updatedAt ?? best.startedAt ?? ''));
+    if (best === null || better) {
+      best = d;
+      bestProgress = idx;
+    }
+  });
+  if (best === null) return null;
+  const liveMs = Date.parse((best as StudyDoc).updatedAt ?? (best as StudyDoc).startedAt ?? '');
+  const isLive = Number.isFinite(liveMs) && nowMs - liveMs < STUDY_STALL_MS;
+  return { doc: best, isLive, progress: bestProgress };
+}
+
 export async function persistStudyPending(doc: StudyDoc): Promise<void> {
   await db().collection(STUDY_COLLECTION).doc(doc.studyId).set(doc, { merge: true });
 }

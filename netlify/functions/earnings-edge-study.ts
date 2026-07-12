@@ -18,8 +18,7 @@ import {
   studyIdFor,
   readStudy,
   findFreshCompleteStudy,
-  findInFlightStudy,
-  findStalledResumableStudy,
+  findLeadingStudy,
   persistStudyPending,
   type StudyDoc,
 } from './shared/earnings-study-store';
@@ -119,45 +118,50 @@ export const handler: Handler = async (event, context) => {
     }
   }
 
-  // 2. If one is already in flight, report it rather than double-firing.
-  try {
-    const inFlight = await findInFlightStudy(universe, years, nowMs);
-    if (inFlight && !forceRefresh) {
-      return {
-        statusCode: 202,
-        headers,
-        body: JSON.stringify({ ok: true, status: inFlight.status, studyId: inFlight.studyId, message: 'study already running; poll this studyId' }),
-      };
-    }
-  } catch (e: any) {
-    log.warn('inflight_check_failed', { err: String(e?.message ?? e) });
-  }
-
-  // 2b. Self-heal: a stalled chain with real cursor progress (a dropped
-  // self-reinvoke — the FIX-1 reinvoke fragility) is RESUMED, not
-  // restarted. Each poll thus acts as an external heartbeat that nudges a
-  // flaky chain to completion instead of throwing partial work away.
+  // 2. Drive the LEADING pending/running study (the most-progressed one).
+  // If it's live, report it. If it stalled (dropped self-reinvoke — the
+  // FIX-1 reinvoke fragility), RESUME it from its cursor. Lower-progress
+  // coexisting docs (e.g. an abandoned earlier run) are ignored, so they
+  // can't steal the heartbeat or ping-pong the resume target.
   if (!forceRefresh) {
     try {
-      const resumable = await findStalledResumableStudy(universe, years);
-      if (resumable) {
-        const origin = inferOrigin(event as any);
-        await dispatchBackground(origin, resumable.studyId, log);
-        return {
-          statusCode: 202,
-          headers,
-          body: JSON.stringify({
-            ok: true,
-            status: 'resuming',
-            studyId: resumable.studyId,
-            nextTickerIndex: resumable.cursor?.nextTickerIndex,
-            totalTickers: resumable.cursor?.totalTickers,
-            message: 'stalled chain resumed from checkpoint',
-          }),
-        };
+      const leading = await findLeadingStudy(universe, years, nowMs);
+      if (leading) {
+        if (leading.isLive) {
+          return {
+            statusCode: 202,
+            headers,
+            body: JSON.stringify({
+              ok: true,
+              status: leading.doc.status,
+              studyId: leading.doc.studyId,
+              nextTickerIndex: leading.doc.cursor?.nextTickerIndex,
+              totalTickers: leading.doc.cursor?.totalTickers,
+              message: 'study already running; poll this studyId',
+            }),
+          };
+        }
+        // Stalled leader with progress → resume; leader with zero progress
+        // that's dead falls through to a fresh allocation.
+        if (leading.progress > 0) {
+          const origin = inferOrigin(event as any);
+          await dispatchBackground(origin, leading.doc.studyId, log);
+          return {
+            statusCode: 202,
+            headers,
+            body: JSON.stringify({
+              ok: true,
+              status: 'resuming',
+              studyId: leading.doc.studyId,
+              nextTickerIndex: leading.doc.cursor?.nextTickerIndex,
+              totalTickers: leading.doc.cursor?.totalTickers,
+              message: 'stalled chain resumed from checkpoint',
+            }),
+          };
+        }
       }
     } catch (e: any) {
-      log.warn('resume_check_failed', { err: String(e?.message ?? e) });
+      log.warn('leading_check_failed', { err: String(e?.message ?? e) });
     }
   }
 
