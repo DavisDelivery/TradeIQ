@@ -32,9 +32,13 @@ import { dispatchReinvoke, inferFunctionUrl, type ReinvokeContext } from './shar
 
 // 13-min wall-clock budget → 90s margin under the 15-min kill ceiling.
 const BUDGET_MS = Number(process.env.STUDY_BUDGET_MS ?? 13 * 60_000);
-// Tickers per invocation is soft — the watchdog stops the batch early when
-// the budget runs out; this bounds the batch when data is fast.
-const BATCH_TICKERS = Number(process.env.STUDY_BATCH_TICKERS ?? 60);
+// Ticker cap per invocation is a soft upper bound — the 13-min watchdog is
+// the real limiter (each rate-limited ticker is slow). Set high so a batch
+// runs the full budget and the chain needs FEWER self-reinvokes: every
+// reinvoke is a chance for the FIX-1 dropped-handoff to kill the chain, so
+// minimising handoffs is the cheapest reliability win. The GET endpoint's
+// resume-on-stall is the backstop when one drops anyway.
+const BATCH_TICKERS = Number(process.env.STUDY_BATCH_TICKERS ?? 400);
 const REINVOKE_JITTER_MS = Number(process.env.STUDY_REINVOKE_JITTER_MS ?? 1_500);
 
 interface Payload {

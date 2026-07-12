@@ -136,6 +136,37 @@ export async function findInFlightStudy(
   return found;
 }
 
+/**
+ * A pending/running study for this pair whose cursor has REAL progress
+ * (nextTickerIndex > 0) but is NOT currently live (the caller only reaches
+ * here after findInFlightStudy returned null). This is the resume target:
+ * a chain whose self-reinvoke was dropped (the FIX-1 reinvoke fragility)
+ * left partial work on the cursor — re-dispatching it continues from
+ * nextTickerIndex instead of throwing the progress away and restarting at
+ * zero. Picks the most-recently-updated such doc.
+ */
+export async function findStalledResumableStudy(
+  universe: string,
+  years: number,
+): Promise<StudyDoc | null> {
+  const snap = await db()
+    .collection(STUDY_COLLECTION)
+    .where('universe', '==', universe)
+    .where('years', '==', years)
+    .where('status', 'in', ['pending', 'running'])
+    .limit(10)
+    .get();
+  let best: StudyDoc | null = null;
+  snap.forEach((doc) => {
+    const d = doc.data() as StudyDoc;
+    if (!d.cursor || (d.cursor.nextTickerIndex ?? 0) <= 0) return; // no real progress
+    if (!best || Date.parse(d.updatedAt ?? '') > Date.parse(best.updatedAt ?? '')) {
+      best = d;
+    }
+  });
+  return best;
+}
+
 export async function persistStudyPending(doc: StudyDoc): Promise<void> {
   await db().collection(STUDY_COLLECTION).doc(doc.studyId).set(doc, { merge: true });
 }

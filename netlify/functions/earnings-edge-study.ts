@@ -19,6 +19,7 @@ import {
   readStudy,
   findFreshCompleteStudy,
   findInFlightStudy,
+  findStalledResumableStudy,
   persistStudyPending,
   type StudyDoc,
 } from './shared/earnings-study-store';
@@ -47,6 +48,41 @@ function inferOrigin(event: { headers: Record<string, string | undefined> }): st
   const proto = event.headers['x-forwarded-proto'] ?? event.headers['X-Forwarded-Proto'] ?? 'https';
   if (host) return `${proto}://${host}`;
   return process.env.URL ?? 'https://tradeiq-alpha.netlify.app';
+}
+
+/**
+ * POST the background runner for `studyId`, awaited with a 3s timeout race
+ * so the trigger container can't freeze before the dispatch leaves (same
+ * AWS-Lambda-freeze hazard the backtest trigger guards against). The
+ * background reads the study's cursor, so this both starts a fresh run and
+ * resumes a stalled one — the cursor decides.
+ */
+async function dispatchBackground(
+  origin: string,
+  studyId: string,
+  log: ReturnType<typeof logger.child>,
+): Promise<number | undefined> {
+  const backgroundUrl = `${origin}/.netlify/functions/earnings-edge-study-background`;
+  const DISPATCH_TIMEOUT_MS = 3000;
+  try {
+    const dispatch = fetch(backgroundUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ studyId }),
+    });
+    const raced = await Promise.race([
+      dispatch.then((r) => ({ r })),
+      new Promise<{ timeout: true }>((resolve) => setTimeout(() => resolve({ timeout: true }), DISPATCH_TIMEOUT_MS)),
+    ]);
+    if ('r' in raced) {
+      log.info('background_dispatched', { studyId, status: raced.r.status });
+      return raced.r.status;
+    }
+    log.warn('background_dispatch_timeout', { studyId });
+  } catch (e: any) {
+    log.error('background_dispatch_failed', { studyId, err: String(e?.message ?? e) });
+  }
+  return undefined;
 }
 
 export const handler: Handler = async (event, context) => {
@@ -97,6 +133,34 @@ export const handler: Handler = async (event, context) => {
     log.warn('inflight_check_failed', { err: String(e?.message ?? e) });
   }
 
+  // 2b. Self-heal: a stalled chain with real cursor progress (a dropped
+  // self-reinvoke — the FIX-1 reinvoke fragility) is RESUMED, not
+  // restarted. Each poll thus acts as an external heartbeat that nudges a
+  // flaky chain to completion instead of throwing partial work away.
+  if (!forceRefresh) {
+    try {
+      const resumable = await findStalledResumableStudy(universe, years);
+      if (resumable) {
+        const origin = inferOrigin(event as any);
+        await dispatchBackground(origin, resumable.studyId, log);
+        return {
+          statusCode: 202,
+          headers,
+          body: JSON.stringify({
+            ok: true,
+            status: 'resuming',
+            studyId: resumable.studyId,
+            nextTickerIndex: resumable.cursor?.nextTickerIndex,
+            totalTickers: resumable.cursor?.totalTickers,
+            message: 'stalled chain resumed from checkpoint',
+          }),
+        };
+      }
+    } catch (e: any) {
+      log.warn('resume_check_failed', { err: String(e?.message ?? e) });
+    }
+  }
+
   // 3. Allocate + dispatch a fresh run.
   const dayIso = new Date(nowMs).toISOString().slice(0, 10);
   const studyId = studyIdFor(universe, years, dayIso);
@@ -127,28 +191,7 @@ export const handler: Handler = async (event, context) => {
   }
 
   const origin = inferOrigin(event as any);
-  const backgroundUrl = `${origin}/.netlify/functions/earnings-edge-study-background`;
-  const DISPATCH_TIMEOUT_MS = 3000;
-  let dispatchStatus: number | undefined;
-  try {
-    const dispatch = fetch(backgroundUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ studyId }),
-    });
-    const raced = await Promise.race([
-      dispatch.then((r) => ({ r })),
-      new Promise<{ timeout: true }>((resolve) => setTimeout(() => resolve({ timeout: true }), DISPATCH_TIMEOUT_MS)),
-    ]);
-    if ('r' in raced) {
-      dispatchStatus = raced.r.status;
-      log.info('background_dispatched', { studyId, status: raced.r.status });
-    } else {
-      log.warn('background_dispatch_timeout', { studyId });
-    }
-  } catch (e: any) {
-    log.error('background_dispatch_failed', { studyId, err: String(e?.message ?? e) });
-  }
+  const dispatchStatus = await dispatchBackground(origin, studyId, log);
 
   return {
     statusCode: 202,
