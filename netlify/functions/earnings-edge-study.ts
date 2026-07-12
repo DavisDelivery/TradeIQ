@@ -19,6 +19,7 @@ import {
   readStudy,
   findFreshCompleteStudy,
   findLeadingStudy,
+  readMostRecentStudy,
   persistStudyPending,
   type StudyDoc,
 } from './shared/earnings-study-store';
@@ -165,7 +166,19 @@ export const handler: Handler = async (event, context) => {
     }
   }
 
-  // 3. Allocate + dispatch a fresh run.
+  // 3. Allocate + dispatch a fresh run. First capture WHY the last run
+  // ended (diagnostic surface) — a failed run that keeps re-allocating
+  // from zero is otherwise invisible.
+  let priorFailure: { status?: string; error?: string; nextTickerIndex?: number } | undefined;
+  try {
+    const recent = await readMostRecentStudy(universe, years);
+    if (recent && (recent.status === 'failed' || recent.error)) {
+      priorFailure = { status: recent.status, error: recent.error, nextTickerIndex: recent.cursor?.nextTickerIndex };
+    }
+  } catch {
+    /* diagnostic only */
+  }
+
   const dayIso = new Date(nowMs).toISOString().slice(0, 10);
   const studyId = studyIdFor(universe, years, dayIso);
   const now = new Date(nowMs).toISOString();
@@ -200,6 +213,6 @@ export const handler: Handler = async (event, context) => {
   return {
     statusCode: 202,
     headers,
-    body: JSON.stringify({ ok: true, status: 'pending', studyId, universe, years, windowStart, windowEnd: WINDOW_END, dispatchStatus }),
+    body: JSON.stringify({ ok: true, status: 'pending', studyId, universe, years, windowStart, windowEnd: WINDOW_END, dispatchStatus, priorFailure }),
   };
 };

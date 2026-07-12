@@ -227,6 +227,32 @@ export async function findLeadingStudy(
   return { doc: best, isLive, progress: bestProgress };
 }
 
+/**
+ * Most-recent study doc for (universe, years) regardless of status —
+ * diagnostic surface so a poll can report WHY the last run failed instead
+ * of silently re-allocating. Ordered by startedAt desc in code (the field
+ * set is tiny).
+ */
+export async function readMostRecentStudy(
+  universe: string,
+  years: number,
+): Promise<StudyDoc | null> {
+  const snap = await db()
+    .collection(STUDY_COLLECTION)
+    .where('universe', '==', universe)
+    .where('years', '==', years)
+    .limit(25)
+    .get();
+  let best: StudyDoc | null = null;
+  snap.forEach((doc) => {
+    const d = doc.data() as StudyDoc;
+    if (!best || Date.parse(d.updatedAt ?? d.startedAt ?? '') > Date.parse(best.updatedAt ?? best.startedAt ?? '')) {
+      best = d;
+    }
+  });
+  return best;
+}
+
 export async function persistStudyPending(doc: StudyDoc): Promise<void> {
   await db().collection(STUDY_COLLECTION).doc(doc.studyId).set(doc, { merge: true });
 }
