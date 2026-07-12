@@ -125,6 +125,34 @@ export const handler: Handler = withSentry(async (event, context) => {
       await persistStudyStatus(studyId, { status: 'running' }).catch(() => {});
     }
 
+    // Poison-pill skip. A corrupt/hard-crashing ticker (e.g. the malformed
+    // "SGAFT" seen in the sp500 seed) kills the whole invocation before any
+    // checkpoint — withTimeout can't rescue an out-of-band process kill —
+    // so every resume re-hits it and the cursor pins at the same index. If
+    // N invocations have started at the SAME index without advancing it,
+    // treat that index as poison: skip exactly ONE ticker and record it.
+    let startIdx = cursor.nextTickerIndex;
+    const skipped = new Set<number>(cursor.skippedIdx ?? []);
+    if (cursor.stallIdx === startIdx) {
+      cursor.stallCount = (cursor.stallCount ?? 0) + 1;
+    } else {
+      cursor.stallIdx = startIdx;
+      cursor.stallCount = 1;
+    }
+    const POISON_AFTER = 2;
+    if ((cursor.stallCount ?? 0) >= POISON_AFTER && startIdx < tickers.length) {
+      log.warn('poison_ticker_skipped', { studyId, index: startIdx, ticker: tickers[startIdx] });
+      skipped.add(startIdx);
+      startIdx += 1;
+      cursor.nextTickerIndex = startIdx;
+      cursor.stallIdx = startIdx;
+      cursor.stallCount = 1;
+      cursor.skippedIdx = Array.from(skipped);
+      // Persist the skip immediately so even if THIS invocation also dies,
+      // the next resume starts past the poison pill.
+      await writeStudyCursor(studyId, cursor).catch(() => {});
+    }
+
     log.info('batch_start', {
       studyId,
       universe,
@@ -141,7 +169,7 @@ export const handler: Handler = withSentry(async (event, context) => {
 
     const regimeCache = new Map<string, RegimeTag | null>();
     let batchEvents: StudyEvent[] = [];
-    let idx = cursor.nextTickerIndex;
+    let idx = startIdx;
     let processed = 0;
     // eventCount = total events already streamed to the subcollection (the
     // startIdx for the next append). batchEvents holds the not-yet-flushed
@@ -154,7 +182,12 @@ export const handler: Handler = withSentry(async (event, context) => {
     // only moved at batch end, so a ticker that ate the whole 15-min
     // window pinned the run at the same index on every resume (observed:
     // sp500 stuck at 460/507).
-    const CHECKPOINT_EVERY = 15;
+    // Checkpoint after EVERY ticker: one small cursor write per name (≈500
+    // total, ~25s aggregate — negligible vs the 13-min budget) makes the
+    // poison-pill detector PRECISE. The cursor always points at the next
+    // ticker to attempt, so a crash pins it on exactly the offending index
+    // and the skip discards that one ticker, not a whole window.
+    const CHECKPOINT_EVERY = 1;
     let sinceCheckpoint = 0;
 
     const flush = async (nextIdx: number, writeCursor: boolean) => {
@@ -164,7 +197,17 @@ export const handler: Handler = withSentry(async (event, context) => {
         batchEvents = [];
       }
       if (writeCursor) {
-        await writeStudyCursor(studyId, { ...cursor, nextTickerIndex: nextIdx, eventCount });
+        // Advancing the cursor IS progress → reset the stall tracker to the
+        // new frontier so poison detection only fires on a genuinely stuck
+        // index, not on normal forward motion.
+        await writeStudyCursor(studyId, {
+          ...cursor,
+          nextTickerIndex: nextIdx,
+          eventCount,
+          stallIdx: nextIdx,
+          stallCount: 1,
+          skippedIdx: Array.from(skipped),
+        });
       }
     };
 
@@ -216,8 +259,16 @@ export const handler: Handler = withSentry(async (event, context) => {
       return { statusCode: 200, body: JSON.stringify({ ok: true, studyId, status: 'complete', eventCount: result.eventCount }) };
     }
 
-    // Non-terminal — checkpoint + reinvoke.
-    const nextCursor: StudyCursor = { ...cursor, nextTickerIndex: idx, eventCount };
+    // Non-terminal — checkpoint + reinvoke. idx advanced past the batch's
+    // start, so reset the stall frontier to idx (progress = not stuck).
+    const nextCursor: StudyCursor = {
+      ...cursor,
+      nextTickerIndex: idx,
+      eventCount,
+      stallIdx: idx,
+      stallCount: 1,
+      skippedIdx: Array.from(skipped),
+    };
     await writeStudyCursor(studyId, nextCursor);
 
     const headers: Record<string, string | undefined> = {};

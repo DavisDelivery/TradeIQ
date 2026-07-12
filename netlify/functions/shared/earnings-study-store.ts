@@ -42,6 +42,12 @@ export interface StudyCursor {
   lastInvocationStartedAt: string;
   lastReinvokeAt?: string;
   lastReinvokeError?: string;
+  /** Poison-pill detection: the index a prior invocation started at. */
+  stallIdx?: number;
+  /** How many invocations have started at stallIdx without advancing it. */
+  stallCount?: number;
+  /** Indices skipped as poison pills (corrupt/hard-crashing tickers). */
+  skippedIdx?: number[];
 }
 
 function db() {
