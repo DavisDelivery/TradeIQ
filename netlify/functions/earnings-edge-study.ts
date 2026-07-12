@@ -125,9 +125,17 @@ export const handler: Handler = async (event, context) => {
         if (!key) {
           rawProbe = { error: 'FINNHUB_API_KEY not set on this env' };
         } else {
-          const r = await fetch(`https://finnhub.io/api/v1/stock/earnings?symbol=${ticker}&limit=8&token=${key}`);
-          const txt = await r.text();
-          rawProbe = { httpStatus: r.status, keyLen: key.length, bodySnippet: txt.slice(0, 300) };
+          const probe = async (path: string) => {
+            const r = await fetch(`https://finnhub.io/api/v1/${path}${path.includes('?') ? '&' : '?'}token=${key}`);
+            const txt = await r.text();
+            return { httpStatus: r.status, bodySnippet: txt.slice(0, 160) };
+          };
+          rawProbe = {
+            keyLen: key.length,
+            stockEarnings: await probe(`stock/earnings?symbol=${ticker}&limit=8`),
+            calendarEarnings: await probe(`calendar/earnings?from=2024-01-01&to=2024-03-01&symbol=${ticker}`),
+            quote: await probe(`quote?symbol=${ticker}`),
+          };
         }
       } catch (e: any) {
         rawProbe = { error: String(e?.message ?? e) };
