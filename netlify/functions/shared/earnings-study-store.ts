@@ -48,6 +48,10 @@ export interface StudyCursor {
   stallCount?: number;
   /** Indices skipped as poison pills (corrupt/hard-crashing tickers). */
   skippedIdx?: number[];
+  /** Single-flight lease: epoch ms until which one invocation owns the run.
+   *  A second invocation that sees a live lease aborts without touching the
+   *  cursor, so overlapping runs can't clobber each other's progress. */
+  leaseUntil?: number;
 }
 
 function db() {

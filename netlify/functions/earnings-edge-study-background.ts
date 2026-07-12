@@ -102,6 +102,24 @@ export const handler: Handler = withSentry(async (event, context) => {
       return { statusCode: 200, body: JSON.stringify({ ok: false, studyId, status: 'failed' }) };
     }
 
+    // Single-flight lease. Overlapping invocations (poll-dispatched +
+    // self-reinvoked) were all reading the same cursor and racing writes,
+    // so a slow one clobbered a fast one's progress back to its start —
+    // the run pinned at a fixed index (observed: 400) despite "running".
+    // Claim the lease or abort. Date.now() is fine here (this is a Netlify
+    // function, not a Workflow script).
+    // Short lease, EXTENDED on every checkpoint. During healthy work the
+    // per-ticker checkpoints (≤8s apart) keep it fresh; after a crash it
+    // lapses in ~90s so the next invocation can resume quickly instead of
+    // waiting out a long lease.
+    const LEASE_MS = 90_000;
+    const now = Date.now();
+    const existingLease = doc.cursor?.leaseUntil ?? 0;
+    if (existingLease > now) {
+      log.info('lease_held_abort', { studyId, leaseRemainingMs: existingLease - now });
+      return { statusCode: 202, body: JSON.stringify({ ok: true, studyId, status: 'leased', message: 'another invocation owns the run' }) };
+    }
+
     const existing = doc.cursor ?? null;
     const isResume = existing != null;
     const cursor: StudyCursor = isResume
@@ -118,12 +136,19 @@ export const handler: Handler = withSentry(async (event, context) => {
           lastInvocationStartedAt: new Date().toISOString(),
         };
 
+    // Claim the lease for this invocation's lifetime (covers the 13-min
+    // batch). Mid-batch checkpoints carry it forward; the batch-end writes
+    // clear it so the next reinvoke can claim immediately.
+    cursor.leaseUntil = now + LEASE_MS;
+
     if (!isResume) {
       // Fresh start: wipe any prior events so a re-dispatched run can't
       // accumulate on top of an earlier chain's rows (v2 race fix).
       await clearStudyEvents(studyId).catch(() => {});
       await persistStudyStatus(studyId, { status: 'running' }).catch(() => {});
     }
+    // Persist the lease claim immediately so a racing invocation sees it.
+    await writeStudyCursor(studyId, cursor).catch(() => {});
 
     // Poison-pill skip. A corrupt/hard-crashing ticker (e.g. the malformed
     // "SGAFT" seen in the sp500 seed) kills the whole invocation before any
@@ -207,6 +232,7 @@ export const handler: Handler = withSentry(async (event, context) => {
           stallIdx: nextIdx,
           stallCount: 1,
           skippedIdx: Array.from(skipped),
+          leaseUntil: Date.now() + LEASE_MS, // extend the lease while working
         });
       }
     };
@@ -261,13 +287,15 @@ export const handler: Handler = withSentry(async (event, context) => {
 
     // Non-terminal — checkpoint + reinvoke. idx advanced past the batch's
     // start, so reset the stall frontier to idx (progress = not stuck).
+    // Clear the lease (leaseUntil: 0) so the next reinvoke can claim it.
     const nextCursor: StudyCursor = {
       ...cursor,
       nextTickerIndex: idx,
       eventCount,
       stallIdx: idx,
-      stallCount: 1,
+      stallCount: idx === startIdx ? (cursor.stallCount ?? 1) : 1,
       skippedIdx: Array.from(skipped),
+      leaseUntil: 0,
     };
     await writeStudyCursor(studyId, nextCursor);
 
