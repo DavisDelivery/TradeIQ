@@ -143,7 +143,15 @@ export async function findInFlightStudy(
  * a chain whose self-reinvoke was dropped (the FIX-1 reinvoke fragility)
  * left partial work on the cursor — re-dispatching it continues from
  * nextTickerIndex instead of throwing the progress away and restarting at
- * zero. Picks the most-recently-updated such doc.
+ * zero.
+ *
+ * Picks the doc with the MOST PROGRESS (highest nextTickerIndex), NOT the
+ * most-recently-updated. When two studies for the same (universe, years)
+ * coexist — e.g. an abandoned v1 doc at index 60 and the live v2 doc at
+ * 460 — resuming "most recent" ping-pongs between them (each resume bumps
+ * updatedAt, flipping which looks newest) and never converges. Resuming
+ * "most progress" always drives the leading run to completion and lets the
+ * stale low-progress doc rot. updatedAt breaks ties.
  */
 export async function findStalledResumableStudy(
   universe: string,
@@ -159,8 +167,15 @@ export async function findStalledResumableStudy(
   let best: StudyDoc | null = null;
   snap.forEach((doc) => {
     const d = doc.data() as StudyDoc;
-    if (!d.cursor || (d.cursor.nextTickerIndex ?? 0) <= 0) return; // no real progress
-    if (!best || Date.parse(d.updatedAt ?? '') > Date.parse(best.updatedAt ?? '')) {
+    const idx = d.cursor?.nextTickerIndex ?? 0;
+    if (idx <= 0) return; // no real progress
+    if (best === null) {
+      best = d;
+      return;
+    }
+    const bestIdx = best.cursor?.nextTickerIndex ?? 0;
+    if (idx > bestIdx) best = d;
+    else if (idx === bestIdx && Date.parse(d.updatedAt ?? '') > Date.parse(best.updatedAt ?? '')) {
       best = d;
     }
   });
