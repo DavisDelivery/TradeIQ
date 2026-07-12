@@ -182,6 +182,40 @@ export const handler: Handler = async (event, context) => {
   const dayIso = new Date(nowMs).toISOString().slice(0, 10);
   const studyId = studyIdFor(universe, years, dayIso);
   const now = new Date(nowMs).toISOString();
+
+  // NON-DESTRUCTIVE guard: if a doc for this id already carries real cursor
+  // progress and isn't complete, RESUME it rather than resetting to zero.
+  // findLeadingStudy can transiently return null (a status-flip window or a
+  // Firestore read-consistency lag); without this guard every such blip
+  // wiped the cursor and restarted the whole sweep from 0 — the real reason
+  // sp500 never converged.
+  if (!forceRefresh) {
+    try {
+      const existing = await readStudy(studyId);
+      if (
+        existing &&
+        existing.status !== 'complete' &&
+        (existing.cursor?.nextTickerIndex ?? 0) > 0
+      ) {
+        await dispatchBackground(inferOrigin(event as any), studyId, log);
+        return {
+          statusCode: 202,
+          headers,
+          body: JSON.stringify({
+            ok: true,
+            status: 'resuming',
+            studyId,
+            nextTickerIndex: existing.cursor?.nextTickerIndex,
+            totalTickers: existing.cursor?.totalTickers,
+            message: 'resumed existing run (non-destructive)',
+          }),
+        };
+      }
+    } catch (e: any) {
+      log.warn('nondestructive_resume_check_failed', { err: String(e?.message ?? e) });
+    }
+  }
+
   const doc: StudyDoc = {
     studyId,
     universe,
