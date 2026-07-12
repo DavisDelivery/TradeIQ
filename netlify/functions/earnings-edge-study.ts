@@ -14,6 +14,8 @@
 
 import type { Handler } from '@netlify/functions';
 import { logger } from './shared/logger';
+import { getEarningsHistory, getDailyBars } from './shared/data-provider';
+import { gatherTickerEvents } from './shared/earnings-study-gather';
 import {
   studyIdFor,
   readStudy,
@@ -23,6 +25,11 @@ import {
   persistStudyPending,
   type StudyDoc,
 } from './shared/earnings-study-store';
+
+/** Local ISO date shift for the debug window (avoids importing the gather's private helper). */
+function addDaysDebug(iso: string, n: number): string {
+  return new Date(Date.parse(`${iso}T00:00:00Z`) + n * 86_400_000).toISOString().slice(0, 10);
+}
 
 const headers = { 'Content-Type': 'application/json' };
 
@@ -95,6 +102,39 @@ export const handler: Handler = async (event, context) => {
   const universe = (q.universe ?? 'sp500') as StudyUniverse;
   const years = Math.max(1, Math.min(15, Number(q.years ?? 7) || 7));
   const forceRefresh = q.refresh === '1' || q.force === '1';
+
+  // DIAGNOSTIC: ?debug=<TICKER> runs the gather for one ticker synchronously
+  // and returns the raw inputs (earnings history, bar count) + the windowed
+  // events, so the 0-event failure can be inspected against the deployed
+  // env's real Finnhub/Polygon keys. No background, no Firestore writes.
+  if (q.debug) {
+    const ticker = q.debug.toUpperCase();
+    const wStart = windowStartFor(years);
+    try {
+      const [rawNoAsof, rawWithJoin, bars] = await Promise.all([
+        getEarningsHistory(ticker, 44).catch((e: any) => ({ err: String(e?.message ?? e) })),
+        getEarningsHistory(ticker, 44, { withAnnounceDates: true }).catch((e: any) => ({ err: String(e?.message ?? e) })),
+        getDailyBars(ticker, addDaysDebug(wStart, -10), addDaysDebug(WINDOW_END, 120)).catch((e: any) => ({ err: String(e?.message ?? e) })),
+      ]);
+      const events = await gatherTickerEvents(ticker, wStart, WINDOW_END, new Map()).catch((e: any) => ({ err: String(e?.message ?? e) }));
+      return {
+        statusCode: 200,
+        headers,
+        body: JSON.stringify({
+          ok: true,
+          debug: ticker,
+          window: [wStart, WINDOW_END],
+          barCount: Array.isArray(bars) ? bars.length : bars,
+          historyNoJoin: Array.isArray(rawNoAsof) ? { count: rawNoAsof.length, sample: rawNoAsof.slice(0, 3) } : rawNoAsof,
+          historyWithJoin: Array.isArray(rawWithJoin) ? { count: rawWithJoin.length, sample: rawWithJoin.slice(0, 4) } : rawWithJoin,
+          eventCount: Array.isArray(events) ? events.length : events,
+          eventSample: Array.isArray(events) ? events.slice(0, 3) : undefined,
+        }),
+      };
+    } catch (e: any) {
+      return { statusCode: 500, headers, body: JSON.stringify({ ok: false, debug: ticker, error: String(e?.message ?? e) }) };
+    }
+  }
   // Optional cap on universe members — lets a study finalize in a single
   // background batch (no reinvoke chain) when reliability matters more than
   // full coverage. 0/absent = full universe.
