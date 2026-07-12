@@ -117,6 +117,21 @@ export const handler: Handler = async (event, context) => {
         getDailyBars(ticker, addDaysDebug(wStart, -10), addDaysDebug(WINDOW_END, 120)).catch((e: any) => ({ err: String(e?.message ?? e) })),
       ]);
       const events = await gatherTickerEvents(ticker, wStart, WINDOW_END, new Map()).catch((e: any) => ({ err: String(e?.message ?? e) }));
+      // Raw Finnhub stock/earnings probe — HTTP status + body snippet — to
+      // distinguish a plan/key gate from a response-shape mismatch.
+      let rawProbe: unknown = 'skipped';
+      try {
+        const key = process.env.FINNHUB_API_KEY;
+        if (!key) {
+          rawProbe = { error: 'FINNHUB_API_KEY not set on this env' };
+        } else {
+          const r = await fetch(`https://finnhub.io/api/v1/stock/earnings?symbol=${ticker}&limit=8&token=${key}`);
+          const txt = await r.text();
+          rawProbe = { httpStatus: r.status, keyLen: key.length, bodySnippet: txt.slice(0, 300) };
+        }
+      } catch (e: any) {
+        rawProbe = { error: String(e?.message ?? e) };
+      }
       return {
         statusCode: 200,
         headers,
@@ -127,6 +142,7 @@ export const handler: Handler = async (event, context) => {
           barCount: Array.isArray(bars) ? bars.length : bars,
           historyNoJoin: Array.isArray(rawNoAsof) ? { count: rawNoAsof.length, sample: rawNoAsof.slice(0, 3) } : rawNoAsof,
           historyWithJoin: Array.isArray(rawWithJoin) ? { count: rawWithJoin.length, sample: rawWithJoin.slice(0, 4) } : rawWithJoin,
+          rawFinnhubProbe: rawProbe,
           eventCount: Array.isArray(events) ? events.length : events,
           eventSample: Array.isArray(events) ? events.slice(0, 3) : undefined,
         }),
