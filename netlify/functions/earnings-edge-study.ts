@@ -120,7 +120,10 @@ export const handler: Handler = async (event, context) => {
     const cappedId = studyIdFor(universe, years, dayIso, maxTickers);
     try {
       const existing = await readStudy(cappedId);
-      if (existing?.status === 'complete' && existing.result && !forceRefresh) {
+      // Serve only a NON-EMPTY complete study; an empty result (0 events) is
+      // treated as a miss and re-run, never cached — same honesty guard as
+      // the full path / earnings-radar.
+      if (existing?.status === 'complete' && existing.result && existing.result.eventCount > 0 && !forceRefresh) {
         return { statusCode: 200, headers, body: JSON.stringify({ ok: true, status: 'complete', cached: true, study: existing.result, studyId: cappedId }) };
       }
       const idx = existing?.cursor?.nextTickerIndex ?? 0;

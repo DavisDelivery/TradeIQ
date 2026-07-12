@@ -19,6 +19,9 @@ const FWD_BUFFER_DAYS = 120;
 const PRE_BUFFER_DAYS = 10;
 /** Earnings-history depth: ~10y of quarterly covers a 7y window with slack. */
 const HISTORY_LIMIT = 44;
+/** Fallback filing lag (fiscal period end → announcement) when the
+ *  calendar join yields no announceDate. Typical US large-cap lag. */
+const APPROX_ANNOUNCE_LAG_DAYS = 35;
 
 function addDaysIso(iso: string, n: number): string {
   return new Date(Date.parse(`${iso}T00:00:00Z`) + n * 86_400_000)
@@ -80,12 +83,33 @@ export async function gatherTickerEvents(
 
   const out: StudyEvent[] = [];
   for (const h of history) {
-    if (!h.announceDate) continue;
-    if (h.announceDate < windowStart || h.announceDate > windowEnd) continue;
-    const surprise = h.surprisePct;
-    if (surprise === undefined || !Number.isFinite(surprise)) continue;
-    const regime = await regimeForDate(h.announceDate, regimeCache);
-    const event = buildEvent(ticker, h.announceDate, surprise, bars, regime);
+    // Surprise: prefer Finnhub's surprisePercent; fall back to computing it
+    // from EPS actual vs estimate when the field is absent (some plans /
+    // rows omit surprisePercent — dropping those lost the entire sample).
+    let surprise: number | null = null;
+    if (h.surprisePct !== undefined && Number.isFinite(h.surprisePct)) {
+      surprise = h.surprisePct;
+    } else if (
+      Number.isFinite(h.epsActual) &&
+      Number.isFinite(h.epsEstimate) &&
+      Math.abs(h.epsEstimate) > 1e-9
+    ) {
+      surprise = ((h.epsActual - h.epsEstimate) / Math.abs(h.epsEstimate)) * 100;
+    }
+    if (surprise === null) continue;
+
+    // Announce date: prefer the calendar-joined announceDate; when the join
+    // failed (null — common under Finnhub rate pressure across a big
+    // universe), fall back to period + a typical filing lag so the event
+    // still contributes. The approximation shifts the reaction window by a
+    // few days at most; documented in the study's method note.
+    let announce = h.announceDate;
+    if (!announce && h.period) announce = addDaysIso(h.period, APPROX_ANNOUNCE_LAG_DAYS);
+    if (!announce) continue;
+    if (announce < windowStart || announce > windowEnd) continue;
+
+    const regime = await regimeForDate(announce, regimeCache);
+    const event = buildEvent(ticker, announce, surprise, bars, regime);
     if (event) out.push(event);
   }
   return out;
