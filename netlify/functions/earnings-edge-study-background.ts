@@ -96,7 +96,14 @@ export const handler: Handler = withSentry(async (event, context) => {
     // Resolve the member list (current-seed for sp500/russell2k). Deterministic
     // across invocations so the cursor index is stable.
     const pool = universePoolForDate(universe as BacktestUniverse, windowEnd);
-    const tickers = pool.tickers;
+    // Drop known-corrupt symbols from the seed data (e.g. the malformed
+    // "SGAFT" concatenation in the sp500 snapshot) — these hard-crash the
+    // gather in ways withTimeout can't rescue. Then optionally cap the list
+    // (doc.maxTickers) so the study finalizes in a single background batch,
+    // sidestepping the reinvoke-chain fragility entirely.
+    const DENYLIST = new Set(['SGAFT']);
+    let tickers = pool.tickers.filter((t) => !DENYLIST.has(t));
+    if (doc.maxTickers && doc.maxTickers > 0) tickers = tickers.slice(0, doc.maxTickers);
     if (tickers.length === 0) {
       await persistStudyFailed(studyId, `no universe members for ${universe} @ ${windowEnd}`);
       return { statusCode: 200, body: JSON.stringify({ ok: false, studyId, status: 'failed' }) };

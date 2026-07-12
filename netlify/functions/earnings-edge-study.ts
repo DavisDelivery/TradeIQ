@@ -95,6 +95,10 @@ export const handler: Handler = async (event, context) => {
   const universe = (q.universe ?? 'sp500') as StudyUniverse;
   const years = Math.max(1, Math.min(15, Number(q.years ?? 7) || 7));
   const forceRefresh = q.refresh === '1' || q.force === '1';
+  // Optional cap on universe members — lets a study finalize in a single
+  // background batch (no reinvoke chain) when reliability matters more than
+  // full coverage. 0/absent = full universe.
+  const maxTickers = Math.max(0, Math.floor(Number(q.limit ?? 0) || 0));
 
   if (!SUPPORTED_UNIVERSES.includes(universe)) {
     return {
@@ -106,6 +110,35 @@ export const handler: Handler = async (event, context) => {
 
   const nowMs = Date.now();
   const windowStart = windowStartFor(years);
+  const dayIso = new Date(nowMs).toISOString().slice(0, 10);
+
+  // CAPPED PATH: a `limit`-scoped study is handled purely by its own
+  // studyId (no universe+years discovery, which would collide with the
+  // full-universe run). serve-if-complete / resume-if-progress / else
+  // allocate-fresh. Designed to finalize in a single background batch.
+  if (maxTickers > 0) {
+    const cappedId = studyIdFor(universe, years, dayIso, maxTickers);
+    try {
+      const existing = await readStudy(cappedId);
+      if (existing?.status === 'complete' && existing.result && !forceRefresh) {
+        return { statusCode: 200, headers, body: JSON.stringify({ ok: true, status: 'complete', cached: true, study: existing.result, studyId: cappedId }) };
+      }
+      const idx = existing?.cursor?.nextTickerIndex ?? 0;
+      const liveMs = Date.parse(existing?.updatedAt ?? '');
+      const isLive = Number.isFinite(liveMs) && nowMs - liveMs < 90_000;
+      if (existing && existing.status !== 'complete' && idx > 0 && !forceRefresh) {
+        if (!isLive) await dispatchBackground(inferOrigin(event as any), cappedId, log);
+        return { statusCode: 202, headers, body: JSON.stringify({ ok: true, status: isLive ? 'running' : 'resuming', studyId: cappedId, nextTickerIndex: idx, totalTickers: existing.cursor?.totalTickers }) };
+      }
+      const now = new Date(nowMs).toISOString();
+      await persistStudyPending({ studyId: cappedId, universe, years, maxTickers, windowStart, windowEnd: WINDOW_END, status: 'pending', startedAt: now, updatedAt: now, cursor: null });
+      const dispatchStatus = await dispatchBackground(inferOrigin(event as any), cappedId, log);
+      return { statusCode: 202, headers, body: JSON.stringify({ ok: true, status: 'pending', studyId: cappedId, universe, years, maxTickers, windowStart, windowEnd: WINDOW_END, dispatchStatus }) };
+    } catch (e: any) {
+      log.error('capped_path_failed', { cappedId, err: String(e?.message ?? e) });
+      return { statusCode: 500, headers, body: JSON.stringify({ ok: false, error: String(e?.message ?? e) }) };
+    }
+  }
 
   // 1. Serve a fresh, non-empty complete study if we have one.
   if (!forceRefresh) {
@@ -179,7 +212,6 @@ export const handler: Handler = async (event, context) => {
     /* diagnostic only */
   }
 
-  const dayIso = new Date(nowMs).toISOString().slice(0, 10);
   const studyId = studyIdFor(universe, years, dayIso);
   const now = new Date(nowMs).toISOString();
 

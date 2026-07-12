@@ -24,6 +24,8 @@ export interface StudyDoc {
   windowStart: string;
   windowEnd: string;
   status: StudyStatus;
+  /** Optional cap on universe members processed (single-batch reliability). */
+  maxTickers?: number;
   startedAt: string;
   updatedAt: string;
   completedAt?: string;
@@ -63,9 +65,12 @@ function db() {
 // v2: liveness-on-updatedAt + clear-events-on-fresh-start + finalize dedupe.
 export const STUDY_SCHEMA_VERSION = 'v2';
 
-/** Deterministic-per-day id so a same-day re-fire single-flights cleanly. */
-export function studyIdFor(universe: string, years: number, dayIso: string): string {
-  return `es_${universe}_${years}y_${STUDY_SCHEMA_VERSION}_${dayIso.replace(/-/g, '')}`;
+/** Deterministic-per-day id so a same-day re-fire single-flights cleanly.
+ *  A non-zero `maxTickers` gets its own id so a capped study never collides
+ *  with the full-universe doc. */
+export function studyIdFor(universe: string, years: number, dayIso: string, maxTickers = 0): string {
+  const cap = maxTickers > 0 ? `_n${maxTickers}` : '';
+  return `es_${universe}_${years}y_${STUDY_SCHEMA_VERSION}${cap}_${dayIso.replace(/-/g, '')}`;
 }
 
 export async function readStudy(studyId: string): Promise<StudyDoc | null> {
