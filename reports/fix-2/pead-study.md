@@ -85,9 +85,49 @@ Aggregation (the point):
 
 ---
 
+## ⛔ MEASUREMENT BLOCKED — Finnhub earnings endpoints return HTTP 429 (2026-07-12)
+
+The W2 study **engine, endpoint, and harness are complete and unit-tested**
+(see `shared/earnings-study.ts` + 23 green tests), but the live measurement
+run **cannot produce data in the current environment** and every attempt
+finalized with **0 events**.
+
+Root cause was isolated with a synchronous single-ticker probe
+(`GET /api/earnings-edge-study?debug=AAPL`) hitting Finnhub directly with
+the deployed env's real key:
+
+| Finnhub endpoint | HTTP | note |
+|---|---|---|
+| `/quote` | **200** | basic data works; the key is valid (len 40) |
+| `/stock/earnings` (EPS surprise history) | **429** | `{"error":"Too many requests…"}` — persists on a single isolated call after 10h idle |
+| `/calendar/earnings` (announcement dates) | **429** | same |
+
+Polygon bars resolve fine (1,829 bars for AAPL). Only the **earnings**
+endpoints 429. A single isolated call fails, so this is **not** a burst
+from the study's own volume — the earnings data endpoints are
+plan-gated / hard-rate-limited on this Finnhub account.
+
+**Implication (flagged to owner):** the same `getEarningsHistory` /
+`getUpcomingEarnings` calls power the live earnings scan, `earnings-radar`,
+and the DESK-1 earnings surfaces — those may be silently degrading to empty
+in production too if prod shares this key/plan. Worth verifying separately.
+
+**Code hardening shipped while diagnosing (all real defects):** reinvoke
+resume, poison-ticker skip (`SGAFT`), non-destructive allocation,
+single-flight lease, EPS/announce-date fallbacks, single-batch `limit=`
+path, and — the actual fix once data flows — pacing `getEarningsHistory`
+through the Finnhub token bucket + 429 retry.
+
+**To complete the measurement (once earnings access is restored):**
+`GET /api/earnings-edge-study?universe=sp500&years=7&limit=250` (single
+clean batch), then russell2k, then apply the pre-committed rule below to
+the buckets. `debug=AAPL` re-confirms data flow in one call.
+
+---
+
 ## Bucket table — sp500, 2018-2024
 
-_Pending W2 study run. Populated from `/api/earnings-edge-study?universe=sp500&years=7`._
+_Pending a study run (blocked on Finnhub earnings-endpoint access — see above)._
 
 | Surprise quintile | Reaction sign | n | mean fwdRet 5d | 20d | 60d | hit% | t-stat (20d) | IC | Survives rule? |
 |---|---|---|---|---|---|---|---|---|---|
