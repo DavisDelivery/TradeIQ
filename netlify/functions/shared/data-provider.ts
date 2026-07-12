@@ -1076,7 +1076,13 @@ export async function getEarningsHistory(
     // Fetch extra to absorb post-filter losses when asOfDate is set.
     const fetchLimit = opts.asOfDate ? Math.max(limit * 4, 32) : limit;
     const url = `${FINNHUB}/stock/earnings?symbol=${ticker}&limit=${fetchLimit}&token=${finnhubKey()}`;
-    const res = await fetch(url);
+    // Pace through the shared Finnhub token bucket + 429-aware retry. Without
+    // this the call was an unpaced raw fetch: a multi-hundred-ticker study
+    // burst-hammered Finnhub, exhausted the rate limit, and every earnings
+    // call came back 429 → [] → a 0-event study (diagnosed live). The
+    // calendar joins already pace this way; align stock/earnings with them.
+    await getFinnhubBucket().acquire();
+    const { res } = await fetchWithRateLimit(url, undefined);
     if (!res.ok) return [];
     const data = parseOrFallback(
       FinnhubEarningsHistoryResponseSchema,

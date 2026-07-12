@@ -47,7 +47,7 @@ const REINVOKE_JITTER_MS = Number(process.env.STUDY_REINVOKE_JITTER_MS ?? 1_500)
 // the next checkpoint — a hang is cheap to skip. (A rare skipped slow
 // ticker just contributes no events; the study is a base-rate aggregate,
 // robust to a handful of drops.)
-const TICKER_TIMEOUT_MS = Number(process.env.STUDY_TICKER_TIMEOUT_MS ?? 8_000);
+const TICKER_TIMEOUT_MS = Number(process.env.STUDY_TICKER_TIMEOUT_MS ?? 20_000);
 
 interface Payload {
   studyId: string;
