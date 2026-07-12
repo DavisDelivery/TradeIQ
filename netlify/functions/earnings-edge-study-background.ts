@@ -42,9 +42,12 @@ const BUDGET_MS = Number(process.env.STUDY_BUDGET_MS ?? 13 * 60_000);
 const BATCH_TICKERS = Number(process.env.STUDY_BATCH_TICKERS ?? 400);
 const REINVOKE_JITTER_MS = Number(process.env.STUDY_REINVOKE_JITTER_MS ?? 1_500);
 // Per-ticker hard cap. A ticker's full gather (bars + earnings history +
-// calendar join + regime) is normally a few seconds; 30s is generous
-// headroom, and a hang past it is skipped so it can't strand the batch.
-const TICKER_TIMEOUT_MS = Number(process.env.STUDY_TICKER_TIMEOUT_MS ?? 30_000);
+// calendar join + regime) is normally a few seconds. Kept TIGHT (8s) so a
+// cluster of slow/hung tickers can't consume the whole batch budget before
+// the next checkpoint — a hang is cheap to skip. (A rare skipped slow
+// ticker just contributes no events; the study is a base-rate aggregate,
+// robust to a handful of drops.)
+const TICKER_TIMEOUT_MS = Number(process.env.STUDY_TICKER_TIMEOUT_MS ?? 8_000);
 
 interface Payload {
   studyId: string;
@@ -151,7 +154,7 @@ export const handler: Handler = withSentry(async (event, context) => {
     // only moved at batch end, so a ticker that ate the whole 15-min
     // window pinned the run at the same index on every resume (observed:
     // sp500 stuck at 460/507).
-    const CHECKPOINT_EVERY = 40;
+    const CHECKPOINT_EVERY = 15;
     let sinceCheckpoint = 0;
 
     const flush = async (nextIdx: number, writeCursor: boolean) => {
