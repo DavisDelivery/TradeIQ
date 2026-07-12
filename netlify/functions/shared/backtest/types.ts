@@ -12,7 +12,8 @@ export type BacktestBoard =
   | 'catalyst'
   | 'insider'
   | 'williams'
-  | 'lynch';
+  | 'lynch'
+  | 'earnings'; // FIX-2 W1 — event-anchored earnings board (PEAD/vol/drift)
 
 export type RebalanceFrequency = 'weekly' | 'monthly' | 'quarterly';
 

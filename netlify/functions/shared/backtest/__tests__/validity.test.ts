@@ -94,6 +94,31 @@ describe('assessRunValidity', () => {
     expect(d.valid).toBe(false);
   });
 
+  // FIX-2 W1 — the earnings board is event-anchored: most tickers have no
+  // setup on a given monthly date, so it runs with discreteSignalOnly and
+  // a high null rate is the EXPECTED no-trade semantics, NOT missing data.
+  it('earnings (discreteSignalOnly): high null rate stays valid (no-setup = no-trade)', () => {
+    const d = assessRunValidity({
+      tickerAttemptTotal: 10000,
+      scoredCandidateTotal: 700, // ~93% null — most tickers have no event near D
+      tickerFailureTotal: 0,
+      warnings: [],
+      config: { board: 'earnings', discreteSignalOnly: true } as typeof baseConfig,
+    });
+    expect(d.valid).toBe(true);
+  });
+
+  it('earnings: a no-PIT-path warning would STILL invalidate (guard is board-agnostic)', () => {
+    const d = assessRunValidity({
+      tickerAttemptTotal: 10000,
+      scoredCandidateTotal: 0,
+      tickerFailureTotal: 0,
+      warnings: [`Board "earnings" ${NO_PIT_PATH_WARNING_FRAGMENT}; all null.`],
+      config: { board: 'earnings', discreteSignalOnly: true } as typeof baseConfig,
+    });
+    expect(d.valid).toBe(false);
+  });
+
   it('thrown failures are NOT nulls: an all-throw run stays in the HIGH-FAILURE-RATE lane (valid here)', () => {
     const d = assessRunValidity({
       tickerAttemptTotal: 1000,

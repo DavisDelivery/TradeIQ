@@ -19,6 +19,7 @@ import type {
   EarningsSetup, EarningsPlayType,
   PlayTriggers, HistoricalEdge, ExecutionStep,
 } from './types';
+import { classifyEarnings, scoreEarningsComposite, computeDriftLean, annVol, chunksAnnVol, avg } from './earnings-scoring';
 import type { Logger } from './logger';
 
 // ====================================================================
@@ -397,99 +398,33 @@ async function scoreEarningsForTicker(
   const volRatio = avg20Vol > 0 ? recentVol / avg20Vol : 1;
 
   // ---- Categorize the play ----
-  const driftSignals: string[] = [];
-  let driftLean: 'long' | 'short' | 'mixed' = 'mixed';
-  if (drift20 > 5 && drift5 > 2) {
-    driftSignals.push(`20d +${drift20.toFixed(1)}%`, `5d +${drift5.toFixed(1)}%`);
-    driftLean = 'long';
-  } else if (drift20 < -5 && drift5 < -2) {
-    driftSignals.push(`20d ${drift20.toFixed(1)}%`, `5d ${drift5.toFixed(1)}%`);
-    driftLean = 'short';
-  }
+  // FIX-2 W1 — classification + composite scoring extracted to the pure,
+  // shared `earnings-scoring.ts` (single source for the live scan AND the
+  // PIT backtest scorer; W3 re-derives the composite there). Behaviour
+  // here is unchanged — the existing scan-earnings tests pin it.
+  const { lean: driftLean, signals: driftSignals } = computeDriftLean(drift5, drift20);
+  const surprise = (history[0]?.surprisePct ?? null);
 
-  let playType: EarningsPlayType = 'skip';
-  let bias: EarningsSetup['bias'] = 'neutral';
-  let strategy = 'Wait';
-  // Trade side for plays where playType alone doesn't encode it. 'reversal'
-  // covers BOTH gap-up-on-miss (short fade) and gap-down-on-beat (long
-  // fade); the playType taxonomy stays stable (frontend switches on it via
-  // PLAY_TYPE_LABELS/COLORS) and the side travels on `direction` (M3).
-  let direction: 'long' | 'short' | undefined;
-
-  if (postPrint) {
-    // lastMove is the latest print's announcement-anchored reaction; null
-    // when that row's announcement date is unknown — classification is
-    // skipped rather than computed off a period-end window.
-    const surprise = (history[0]?.surprisePct ?? null);
-    if (surprise !== null && lastMove !== null && volRatio > 1.3) {
-      if (surprise > 5 && lastMove > 3) {
-        playType = 'pead_long';
-        bias = 'buy_premium';
-        strategy = 'PEAD Long (continuation)';
-        direction = 'long';
-      } else if (surprise < -5 && lastMove < -3) {
-        playType = 'pead_short';
-        bias = 'buy_premium';
-        strategy = 'PEAD Short (continuation)';
-        direction = 'short';
-      } else if (Math.abs(lastMove) > 5 && volRatio > 1.5 && Math.sign(lastMove) !== Math.sign(surprise)) {
-        playType = 'reversal';
-        bias = 'buy_premium';
-        // The gap direction decides the fade side: gap-UP on a miss fades
-        // SHORT, gap-DOWN on a beat fades LONG. The old code hardcoded the
-        // short side for both, inverting half the reversal candidates.
-        direction = lastMove > 0 ? 'short' : 'long';
-        strategy = direction === 'short'
-          ? 'Earnings Reversal (fade the gap-up, short side)'
-          : 'Earnings Reversal (fade the gap-down, long side)';
-      }
-    }
-  } else {
-    const rvLow = rvRank <= 35;
-    const rvRich = rvRank >= 65;
-    const movesBig = (avgPriorMove ?? 0) > expectedMove * 1.15;
-    const movesContained = avgPriorMove !== null && avgPriorMove < expectedMove * 0.85;
-
-    if (rvLow && movesBig) {
-      playType = 'long_volatility';
-      bias = 'buy_premium';
-      strategy = 'Long Straddle (RV rank low, history of big moves)';
-    } else if (rvRich && movesContained) {
-      playType = 'short_volatility';
-      bias = 'sell_premium';
-      strategy = 'Iron Condor (RV rank high, history of contained moves)';
-    } else if (driftLean === 'long' && drift20 > 8) {
-      playType = 'directional_long';
-      bias = 'buy_premium';
-      strategy = 'Directional Long (pre-earnings drift)';
-      direction = 'long';
-    } else if (driftLean === 'short' && drift20 < -8) {
-      playType = 'directional_short';
-      bias = 'buy_premium';
-      strategy = 'Directional Short (pre-earnings weakness)';
-      direction = 'short';
-    } else {
-      playType = 'skip';
-      bias = 'neutral';
-      strategy = 'Skip the event (mixed data)';
-    }
-  }
+  const { playType, bias, strategy, direction } = classifyEarnings({
+    postPrint,
+    surprise,
+    lastMove,
+    volRatio,
+    rvRank,
+    avgPriorMove,
+    expectedMove,
+    drift20,
+    driftLean,
+  });
 
   // ---- Composite score ----
-  let composite = 50;
-  if (playType === 'short_volatility') composite = 75 + Math.min(15, Math.round((rvRank - 65) / 2));
-  else if (playType === 'long_volatility') composite = 75 + Math.min(15, Math.round((35 - rvRank) / 2));
-  else if (playType === 'directional_long' || playType === 'directional_short') {
-    composite = 65 + Math.min(20, Math.round(Math.abs(drift20) / 2));
-  }
-  else if (playType === 'pead_long' || playType === 'pead_short') {
-    composite = 70 + Math.min(20, Math.round(Math.abs(history[0]?.surprisePct ?? 0)));
-  }
-  else if (playType === 'reversal') composite = 65;
-  else composite = 35; // skip
-
-  if (Math.abs(daysUntil) <= 1 && !postPrint) composite -= 5;
-  composite = Math.max(0, Math.min(100, composite));
+  const composite = scoreEarningsComposite(playType, {
+    rvRank,
+    drift20,
+    surprisePct: history[0]?.surprisePct ?? 0,
+    daysUntil,
+    postPrint,
+  });
 
   // ---- Triggers, stops, targets ----
   const triggers = computeTriggers(playType, latest.c, expectedMove, bars, e.date, direction);
@@ -910,19 +845,6 @@ function buildRationale(input: {
   }
 }
 
-function annVol(returns: number[]): number {
-  if (returns.length < 2) return 0;
-  const mean = avg(returns);
-  const variance = avg(returns.map((r) => (r - mean) ** 2));
-  return Math.sqrt(variance) * Math.sqrt(252);
-}
-function chunksAnnVol(returns: number[], window: number): number[] {
-  const out: number[] = [];
-  for (let i = window; i <= returns.length; i += window) {
-    out.push(annVol(returns.slice(i - window, i)));
-  }
-  return out;
-}
-function avg(xs: number[]): number {
-  return xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0;
-}
+// annVol / chunksAnnVol / avg now live in shared/earnings-scoring.ts
+// (imported above) so the live scan, the PIT backtest scorer, and the
+// FIX-2 event study compute RV rank / expected move identically.
