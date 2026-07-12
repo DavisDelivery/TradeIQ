@@ -29,6 +29,7 @@ import {
 } from './shared/earnings-study-store';
 import { createWatchdog } from './shared/backtest-resume/watchdog';
 import { dispatchReinvoke, inferFunctionUrl, type ReinvokeContext } from './shared/backtest-resume/reinvoke';
+import { withTimeout } from './shared/with-timeout';
 
 // 13-min wall-clock budget → 90s margin under the 15-min kill ceiling.
 const BUDGET_MS = Number(process.env.STUDY_BUDGET_MS ?? 13 * 60_000);
@@ -40,6 +41,10 @@ const BUDGET_MS = Number(process.env.STUDY_BUDGET_MS ?? 13 * 60_000);
 // resume-on-stall is the backstop when one drops anyway.
 const BATCH_TICKERS = Number(process.env.STUDY_BATCH_TICKERS ?? 400);
 const REINVOKE_JITTER_MS = Number(process.env.STUDY_REINVOKE_JITTER_MS ?? 1_500);
+// Per-ticker hard cap. A ticker's full gather (bars + earnings history +
+// calendar join + regime) is normally a few seconds; 30s is generous
+// headroom, and a hang past it is skipped so it can't strand the batch.
+const TICKER_TIMEOUT_MS = Number(process.env.STUDY_TICKER_TIMEOUT_MS ?? 30_000);
 
 interface Payload {
   studyId: string;
@@ -132,30 +137,65 @@ export const handler: Handler = withSentry(async (event, context) => {
     watchdog.start();
 
     const regimeCache = new Map<string, RegimeTag | null>();
-    const batchEvents: StudyEvent[] = [];
+    let batchEvents: StudyEvent[] = [];
     let idx = cursor.nextTickerIndex;
     let processed = 0;
+    // eventCount = total events already streamed to the subcollection (the
+    // startIdx for the next append). batchEvents holds the not-yet-flushed
+    // tail.
+    let eventCount = cursor.eventCount;
+
+    // Mid-batch checkpoint: flush events + advance the cursor every N
+    // tickers so a mid-batch container kill (or a hang that survives the
+    // per-ticker timeout) can't strand progress. Before this the cursor
+    // only moved at batch end, so a ticker that ate the whole 15-min
+    // window pinned the run at the same index on every resume (observed:
+    // sp500 stuck at 460/507).
+    const CHECKPOINT_EVERY = 40;
+    let sinceCheckpoint = 0;
+
+    const flush = async (nextIdx: number, writeCursor: boolean) => {
+      if (batchEvents.length > 0) {
+        await appendStudyEvents(studyId, batchEvents, eventCount);
+        eventCount += batchEvents.length;
+        batchEvents = [];
+      }
+      if (writeCursor) {
+        await writeStudyCursor(studyId, { ...cursor, nextTickerIndex: nextIdx, eventCount });
+      }
+    };
+
     try {
       while (idx < tickers.length && processed < BATCH_TICKERS && !watchdog.isExpired()) {
         const tkr = tickers[idx];
         try {
-          const evs = await gatherTickerEvents(tkr, windowStart, windowEnd, regimeCache);
+          // Per-ticker timeout: a hung Polygon/Finnhub fetch must not eat
+          // the whole batch. withTimeout resolves to [] and we move on.
+          const evs = await withTimeout(
+            gatherTickerEvents(tkr, windowStart, windowEnd, regimeCache),
+            TICKER_TIMEOUT_MS,
+            [] as StudyEvent[],
+          );
           batchEvents.push(...evs);
         } catch (e: any) {
           log.warn('ticker_gather_failed', { studyId, ticker: tkr, err: String(e?.message ?? e) });
         }
         idx += 1;
         processed += 1;
+        sinceCheckpoint += 1;
+
+        if (sinceCheckpoint >= CHECKPOINT_EVERY && idx < tickers.length) {
+          await flush(idx, true);
+          sinceCheckpoint = 0;
+        }
       }
     } finally {
       watchdog.stop();
     }
 
-    // Stream this batch's events to the subcollection before checkpointing.
-    if (batchEvents.length > 0) {
-      await appendStudyEvents(studyId, batchEvents, cursor.eventCount);
-    }
-    const eventCount = cursor.eventCount + batchEvents.length;
+    // Flush the batch tail (no cursor write here — the terminal/non-terminal
+    // branches below own the final cursor state).
+    await flush(idx, false);
     const done = idx >= tickers.length;
 
     if (done) {
