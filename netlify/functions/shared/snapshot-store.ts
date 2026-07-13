@@ -34,7 +34,8 @@ export type BoardName =
   | 'insider'
   | 'williams'
   | 'lynch'
-  | 'earnings';
+  | 'earnings'
+  | 'fable';
 
 export type UniverseKey =
   | 'sp500'
@@ -128,6 +129,7 @@ export const FRESHNESS_BUDGETS_MS: Record<BoardName, number> = {
   earnings: 12 * 60 * 60_000,
   insider: 24 * 60 * 60_000,
   lynch: 24 * 60 * 60_000,
+  fable: 26 * 60 * 60_000,
 };
 
 // ====================================================================

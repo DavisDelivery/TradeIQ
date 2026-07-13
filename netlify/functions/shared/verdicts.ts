@@ -18,7 +18,7 @@
 
 export type VerdictStatus = 'NO_EDGE' | 'MIXED' | 'PENDING' | 'VALIDATED';
 
-export type VerdictBoard = 'williams' | 'lynch' | 'prophet' | 'target';
+export type VerdictBoard = 'williams' | 'lynch' | 'prophet' | 'target' | 'fable';
 
 export interface BoardVerdict {
   board: VerdictBoard;
@@ -103,6 +103,20 @@ export const BOARD_VERDICTS: Record<VerdictBoard, BoardVerdict> = {
       'complete (reinvoke-chain infra); sp500 alone is decisive per the pre-committed ' +
       'binding rule (reports/fix-1/composite-verdict.md). The prior avaa64 run was INVALID ' +
       '(all-null candidates); this q5qdh7 run is the first valid composite backtest.',
+  },
+  fable: {
+    board: 'fable',
+    status: 'PENDING',
+    window: '2018-01-31 → 2024-12-31, sp500, monthly, discrete — pre-committed in reports/fable/design.md',
+    excessVsSPYPp: null,
+    excessVsQQQPp: null,
+    ic: null,
+    rollingWindowsWon: null,
+    runId: null,
+    date: null,
+    note:
+      'FABLE (Claude\'s board) — UNVALIDATED until the pre-committed backtest completes. ' +
+      'Rule: beats SPY net of 20bps rt AND IC>0 AND t≥2; fail any ⇒ NO_EDGE screener.',
   },
 };
 

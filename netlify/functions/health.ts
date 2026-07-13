@@ -30,6 +30,7 @@ const BOARD_UNIVERSES: Record<BoardName, UniverseKey[]> = {
   prophet: ['largecap', 'russell2k', 'all'],
   catalyst: ['sp500', 'ndx', 'dow', 'russell2k'],
   insider: ['sp500', 'ndx', 'dow', 'russell2k'],
+  fable: ['sp500'],
   williams: ['sp500', 'ndx', 'dow', 'russell2k'],
   lynch: ['sp500', 'ndx', 'dow', 'russell2k'],
   earnings: ['all'],
