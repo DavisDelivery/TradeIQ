@@ -61,19 +61,37 @@ describe('getFinnhubInsiderTransactionsWithStatus — 429 backoff-and-retry', ()
       });
     }) as any;
 
-    const r = await getFinnhubInsiderTransactionsWithStatus('NVDA', 180);
-    expect(r.data).toHaveLength(1);
-    expect(r.rateLimited).toBe(true);
-    expect(r.rateLimitExhausted).toBe(false);
-    expect(globalThis.fetch).toHaveBeenCalledTimes(3);
+    // The patient retry envelope (2s..20s backoff, ~50s worst case) uses
+    // real setTimeout sleeps — pump them with fake timers.
+    vi.useFakeTimers();
+    try {
+      const p = getFinnhubInsiderTransactionsWithStatus('NVDA', 180);
+      await vi.runAllTimersAsync();
+      const r = await p;
+      expect(r.data).toHaveLength(1);
+      expect(r.rateLimited).toBe(true);
+      expect(r.rateLimitExhausted).toBe(false);
+      expect(globalThis.fetch).toHaveBeenCalledTimes(3);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('flags rateLimitExhausted=true when every retry returns 429', async () => {
     globalThis.fetch = vi.fn(async () => makeFakeRes(null, { status: 429 })) as any;
-    const r = await getFinnhubInsiderTransactionsWithStatus('NVDA', 180);
-    expect(r.data).toEqual([]);
-    expect(r.rateLimited).toBe(true);
-    expect(r.rateLimitExhausted).toBe(true);
+    vi.useFakeTimers();
+    try {
+      const p = getFinnhubInsiderTransactionsWithStatus('NVDA', 180);
+      await vi.runAllTimersAsync();
+      const r = await p;
+      expect(r.data).toEqual([]);
+      expect(r.rateLimited).toBe(true);
+      expect(r.rateLimitExhausted).toBe(true);
+      // maxRetries 5 ⇒ 6 total attempts before exhaustion.
+      expect(globalThis.fetch).toHaveBeenCalledTimes(6);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('first attempt 200 keeps both flags false', async () => {
