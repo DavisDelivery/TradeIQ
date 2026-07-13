@@ -152,3 +152,32 @@ Expected honest outcome per the research (post-publication haircuts, VW
 large-cap universe, net of costs): low-single-digit annual active return
 with materially lower drawdown via the gate — if the backtest shows a
 monster edge, suspect the test before believing the number.
+
+---
+
+## VALIDATION RUN LOG (append-only; no edits above the rule after launch)
+
+**Live scan (first real picks):** 2026-07-13T20:18Z, deploy-preview-109.
+498 sp500 names checked, **100 passed the FOUNDATION gate**, regime
+OFFENSE. Top of board: CNC 56.7, CVS 53.3, VLO 51.1, MNST 50.3,
+TRGP 49.8. Insider Edge ≈ 0 across most of the board — expected:
+opportunistic insiders buy dips, not names within 25% of 52w highs
+(design.md § Insider Edge; sparse-but-high-signal by construction).
+
+**Backtest attempts (spec identical each time — infra changed, never
+the algorithm):**
+
+| # | runId | outcome | finding |
+|---|---|---|---|
+| 1 | `bt_20260713202030_y7l6m8` | dead at 15-min cap before first checkpoint | fable per-rebalance cost is Finnhub-bound (insider per gate-passer @55rpm); default batch 8 cannot fit the window. Also: null-cursor zombies were unrecoverable AND invisible to the sweep. Netlify queue-RETRIED the dead invocation ~30 min later. |
+| 2 | `bt_20260713205837_oyb66q` | killed (contaminated) | ran fine on batchSize=2, but attempt 1's queue retry contended for the shared 55rpm bucket → 98 insider TickerFailures on rebalance #1 (visible ONLY because the M8 throw discipline replaced `.catch(()=>[])`). |
+| 3 | `bt_20260713212426_hs37nm` | killed (contaminated) | 47 failures on rebalance #1 SOLO — root cause the token bucket's full-bucket cold start: ~55 instant tokens ⇒ one-second burst ⇒ Finnhub short-window 429 storm ⇒ 3.5s default retry envelope exhausts. Every invocation restarts the bucket ⇒ every batch boundary bursts. |
+| 4 | `bt_20260713215334_w80rb8` | **RUNNING — the validation run** | fixes live: batchSize=2 (per-run config), initialTokens=8 (burst cap), ~50s patient insider retry, terminal-status guard (kill switch + retry immunity), zombie fail-out in the sweep. First batch: 6/1018 failures (0.6%, prod-cron overlap minute) — misses bias the measurement AGAINST fable, i.e., conservative. |
+
+Infra shipped because of this validation (all on `fable/board`):
+`batchSize` in BacktestConfig; terminal-status guard in the runner;
+null-cursor zombie fail-out in `recoverStuckBacktestRuns`;
+`initialTokens` on the token bucket (Finnhub starts at 8); patient
+retry envelope on the insider PIT fetch. Every failure mode above was
+*visible* because failures throw instead of caching empties — the
+4t-W1c lesson, honored.
