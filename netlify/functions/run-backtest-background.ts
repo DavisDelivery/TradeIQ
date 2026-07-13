@@ -214,7 +214,11 @@ export const handler: Handler = withSentry(async (event, context) => {
         runId,
         todayIso,
         state: cursor.state ?? initialRegularState(config, totalRebalances, prep.rebalanceDates[0]),
-        batchSize: BATCH_SIZE,
+        // Per-run override (validated to [1,16] at trigger time) beats the
+        // env/default. Needed for boards whose per-rebalance wall-clock is
+        // provider-rate-limit bound (fable insider @55rpm): batch 8 dies at
+        // the 15-min ceiling before the FIRST checkpoint — unrecoverable.
+        batchSize: config.batchSize ?? BATCH_SIZE,
         isExpired: () => watchdog.isExpired(),
         onProgress: (evt) => log.info('progress', evt),
       });

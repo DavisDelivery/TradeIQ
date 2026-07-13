@@ -78,4 +78,13 @@ describe('validateConfig — future endDate (Wave 4D)', () => {
       validateConfig(makeConfig({ initialCapital: 0 }), TODAY),
     ).toThrow(/initialCapital/);
   });
+
+  it('batchSize: accepts [1,16] integers, rejects out-of-range/non-integers, allows undefined', () => {
+    expect(validateConfig(makeConfig({ batchSize: 2 }), TODAY)).toEqual([]);
+    expect(validateConfig(makeConfig({ batchSize: 16 }), TODAY)).toEqual([]);
+    expect(validateConfig(makeConfig({}), TODAY)).toEqual([]);
+    expect(() => validateConfig(makeConfig({ batchSize: 0 }), TODAY)).toThrow(/batchSize/);
+    expect(() => validateConfig(makeConfig({ batchSize: 17 }), TODAY)).toThrow(/batchSize/);
+    expect(() => validateConfig(makeConfig({ batchSize: 2.5 }), TODAY)).toThrow(/batchSize/);
+  });
 });

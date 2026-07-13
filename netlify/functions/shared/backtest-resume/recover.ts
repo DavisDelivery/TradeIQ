@@ -150,11 +150,53 @@ export async function recoverStuckBacktestRuns(
     const data = doc.data() as {
       window?: string;
       status?: string;
+      startedAt?: string;
       cursor?: BacktestCursor<unknown> | null;
     };
     if (data.status !== 'running') continue;
     const cursor = data.cursor ?? null;
-    if (!cursor) continue;
+    if (!cursor) {
+      // Batch-1 death (FABLE run bt_20260713202030 finding): the worker
+      // was killed at the 15-min ceiling BEFORE its first checkpoint, so
+      // no cursor was ever written. There is no resume point — and
+      // re-dispatching from scratch would replay the same death (the
+      // batch demonstrably doesn't fit the window). Previously we
+      // `continue`d, leaving an eternal `running` zombie that blocked
+      // single-flight for 30 min and rotted in the list forever. Now:
+      // once the run is stale by its own startedAt, fail it VISIBLY so
+      // the operator re-fires with a smaller `batchSize`.
+      const startedAtMs = Date.parse(data.startedAt ?? '');
+      if (!Number.isFinite(startedAtMs)) continue;
+      const zombieAgeMs = now - startedAtMs;
+      if (zombieAgeMs < staleThresholdMs) continue;
+      await db
+        .collection(collection)
+        .doc(doc.id)
+        .set(
+          {
+            status: 'failed',
+            error:
+              `died in batch 1 before the first cursor checkpoint ` +
+              `(no resume point; ${Math.round(zombieAgeMs / 60_000)} min since start). ` +
+              `Likely the batch did not fit the 15-min background window — ` +
+              `re-fire with a smaller config.batchSize.`,
+            failedAt: new Date().toISOString(),
+            updatedAt: Timestamp.now(),
+          },
+          { merge: true },
+        );
+      failed.push({
+        runId: doc.id,
+        window: typeof data.window === 'string' ? data.window : '?',
+        status: 'failed',
+        action: 'failed',
+        ageMs: zombieAgeMs,
+        invocationCount: 0,
+        recoveryAttempts: 0,
+        reason: 'no first checkpoint (batch-1 death); no resume point',
+      });
+      continue;
+    }
     const lastInvAt = cursor.lastInvocationStartedAt
       ? Date.parse(cursor.lastInvocationStartedAt)
       : NaN;
