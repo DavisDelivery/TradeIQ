@@ -289,6 +289,20 @@ describe('run-backtest-background — HTTP plumbing', () => {
     expect(res.statusCode).toBe(400);
     expect(JSON.parse(res.body).error).toMatch(/missing config/i);
   });
+
+  it('terminal-status guard: drains (200, no work) when the doc is already failed/complete', async () => {
+    for (const status of ['failed', 'complete', 'invalid']) {
+      storedDoc = { runId: 'bt_dead', status, config: sampleConfig };
+      mockPersistRunRunning.mockClear();
+      const res = await invoke(makeEvent({ body: { runId: 'bt_dead', config: sampleConfig } }));
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.body);
+      expect(body.drained).toBe(true);
+      expect(body.docStatus).toBe(status);
+      // No resurrection: status must not be re-stamped, no batch run.
+      expect(mockPersistRunRunning).not.toHaveBeenCalled();
+    }
+  });
 });
 
 describe('run-backtest-background — fresh start, terminal in one batch', () => {
