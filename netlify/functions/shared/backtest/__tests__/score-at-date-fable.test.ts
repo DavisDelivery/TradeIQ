@@ -11,6 +11,7 @@ const barCalls: Array<{ ticker: string; from: string; to: string }> = [];
 const insiderCalls: Array<{ ticker: string; asOfDate?: string }> = [];
 
 let UPTREND_TICKERS = new Set<string>(['AAPL']);
+let INSIDER_FAIL = false;
 
 const DAY = 86_400_000;
 // SPY gets its OWN return stream (slower drift, different wiggle phase) so
@@ -46,23 +47,28 @@ vi.mock('../../data-provider', async () => {
       if (ticker === 'SPY') return synthBars(from, to, 'spy');
       return synthBars(from, to, UPTREND_TICKERS.has(ticker) ? 'up' : 'down');
     }),
-    getFinnhubInsiderTransactions: vi.fn(
+    getFinnhubInsiderTransactionsWithStatus: vi.fn(
       async (ticker: string, _daysBack: number, opts: { asOfDate?: string } = {}) => {
         insiderCalls.push({ ticker, asOfDate: opts.asOfDate });
-        return [
-          {
-            name: 'EXEC ONE',
-            share: 10_000,
-            change: 2_000,
-            filingDate: '2022-05-20',
-            transactionDate: '2022-05-18',
-            transactionPrice: 50,
-            transactionCode: 'P',
-            isDerivative: false,
-            source: 't',
-            currency: 'USD',
-          },
-        ];
+        if (INSIDER_FAIL) return { data: [], rateLimited: true, rateLimitExhausted: true };
+        return {
+          rateLimited: false,
+          rateLimitExhausted: false,
+          data: [
+            {
+              name: 'EXEC ONE',
+              share: 10_000,
+              change: 2_000,
+              filingDate: '2022-05-20',
+              transactionDate: '2022-05-18',
+              transactionPrice: 50,
+              transactionCode: 'P',
+              isDerivative: false,
+              source: 't',
+              currency: 'USD',
+            },
+          ],
+        };
       },
     ),
   };
@@ -90,6 +96,7 @@ beforeEach(() => {
   barCalls.length = 0;
   insiderCalls.length = 0;
   UPTREND_TICKERS = new Set(['AAPL']);
+  INSIDER_FAIL = false;
 });
 
 describe('fable score-at-date — PIT integrity', () => {
@@ -117,6 +124,14 @@ describe('fable score-at-date — PIT integrity', () => {
     expect(m.ascent).toBeGreaterThan(0);
     expect(m.highGround).toBeGreaterThan(0);
     expect(m.insiderEdge).toBeGreaterThan(0); // $100k buy filed 2022-05-20 < asOf
+  });
+
+  it('insider transport failure THROWS (visible TickerFailure) — never scores as empty', async () => {
+    INSIDER_FAIL = true;
+    const ctx = await buildMarketContextAtDate(AS_OF);
+    await expect(
+      scoreTickerAtDate('AAPL', AS_OF, 'fable', ctx, { discreteSignalOnly: true }),
+    ).rejects.toThrow(/insider fetch failed/);
   });
 
   it('live/PIT parity: composite equals the pure engine on identical inputs', async () => {

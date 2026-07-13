@@ -18,7 +18,7 @@
 
 import { UNIVERSE } from '../universe';
 import { SECTOR_ETFS, SPY } from '../universe';
-import { getFinnhubInsiderTransactions,
+import { getFinnhubInsiderTransactionsWithStatus,
   getDailyBars,
   getFundamentals,
   getEarningsHistory,
@@ -50,7 +50,7 @@ import {
   scorePatents,
 } from '../scan-prophet';
 import { computeRegime } from '../regime';
-import { scoreFable, FABLE_CONSTANTS } from '../fable-scoring';
+import { scoreFable, evaluateFoundationGate, FABLE_CONSTANTS } from '../fable-scoring';
 import { pitCacheWrap, type PitCacheKey } from '../pit-cache';
 import { addDays } from './trading-calendar';
 import { getPoliticalActivityForBacktest } from './stock-act-shift';
@@ -1044,6 +1044,13 @@ async function scoreFableAtDate(
   );
   if (!bars || bars.length < FABLE_CONSTANTS.MIN_BARS) return null;
 
+  // Gate FIRST, before any further I/O — mirrors the live scan's two-phase
+  // bars-first design. ~80-95% of the universe fails the FOUNDATION gate on
+  // any date; skipping their SPY/insider fetches cuts Finnhub volume ~10x
+  // per rebalance. scoreFable re-evaluates the same pure gate on the same
+  // bars, so behavior is identical — this is purely an I/O short-circuit.
+  if (!evaluateFoundationGate(bars as any).pass) return null;
+
   // SPY window for the residual/regime — pitCached once per rebalance date.
   const spyFrom = addDays(asOfDate, -FABLE_BARS_LOOKBACK_DAYS);
   const spyBars = await pitCacheWrap(
@@ -1053,7 +1060,21 @@ async function scoreFableAtDate(
 
   const txs = await pitCacheWrap(
     { provider: 'finnhub', dataClass: 'insider', ticker, asOfDate, extra: 'daysBack=200:fable' },
-    () => getFinnhubInsiderTransactions(ticker, 200, { asOfDate }).catch(() => []),
+    async () => {
+      const status = await getFinnhubInsiderTransactionsWithStatus(ticker, 200, { asOfDate });
+      // M8 failure discipline (and the 4t-W1c cache-poisoning lesson):
+      // transport failure is MISSING data, not absent data. Throw so
+      // pitCacheWrap never caches a failure-shaped [] for this
+      // (ticker, asOfDate) and the engine books a visible TickerFailure
+      // instead of silently scoring insiderEdge=0. Verified-empty
+      // (HTTP 200, zero rows) is PIT-stable and caches fine.
+      if (status.rateLimitExhausted || status.errorMessage) {
+        throw new Error(
+          `fable insider fetch failed ${ticker}@${asOfDate}: ${status.errorMessage ?? 'rate-limit exhausted'}`,
+        );
+      }
+      return status.data;
+    },
   );
 
   const res = scoreFable(
