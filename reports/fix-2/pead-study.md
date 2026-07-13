@@ -85,43 +85,60 @@ Aggregation (the point):
 
 ---
 
-## ⛔ MEASUREMENT BLOCKED — Finnhub earnings endpoints return HTTP 429 (2026-07-12)
+## ⛔ MEASUREMENT NOT FEASIBLE ON THIS FINNHUB PLAN — data-depth limit (2026-07-12/13)
 
 The W2 study **engine, endpoint, and harness are complete and unit-tested**
-(see `shared/earnings-study.ts` + 23 green tests), but the live measurement
-run **cannot produce data in the current environment** and every attempt
-finalized with **0 events**.
+(see `shared/earnings-study.ts` + 23 green tests), but the historical
+2018-2024 measurement **cannot be built from the configured Finnhub
+account.** Every run finalizes with **0 events** — and the definitive
+reason (isolated with `GET /api/earnings-edge-study?debug=<TICKER>`, which
+probes Finnhub directly with the deployed env's real key) is TWO hard
+provider limits, not a code defect:
 
-Root cause was isolated with a synchronous single-ticker probe
-(`GET /api/earnings-edge-study?debug=AAPL`) hitting Finnhub directly with
-the deployed env's real key:
+1. **Rate-limited earnings endpoints.** `/stock/earnings` and
+   `/calendar/earnings` flap between HTTP 200 and **429
+   "Too many requests"** even on isolated calls, while `/quote` and Polygon
+   bars are always 200. (Mitigated in code by routing `getEarningsHistory`
+   through the Finnhub token bucket + 429 retry — but see #2, which pacing
+   cannot fix.)
+2. **Only ~4 recent quarters of earnings history returned.** When the call
+   *does* succeed, `/stock/earnings?limit=44` returns just the **4 most
+   recent quarters** (e.g. MSFT → 2026-Q1, 2025-Q4, 2025-Q3, 2025-Q2). All
+   fall **after** the pre-committed study window (2018-01-31 → 2024-12-31),
+   so every event is windowed out → 0 events, deterministically. The
+   `/calendar/earnings` announcement-date join also returns mostly empty on
+   this plan. Deep multi-year earnings-surprise history is a **premium
+   Finnhub tier**; the basic tier caps at the last 4 quarters.
 
-| Finnhub endpoint | HTTP | note |
-|---|---|---|
-| `/quote` | **200** | basic data works; the key is valid (len 40) |
-| `/stock/earnings` (EPS surprise history) | **429** | `{"error":"Too many requests…"}` — persists on a single isolated call after 10h idle |
-| `/calendar/earnings` (announcement dates) | **429** | same |
+`/quote` = 200, Polygon bars = 1,829 for AAPL — everything EXCEPT deep
+earnings history works. No amount of pacing, retrying, or batching produces
+2018-2024 events because that data is simply not served on this plan.
 
-Polygon bars resolve fine (1,829 bars for AAPL). Only the **earnings**
-endpoints 429. A single isolated call fails, so this is **not** a burst
-from the study's own volume — the earnings data endpoints are
-plan-gated / hard-rate-limited on this Finnhub account.
+**⚠️ Implication for the rest of the app (flagged to owner):** the same
+`getEarningsHistory` / `getUpcomingEarnings` calls power the live earnings
+scan, `earnings-radar`, the DESK-1 earnings surfaces, AND the W1 earnings
+backtest board. A point-in-time historical earnings backtest needs deep
+history it can't get here, so those earnings features are likely
+data-starved in production too. Worth verifying directly.
 
-**Implication (flagged to owner):** the same `getEarningsHistory` /
-`getUpcomingEarnings` calls power the live earnings scan, `earnings-radar`,
-and the DESK-1 earnings surfaces — those may be silently degrading to empty
-in production too if prod shares this key/plan. Worth verifying separately.
+**To actually run the PEAD validation, one of:**
+- **(a)** Upgrade Finnhub to a tier with deep earnings-surprise history +
+  a workable rate limit, then: `?universe=sp500&years=7&limit=250` →
+  russell2k → apply the pre-committed rule below. `debug=AAPL` confirms
+  depth in one call (look for pre-2024 periods in the sample).
+- **(b)** Re-point the study's gather at a deeper earnings source the repo
+  already integrates (e.g. the Polygon financials / quarterly-fundamentals
+  path) — a `shared/earnings-study-gather.ts` swap, engine unchanged.
+- **(c)** Accept a recent-window study (last ~4 quarters, all universes)
+  instead of the 2018-2024 backtest window — abandons the pre-committed
+  window and has forward-return truncation on the newest quarter, so it
+  would NOT satisfy the FIX-2 rule as written.
 
-**Code hardening shipped while diagnosing (all real defects):** reinvoke
-resume, poison-ticker skip (`SGAFT`), non-destructive allocation,
-single-flight lease, EPS/announce-date fallbacks, single-batch `limit=`
-path, and — the actual fix once data flows — pacing `getEarningsHistory`
-through the Finnhub token bucket + 429 retry.
-
-**To complete the measurement (once earnings access is restored):**
-`GET /api/earnings-edge-study?universe=sp500&years=7&limit=250` (single
-clean batch), then russell2k, then apply the pre-committed rule below to
-the buckets. `debug=AAPL` re-confirms data flow in one call.
+**Code hardening shipped while diagnosing (all real defects, merged in #105):**
+reinvoke resume, poison-ticker skip (`SGAFT`), non-destructive allocation,
+single-flight lease, mid-batch checkpointing, EPS/announce-date fallbacks,
+single-batch `?limit=` path, `?debug=` probe, and Finnhub-bucket pacing of
+`getEarningsHistory`.
 
 ---
 
