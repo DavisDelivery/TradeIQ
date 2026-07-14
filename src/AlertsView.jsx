@@ -5,6 +5,8 @@ import { useTargetBoard } from './hooks/useTargetBoard.js';
 import { useCatalyst } from './hooks/useCatalyst.js';
 import { useEarnings } from './hooks/useEarnings.js';
 import { useRegime } from './hooks/useRegime.js';
+import { useCrosses } from './hooks/useCrosses.js';
+import { NEW_CROSS_MAX_BARS_AGO, formatCrossDate } from './CrossesView.jsx';
 import { FundamentalsStrip } from './components/detail/FundamentalsStrip.jsx';
 
 export const AlertsView = () => {
@@ -16,6 +18,9 @@ export const AlertsView = () => {
   const cat = useCatalyst('sp500', 'all', 'low');
   const earn = useEarnings(7);
   const reg = useRegime();
+  // Fresh golden/death crosses (≤5 completed bars) — same cache the
+  // dedicated Crosses tab warms.
+  const crosses = useCrosses('all', 30);
 
   // Refresh = hand back to the underlying queries. Boards expose forceRescan
   // (matches the dedicated board views' refresh affordance); the non-board
@@ -28,8 +33,9 @@ export const AlertsView = () => {
     cat.forceRescan?.().catch(() => {});
     earn.refetch?.();
     reg.refetch?.();
+    crosses.refetch?.();
   };
-  const loading = board.isLoading || cat.isLoading || earn.isLoading || reg.isLoading;
+  const loading = board.isLoading || cat.isLoading || earn.isLoading || reg.isLoading || crosses.isLoading;
   const error =
     board.error?.message ??
     cat.error?.message ??
@@ -83,6 +89,22 @@ export const AlertsView = () => {
       });
     }
 
+    // Cross alerts: golden/death crosses that fired within the last 5
+    // completed bars. Detection is nightly on completed closes, so these
+    // are at most a few evenings old — "the moment it occurs" at daily
+    // granularity. Golden crosses rank as bullish, death as bearish.
+    const crossRows = crosses.data?.rows ?? [];
+    for (const c of crossRows.filter((x) => x.barsAgo <= NEW_CROSS_MAX_BARS_AGO).slice(0, 15)) {
+      fired.push({
+        id: `cross-${c.ticker}-${c.date}-${c.type}`, source: 'Cross', ticker: c.ticker,
+        composite: null,
+        tier: c.type === 'golden' ? 'golden' : 'death',
+        direction: c.type === 'golden' ? 'long' : 'short',
+        rationale: `${c.type === 'golden' ? 'Golden' : 'Death'} cross ${formatCrossDate(c.date)} — SMA50 ${c.type === 'golden' ? 'crossed above' : 'crossed below'} SMA200 at $${c.closeAtCross?.toFixed(2)}`,
+        firedAt,
+      });
+    }
+
     // Regime "alert": not a row, a standalone status card
     const regimeData = reg.data;
     const regimeAlertData = regimeData?.regime
@@ -100,12 +122,13 @@ export const AlertsView = () => {
     const deduped = Array.from(byId.values()).sort((a, b) => (b.composite ?? 0) - (a.composite ?? 0));
 
     return { alerts: deduped, regimeAlert: regimeAlertData, lastRefresh: firedAt };
-  }, [board.data, cat.data, earn.data, reg.data]);
+  }, [board.data, cat.data, earn.data, reg.data, crosses.data]);
 
   const sourceColor = (s) => ({
     Board: 'text-emerald-400 border-emerald-500/40 bg-emerald-500/5',
     Catalyst: 'text-amber-400 border-amber-500/40 bg-amber-500/5',
     Earnings: 'text-sky-400 border-sky-500/40 bg-sky-500/5',
+    Cross: 'text-violet-300 border-violet-500/40 bg-violet-500/5',
   }[s] || 'text-neutral-400 border-neutral-700 bg-neutral-900/40');
 
   return (
@@ -120,7 +143,7 @@ export const AlertsView = () => {
             </span>
           </h1>
           <p className="text-[11px] font-mono text-neutral-500 mt-2">
-            Cross-surface scan: Board top picks, Catalyst convergences, near-term Earnings setups, Macro regime.
+            Cross-surface scan: Board top picks, Catalyst convergences, near-term Earnings setups, fresh Golden/Death crosses, Macro regime.
           </p>
         </div>
         <button
@@ -192,7 +215,7 @@ export const AlertsView = () => {
                     </span>
                   </td>
                   <td className="px-4 py-3 font-serif font-bold text-lg">{a.ticker}</td>
-                  <td className="px-4 py-3 font-mono text-emerald-400 font-semibold">{a.composite}</td>
+                  <td className="px-4 py-3 font-mono text-emerald-400 font-semibold">{a.composite ?? <span className="text-neutral-600">—</span>}</td>
                   <td className="px-4 py-3 text-[11px] font-mono text-neutral-400 uppercase tracking-wider">{a.tier ?? '-'}</td>
                   <td className="px-4 py-3">{a.direction ? <DirectionPill direction={a.direction} /> : <span className="text-neutral-600 text-xs">—</span>}</td>
                   <td className="px-4 py-3 text-[11px] text-neutral-400 max-w-md">

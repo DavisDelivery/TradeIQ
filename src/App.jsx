@@ -5,7 +5,7 @@ import {
   BarChart3, Brain, Newspaper, Globe2, Eye, Target, Clock, ArrowUpRight,
   ArrowDownRight, Minus, Shield, Cpu, LineChart as LineChartIcon, Filter, X,
   Inbox, Bell, ExternalLink, Info, BookMarked, Sparkles, Landmark, FlaskConical,
-  Monitor
+  Monitor, Menu, Crosshair
 } from 'lucide-react';
 import {
   AreaChart, Area, LineChart, Line, BarChart, Bar, RadarChart,
@@ -48,6 +48,8 @@ import { useBreakpoint } from './hooks/useBreakpoint.js';
 import { Sidebar } from './layout/Sidebar.jsx';
 import { DesktopShell } from './layout/DesktopShell.jsx';
 import { RegimeStrip } from './layout/RegimeStrip.jsx';
+import { MobileDrawer } from './layout/MobileDrawer.jsx';
+import { CrossesView } from './CrossesView.jsx';
 
 
 // FIX-1 — APP_VERSION now lives in the shared module so /api/health and
@@ -75,6 +77,9 @@ const VIEWS = [
   { id: 'catalyst', label: 'Catalyst', shortLabel: 'Catalyst', icon: Zap },
   { id: 'insiders', label: 'Insiders', shortLabel: 'Insiders', icon: Eye },
   { id: 'earnings', label: 'Earnings', shortLabel: 'Earnings', icon: Zap },
+  // CROSSES — SMA50/200 golden + death cross feed, detected nightly on
+  // completed closes (scan-crosses-sp500.ts → /api/crosses).
+  { id: 'crosses', label: 'Crosses', shortLabel: 'Crosses', icon: Crosshair },
   { id: 'history', label: 'History', shortLabel: 'History', icon: Clock },
   { id: 'options', label: 'Options Flow', shortLabel: 'Options', icon: Cpu },
   { id: 'engine', label: 'Engine Test', shortLabel: 'Engine', icon: Activity },
@@ -158,29 +163,41 @@ class ErrorBoundary extends React.Component {
 // ======================================================================
 
 const TopBar = ({ activeView, setActiveView, regime, universeStats }) => {
-  const scrollerRef = React.useRef(null);
-  const buttonRefs = React.useRef({});
+  // UI-2 — mobile nav is a drawer (hamburger → slide-in panel), replacing
+  // the horizontal scroll-snap tab strip that hid most of the 20 views
+  // off-screen. Desktop (sm+) keeps the inline nav row unchanged.
+  const [drawerOpen, setDrawerOpen] = React.useState(false);
   // code-review-2026-06 m6 — ticking ET clock (30s interval) instead of a
   // render-time snapshot that never updated.
   const etTime = useEtClock();
 
   const views = VIEWS;
-
-  // Auto-scroll the active tab into view (center it) whenever activeView changes
-  React.useEffect(() => {
-    const btn = buttonRefs.current[activeView];
-    if (btn && btn.scrollIntoView) {
-      btn.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
-    }
-  }, [activeView]);
+  const activeMeta = views.find((v) => v.id === activeView);
 
   const regimeLabel = (regime?.regime ?? 'neutral').replace(/_/g, ' ').toUpperCase();
 
   return (
     <header className="sticky top-0 z-40 border-b border-neutral-800/80 bg-[#0a0b0d]/95 backdrop-blur-xl">
-      {/* Row 1: Logo (mobile-sized) */}
-      <div className="flex items-center h-10 sm:h-[52px] px-3 sm:px-6 gap-3 border-b border-neutral-800/40 sm:border-b-0">
+      {/* Row 1: hamburger (mobile) + logo + current view */}
+      <div className="flex items-center h-11 sm:h-[52px] px-3 sm:px-6 gap-3">
+        <button
+          type="button"
+          onClick={() => setDrawerOpen(true)}
+          aria-label="Open navigation"
+          aria-expanded={drawerOpen}
+          data-testid="nav-hamburger"
+          className="sm:hidden p-2 -ml-2 text-neutral-400 active:text-neutral-100"
+        >
+          <Menu className="h-5 w-5" />
+        </button>
         <Logo />
+        {/* Mobile: current view name so you always know where you are */}
+        {activeMeta && (
+          <div className="sm:hidden flex items-center gap-1.5 min-w-0 text-emerald-400">
+            <activeMeta.icon className="h-3.5 w-3.5 flex-shrink-0" />
+            <span className="text-[13px] font-medium truncate">{activeMeta.label}</span>
+          </div>
+        )}
         {/* Desktop: inline nav (tabs fit on one row) */}
         <nav className="hidden sm:block flex-1 min-w-0 overflow-x-auto scrollbar-hide">
           <div className="flex items-center justify-end gap-1 whitespace-nowrap">
@@ -213,46 +230,15 @@ const TopBar = ({ activeView, setActiveView, regime, universeStats }) => {
         </nav>
       </div>
 
-      {/* Row 2 (mobile only): horizontal scroll-snap tabs — same pattern as old bottom nav */}
-      <div className="sm:hidden relative">
-        <div className="absolute left-0 top-0 bottom-0 w-5 pointer-events-none z-10 bg-gradient-to-r from-[#0a0b0d] to-transparent" />
-        <div className="absolute right-0 top-0 bottom-0 w-5 pointer-events-none z-10 bg-gradient-to-l from-[#0a0b0d] to-transparent" />
-        <div
-          ref={scrollerRef}
-          className="flex w-full overflow-x-auto snap-x snap-mandatory"
-          style={{
-            scrollbarWidth: 'none',
-            msOverflowStyle: 'none',
-            WebkitOverflowScrolling: 'touch',
-            scrollPaddingInline: '20px',
-          }}
-        >
-          <style>{`header > div > div::-webkit-scrollbar{display:none}`}</style>
-          {views.map(v => {
-            const active = activeView === v.id;
-            return (
-              <button
-                key={v.id}
-                ref={(el) => { buttonRefs.current[v.id] = el; }}
-                onClick={() => setActiveView(v.id)}
-                className={`relative shrink-0 snap-center flex items-center justify-center gap-1.5 h-11 px-3.5 transition-colors ${
-                  active
-                    ? 'text-emerald-400'
-                    : v.section === 'unvalidated'
-                      ? 'text-neutral-700 active:text-neutral-400'
-                      : 'text-neutral-500 active:text-neutral-300'
-                }`}
-              >
-                {active && (
-                  <span className="absolute bottom-0 left-1/2 -translate-x-1/2 h-[2px] w-7 bg-emerald-400 rounded-t-full" />
-                )}
-                <v.icon className={`h-[14px] w-[14px] flex-shrink-0 ${active ? 'stroke-[2.2]' : ''}`} />
-                <span className="text-[12px] font-medium tracking-tight whitespace-nowrap">{v.shortLabel}</span>
-              </button>
-            );
-          })}
-        </div>
-      </div>
+      {/* Mobile nav drawer (replaces the old horizontal scroll-snap tab row) */}
+      <MobileDrawer
+        open={drawerOpen}
+        onClose={() => setDrawerOpen(false)}
+        views={views}
+        activeView={activeView}
+        setActiveView={setActiveView}
+        appVersion={APP_VERSION}
+      />
 
       {/* Ticker-tape regime strip */}
       <div className="h-8 border-t border-neutral-800/60 bg-[#090a0c] text-[11px] font-mono overflow-x-auto scrollbar-hide">
@@ -341,7 +327,7 @@ export default function App() {
     <div className={
       isDesktop
         ? 'sticky top-8 z-20 border-b border-neutral-800/60 bg-[#0a0b0d]/95 backdrop-blur-xl'
-        : 'sticky top-[80px] sm:top-[92px] z-30 border-b border-neutral-800/60 bg-[#0a0b0d]/95 backdrop-blur-xl'
+        : 'sticky top-[76px] sm:top-[92px] z-30 border-b border-neutral-800/60 bg-[#0a0b0d]/95 backdrop-blur-xl'
     }>
       <div className={isDesktop ? 'px-6 py-2' : 'px-3 sm:px-6 py-2 max-w-[1400px] mx-auto'}>
         <UniverseSelector universe={universe} setUniverse={setUniverse} />
@@ -360,6 +346,7 @@ export default function App() {
       {activeView === 'williams' && <ErrorBoundary label="Williams"><WilliamsView universe={universe} /></ErrorBoundary>}
       {activeView === 'lynch' && <ErrorBoundary label="Lynch"><LynchView universe={universe} /></ErrorBoundary>}
       {activeView === 'earnings' && <ErrorBoundary label="Earnings"><EarningsPlaysView universe={universe} /></ErrorBoundary>}
+      {activeView === 'crosses' && <ErrorBoundary label="Crosses"><CrossesView /></ErrorBoundary>}
       {activeView === 'history' && <ErrorBoundary label="History"><HistoryView /></ErrorBoundary>}
       {activeView === 'options' && <ErrorBoundary label="Options"><OptionsFlowView universe={universe} /></ErrorBoundary>}
       {activeView === 'engine' && <ErrorBoundary label="Engine"><EngineTestView /></ErrorBoundary>}

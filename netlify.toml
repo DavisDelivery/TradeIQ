@@ -374,6 +374,12 @@
   to = "/.netlify/functions/fable2-explorations"
   status = 200
 
+# CROSSES — golden/death cross board (nightly scan-crosses-sp500).
+[[redirects]]
+  from = "/api/crosses"
+  to = "/.netlify/functions/crosses-board"
+  status = 200
+
 # SPA fallback
 [[redirects]]
   from = "/*"
