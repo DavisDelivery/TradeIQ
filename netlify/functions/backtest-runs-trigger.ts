@@ -160,7 +160,7 @@ export const handler: Handler = async (event) => {
     'williams',
     'lynch',
     'target',
-    'earnings', // FIX-2 W1 — event-anchored PIT path (run with discreteSignalOnly)
+    'earnings', 'fable', // FIX-2 W1 — event-anchored PIT path (run with discreteSignalOnly)
   ];
   if (!SUPPORTED_BOARDS.includes(config.board)) {
     log.warn('board_not_supported', { board: config.board });

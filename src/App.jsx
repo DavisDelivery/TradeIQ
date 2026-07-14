@@ -33,6 +33,7 @@ import { AnalystsView } from './AnalystsView.jsx';
 import { AlertsView } from './AlertsView.jsx';
 import { EngineTestView } from './EngineTestView.jsx';
 import { EarningsPlaysView } from './EarningsView.jsx';
+import { FableView } from './FableView.jsx';
 import { OptionsFlowView } from './OptionsFlowView.jsx';
 import { SettingsView } from './SettingsView.jsx';
 import { BacktestView } from './BacktestView.jsx';
@@ -67,6 +68,9 @@ const VIEWS = [
   // positions/base rates. Same VIEWS entry renders in the mobile TopBar
   // scroller AND the 4k Sidebar (Phase 4k single source of truth).
   { id: 'desk', label: 'Desk', shortLabel: 'Desk', icon: Monitor },
+  // FABLE — Claude's own board (reports/fable/design.md). PENDING chip
+  // until the pre-committed backtest lands; then the registry decides.
+  { id: 'fable', label: 'FABLE', shortLabel: 'FABLE', icon: Sparkles },
   { id: 'prophet', label: 'Prophet', shortLabel: 'Prophet', icon: Sparkles },
   { id: 'catalyst', label: 'Catalyst', shortLabel: 'Catalyst', icon: Zap },
   { id: 'insiders', label: 'Insiders', shortLabel: 'Insiders', icon: Eye },
@@ -348,6 +352,7 @@ export default function App() {
   const viewRouter = (
     <>
       {activeView === 'desk' && <ErrorBoundary label="Desk"><DeskView /></ErrorBoundary>}
+      {activeView === 'fable' && <ErrorBoundary label="FABLE"><FableView /></ErrorBoundary>}
       {activeView === 'board' && <ErrorBoundary label="Board"><LiveTargetBoard universe={universe} /></ErrorBoundary>}
       {activeView === 'prophet' && <ErrorBoundary label="Prophet"><ProphetView /></ErrorBoundary>}
       {activeView === 'catalyst' && <ErrorBoundary label="Catalyst"><CatalystView universe={universe} onNavigate={setActiveView} /></ErrorBoundary>}

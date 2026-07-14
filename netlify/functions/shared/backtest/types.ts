@@ -13,7 +13,7 @@ export type BacktestBoard =
   | 'insider'
   | 'williams'
   | 'lynch'
-  | 'earnings'; // FIX-2 W1 — event-anchored earnings board (PEAD/vol/drift)
+  | 'earnings' | 'fable'; // FIX-2 W1 — event-anchored earnings board (PEAD/vol/drift)
 
 export type RebalanceFrequency = 'weekly' | 'monthly' | 'quarterly';
 
@@ -44,6 +44,15 @@ export interface BacktestConfig {
   // Concurrency cap on per-ticker scoring within a rebalance. Free-tier
   // Polygon hates >5. Cache warms after run 1.
   scoringConcurrency?: number;
+  /**
+   * Rebalances per background invocation (default: BACKTEST_BATCH_SIZE
+   * env or 8). Boards whose per-rebalance cost is dominated by a
+   * rate-limited provider (fable: Finnhub insider for every gate-passer
+   * at ~55 rpm) need 2-3, or batch 1 dies at the 15-min background
+   * ceiling before its first cursor checkpoint (unrecoverable — no
+   * resume point). Bounds [1, 16] enforced by validateConfig.
+   */
+  batchSize?: number;
   // Optional override for "now" — used only by integrity tests. Engine
   // never reads system clock for asOfDate decisions.
   clockOverride?: string;

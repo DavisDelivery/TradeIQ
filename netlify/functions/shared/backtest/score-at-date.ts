@@ -18,7 +18,7 @@
 
 import { UNIVERSE } from '../universe';
 import { SECTOR_ETFS, SPY } from '../universe';
-import {
+import { getFinnhubInsiderTransactionsWithStatus,
   getDailyBars,
   getFundamentals,
   getEarningsHistory,
@@ -50,6 +50,7 @@ import {
   scorePatents,
 } from '../scan-prophet';
 import { computeRegime } from '../regime';
+import { scoreFable, evaluateFoundationGate, FABLE_CONSTANTS } from '../fable-scoring';
 import { pitCacheWrap, type PitCacheKey } from '../pit-cache';
 import { addDays } from './trading-calendar';
 import { getPoliticalActivityForBacktest } from './stock-act-shift';
@@ -1015,6 +1016,97 @@ async function scoreEarningsAtDate(
   };
 }
 
+// ---------------------------------------------------------------------------
+// FABLE (Claude's board) — bars + insider-filings PIT path.
+//
+// The composite is cross-section-free by design (fixed squashes, see
+// shared/fable-scoring.ts), so this per-ticker path computes EXACTLY the
+// number the live scan computes — the backtest tests the shipped board.
+// Gate-fail returns null: a valid no-trade (run with discreteSignalOnly).
+// The EDGAR exec-role bonus is inactive here AND in the live scan (v1),
+// and the quality veto is live-only — neither participates in validation.
+// ---------------------------------------------------------------------------
+
+const FABLE_BARS_LOOKBACK_DAYS = 460;
+
+async function scoreFableAtDate(
+  ticker: string,
+  asOfDate: string,
+  ctx: MarketContextAtDate,
+  _opts: { discreteSignalOnly?: boolean } = {},
+): Promise<ScoredCandidate | null> {
+  const entry = resolveScoringEntry(ticker);
+  const from = addDays(asOfDate, -FABLE_BARS_LOOKBACK_DAYS);
+
+  const bars = await pitCacheWrap(
+    { provider: 'polygon', dataClass: 'bars', ticker, asOfDate, extra: `from=${from}:fable` },
+    () => getDailyBars(ticker, from, asOfDate),
+  );
+  if (!bars || bars.length < FABLE_CONSTANTS.MIN_BARS) return null;
+
+  // Gate FIRST, before any further I/O — mirrors the live scan's two-phase
+  // bars-first design. ~80-95% of the universe fails the FOUNDATION gate on
+  // any date; skipping their SPY/insider fetches cuts Finnhub volume ~10x
+  // per rebalance. scoreFable re-evaluates the same pure gate on the same
+  // bars, so behavior is identical — this is purely an I/O short-circuit.
+  if (!evaluateFoundationGate(bars as any).pass) return null;
+
+  // SPY window for the residual/regime — pitCached once per rebalance date.
+  const spyFrom = addDays(asOfDate, -FABLE_BARS_LOOKBACK_DAYS);
+  const spyBars = await pitCacheWrap(
+    { provider: 'polygon', dataClass: 'bars', ticker: 'SPY', asOfDate, extra: `from=${spyFrom}:fable-spy` },
+    () => getDailyBars('SPY', spyFrom, asOfDate),
+  );
+
+  const txs = await pitCacheWrap(
+    { provider: 'finnhub', dataClass: 'insider', ticker, asOfDate, extra: 'daysBack=200:fable' },
+    async () => {
+      const status = await getFinnhubInsiderTransactionsWithStatus(ticker, 200, { asOfDate });
+      // M8 failure discipline (and the 4t-W1c cache-poisoning lesson):
+      // transport failure is MISSING data, not absent data. Throw so
+      // pitCacheWrap never caches a failure-shaped [] for this
+      // (ticker, asOfDate) and the engine books a visible TickerFailure
+      // instead of silently scoring insiderEdge=0. Verified-empty
+      // (HTTP 200, zero rows) is PIT-stable and caches fine.
+      if (status.rateLimitExhausted || status.errorMessage) {
+        throw new Error(
+          `fable insider fetch failed ${ticker}@${asOfDate}: ${status.errorMessage ?? 'rate-limit exhausted'}`,
+        );
+      }
+      return status.data;
+    },
+  );
+
+  const res = scoreFable(
+    bars as any,
+    (spyBars ?? []) as any,
+    (txs ?? []) as any,
+    asOfDate,
+  );
+  if (!res) return null; // gate fail = valid no-trade
+
+  const latestBar = (bars as any[])[(bars as any[]).length - 1];
+  return {
+    ticker,
+    composite: res.composite,
+    layers: { fableComposite: res.composite },
+    sector: entry.sector,
+    metadata: {
+      price: latestBar.c,
+      ascent: +res.pillars.ascent.toFixed(1),
+      smoothPath: +res.pillars.smoothPath.toFixed(1),
+      highGround: +res.pillars.highGround.toFixed(1),
+      coiledSpring: +res.pillars.coiledSpring.toFixed(1),
+      insiderEdge: +res.insider.score.toFixed(1),
+      fip: +res.pillars.fip.toFixed(4),
+      imomIr: +res.pillars.imomIr.toFixed(2),
+      proximity52w: +res.pillars.proximity52w.toFixed(3),
+      regime: ctx.regime?.regime ?? null,
+      ...universeFlag(entry),
+    },
+  };
+}
+
 /** Local pure mean (avoid importing `avg` name-collision into this module). */
 function avgArr(xs: number[]): number {
   return xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0;
@@ -1051,6 +1143,7 @@ export async function scoreTickerAtDate(
   if (board === 'lynch') return scoreLynchAtDate(ticker, asOfDate, opts);
   if (board === 'target') return scoreTargetAtDate(ticker, asOfDate, ctx);
   if (board === 'earnings') return scoreEarningsAtDate(ticker, asOfDate, ctx, opts);
+  if (board === 'fable') return scoreFableAtDate(ticker, asOfDate, ctx, opts);
   // catalyst / insider remain stubs — no PIT path yet.
   return null;
 }

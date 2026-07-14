@@ -348,7 +348,7 @@ export async function processRegularBatch(
             config.board !== 'williams' &&
             config.board !== 'lynch' &&
             config.board !== 'target' &&
-            config.board !== 'earnings' &&
+            config.board !== 'earnings' && config.board !== 'fable' &&
             !nonProphetBoardWarned
           ) {
             nonProphetBoardWarned = true;

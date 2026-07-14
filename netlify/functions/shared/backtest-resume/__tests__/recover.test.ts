@@ -166,10 +166,10 @@ describe('recoverStuckBacktestRuns', () => {
     expect(dispatch).not.toHaveBeenCalled();
   });
 
-  it('ignores running docs with no cursor (nothing to resume from)', async () => {
-    const doc = staleRunningDoc('pb-no-cursor', 60 * 60_000);
+  it('FAILS a stale running doc with no cursor (batch-1 death — no resume point)', async () => {
+    const doc = staleRunningDoc('pb-no-cursor', 60 * 60_000); // startedAt ~61 min ago
     doc.data.cursor = null;
-    const { db } = makeFakeDb({ collection: COLLECTION, docs: [doc] });
+    const { db, state } = makeFakeDb({ collection: COLLECTION, docs: [doc] });
     const dispatch = vi.fn();
 
     const result = await recoverStuckBacktestRuns({
@@ -177,7 +177,45 @@ describe('recoverStuckBacktestRuns', () => {
     });
 
     expect(result.resumed).toHaveLength(0);
+    expect(dispatch).not.toHaveBeenCalled(); // never re-dispatch: it would replay the same death
+    expect(result.failed).toHaveLength(1);
+    expect(result.failed[0].reason).toMatch(/no first checkpoint/);
+    const write = state.writes.find((w) => w.docId === 'pb-no-cursor');
+    expect(write?.patch.status).toBe('failed');
+    expect(String(write?.patch.error)).toMatch(/batchSize/);
+  });
+
+  it('leaves a FRESH running doc with no cursor alone (batch 1 may still be in flight)', async () => {
+    const doc = staleRunningDoc('pb-no-cursor-fresh', 60 * 60_000);
+    doc.data.cursor = null;
+    doc.data.startedAt = new Date(Date.now() - 5 * 60_000).toISOString(); // 5 min ago
+    const { db, state } = makeFakeDb({ collection: COLLECTION, docs: [doc] });
+    const dispatch = vi.fn();
+
+    const result = await recoverStuckBacktestRuns({
+      db, collection: COLLECTION, origin: ORIGIN, functionPath: FN_PATH, dispatch,
+    });
+
+    expect(result.failed).toHaveLength(0);
+    expect(result.resumed).toHaveLength(0);
     expect(dispatch).not.toHaveBeenCalled();
+    expect(state.writes).toHaveLength(0);
+  });
+
+  it('ignores a no-cursor running doc whose startedAt is unparseable', async () => {
+    const doc = staleRunningDoc('pb-no-cursor-bad-date', 60 * 60_000);
+    doc.data.cursor = null;
+    doc.data.startedAt = 'not-a-date';
+    const { db, state } = makeFakeDb({ collection: COLLECTION, docs: [doc] });
+    const dispatch = vi.fn();
+
+    const result = await recoverStuckBacktestRuns({
+      db, collection: COLLECTION, origin: ORIGIN, functionPath: FN_PATH, dispatch,
+    });
+
+    expect(result.failed).toHaveLength(0);
+    expect(dispatch).not.toHaveBeenCalled();
+    expect(state.writes).toHaveLength(0);
   });
 
   it('fails a run when recovery attempts have reached the cap', async () => {

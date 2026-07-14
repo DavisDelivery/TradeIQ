@@ -360,6 +360,12 @@
   to = "/.netlify/functions/earnings-edge-study"
   status = 200
 
+# FABLE — Claude's own board (reports/fable/design.md).
+[[redirects]]
+  from = "/api/fable-board"
+  to = "/.netlify/functions/fable-board"
+  status = 200
+
 # SPA fallback
 [[redirects]]
   from = "/*"

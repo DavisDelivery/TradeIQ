@@ -1216,7 +1216,17 @@ export async function getFinnhubInsiderTransactionsWithStatus(
     const from = new Date(anchor - daysBack * 86400000).toISOString().slice(0, 10);
     const to = new Date(anchor).toISOString().slice(0, 10);
     const url = `${FINNHUB}/stock/insider-transactions?symbol=${encodeURIComponent(ticker)}&from=${from}&to=${to}&token=${finnhubKey()}`;
-    const { res, rateLimitHits, rateLimitExhausted } = await fetchWithRateLimit(url, undefined);
+    // Patient retry envelope (~50s worst case: 2+4+8+16+20, Retry-After
+    // honored): the token bucket paces OUR calls, but the API key is
+    // shared with prod cron scans running in other containers — when one
+    // overlaps, the minute-window blows and the default 3.5s envelope
+    // exhausts long before it reopens. A PIT backtest would then book
+    // TickerFailures for names the board would really have held.
+    const { res, rateLimitHits, rateLimitExhausted } = await fetchWithRateLimit(url, undefined, {
+      maxRetries: 5,
+      initialBackoffMs: 2_000,
+      maxBackoffMs: 20_000,
+    });
     if (!res.ok) {
       if (res.status === 429) {
         // Logged loudly so a 429-storm shows up in Netlify function logs

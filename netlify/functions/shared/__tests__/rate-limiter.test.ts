@@ -50,6 +50,36 @@ describe('createTokenBucket', () => {
     expect(b.available()).toBeLessThan(1);
   });
 
+  it('initialTokens caps the cold-start burst without touching the sustained rate', async () => {
+    const clk = fakeClock();
+    const b = createTokenBucket({
+      callsPerWindow: 60,
+      capacity: 60,
+      initialTokens: 8,
+      now: clk.now,
+      sleep: clk.sleep,
+    });
+    expect(b.available()).toBe(8);
+    expect(b.capacity()).toBe(60); // burst ceiling unchanged
+    for (let i = 0; i < 8; i++) await b.acquire();
+    expect(clk.sleeps).toEqual([]); // first 8 free
+    await b.acquire(); // 9th must wait for refill (60/min ⇒ ~1s)
+    expect(clk.sleeps.length).toBeGreaterThan(0);
+    expect(clk.sleeps[0]).toBeGreaterThan(800);
+  });
+
+  it('initialTokens is clamped to capacity', async () => {
+    const clk = fakeClock();
+    const b = createTokenBucket({
+      callsPerWindow: 60,
+      capacity: 10,
+      initialTokens: 999,
+      now: clk.now,
+      sleep: clk.sleep,
+    });
+    expect(b.available()).toBe(10);
+  });
+
   it('blocks the 61st call until the bucket has refilled enough for one token', async () => {
     const clk = fakeClock();
     const b = createTokenBucket({

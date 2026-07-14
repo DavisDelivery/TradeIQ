@@ -151,6 +151,14 @@ export function validateConfig(
   if (config.portfolio.topN <= 0) {
     throw new Error('BacktestConfig: portfolio.topN must be > 0');
   }
+  if (config.batchSize !== undefined) {
+    const b = config.batchSize;
+    if (!Number.isInteger(b) || b < 1 || b > 16) {
+      throw new Error(
+        `BacktestConfig: batchSize must be an integer in [1, 16], got ${JSON.stringify(b)}`,
+      );
+    }
+  }
   if (config.initialCapital <= 0) {
     throw new Error('BacktestConfig: initialCapital must be > 0');
   }
@@ -475,7 +483,7 @@ export async function runBacktest(
               config.board !== 'williams' &&
               config.board !== 'lynch' &&
               config.board !== 'target' &&
-              config.board !== 'earnings' &&
+              config.board !== 'earnings' && config.board !== 'fable' &&
               !nonProphetBoardWarned
             ) {
               nonProphetBoardWarned = true;

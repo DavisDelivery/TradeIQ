@@ -76,6 +76,16 @@ export interface TokenBucketOpts {
   windowMs?: number;
   /** Calls allowed in one window. Default = `capacity`. */
   callsPerWindow: number;
+  /**
+   * Tokens available at creation. Default = `capacity` (legacy: full
+   * bucket, unthrottled cold-start burst). Providers that enforce
+   * short-window limits UNDER the per-minute cap need a small value:
+   * the FABLE validation run proved a fresh 55-token Finnhub bucket
+   * releases ~55 concurrent calls in the first second and the whole
+   * wave 429s to retry-exhaustion (alphabetically-first tickers all
+   * died on every cold rebalance). Sustained rate is unaffected.
+   */
+  initialTokens?: number;
   /** Test seam: returns current time in ms. Default = `Date.now`. */
   now?: () => number;
   /** Test seam: sleep N ms. Default = setTimeout-based. */
@@ -90,7 +100,7 @@ export function createTokenBucket(opts: TokenBucketOpts): TokenBucket {
   const now = opts.now ?? (() => Date.now());
   const sleep = opts.sleep ?? defaultSleep;
 
-  let tokens = capacity;
+  let tokens = Math.min(capacity, opts.initialTokens ?? capacity);
   let lastRefill = now();
   // Serializes concurrent acquire() calls so two simultaneous awaits
   // can't both observe `tokens >= 1`, both decrement, and both proceed
@@ -155,7 +165,14 @@ let _finnhubBucket: TokenBucket | null = null;
 
 export function getFinnhubBucket(): TokenBucket {
   if (_finnhubBucket === null) {
-    _finnhubBucket = createTokenBucket({ callsPerWindow: resolveFinnhubRpm() });
+    // initialTokens: 8 — Finnhub enforces a short-window cap under the
+    // per-minute one; a full-bucket cold start (55 instant tokens) got
+    // the entire first wave 429'd to exhaustion in the FABLE validation
+    // run. 8 matches the scoring concurrency; steady pace is unchanged.
+    _finnhubBucket = createTokenBucket({
+      callsPerWindow: resolveFinnhubRpm(),
+      initialTokens: 8,
+    });
   }
   return _finnhubBucket;
 }

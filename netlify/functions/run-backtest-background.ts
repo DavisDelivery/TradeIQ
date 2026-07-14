@@ -133,6 +133,27 @@ export const handler: Handler = withSentry(async (event, context) => {
     const existing = await readCursor<RegularBacktestState>(db, COLLECTION, runId);
     const isResume = existing != null;
 
+    // Terminal-status guard (FABLE validation-run finding): the runner
+    // previously NEVER read the doc's status, so (a) there was no way to
+    // kill a chain — marking a run 'failed' via /api/backtest-runs/recover
+    // didn't stop the next reinvoke, and (b) Netlify's automatic queue
+    // RETRY of a hard-killed background invocation could resurrect a
+    // swept run hours later (live: bt_20260713202030's retry re-ran batch
+    // 1 ~30 min after the original death and contended for the Finnhub
+    // budget against the replacement run, poisoning ITS rebalance #1 with
+    // ~98 rate-limit TickerFailures). Terminal docs now drain the chain.
+    {
+      const statusSnap = await db.collection(COLLECTION).doc(runId).get();
+      const docStatus = (statusSnap.data() as { status?: string } | undefined)?.status;
+      if (docStatus === 'failed' || docStatus === 'complete' || docStatus === 'invalid') {
+        log.warn('terminal_status_guard', { runId, docStatus, isResume });
+        return {
+          statusCode: 200,
+          body: JSON.stringify({ ok: true, runId, drained: true, docStatus }),
+        };
+      }
+    }
+
     let config: BacktestConfig | undefined = payload.config;
     if (isResume || !config) {
       // Read the persisted config from the run doc. Trigger writes it at
@@ -214,7 +235,11 @@ export const handler: Handler = withSentry(async (event, context) => {
         runId,
         todayIso,
         state: cursor.state ?? initialRegularState(config, totalRebalances, prep.rebalanceDates[0]),
-        batchSize: BATCH_SIZE,
+        // Per-run override (validated to [1,16] at trigger time) beats the
+        // env/default. Needed for boards whose per-rebalance wall-clock is
+        // provider-rate-limit bound (fable insider @55rpm): batch 8 dies at
+        // the 15-min ceiling before the FIRST checkpoint — unrecoverable.
+        batchSize: config.batchSize ?? BATCH_SIZE,
         isExpired: () => watchdog.isExpired(),
         onProgress: (evt) => log.info('progress', evt),
       });

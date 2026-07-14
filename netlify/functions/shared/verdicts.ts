@@ -18,7 +18,7 @@
 
 export type VerdictStatus = 'NO_EDGE' | 'MIXED' | 'PENDING' | 'VALIDATED';
 
-export type VerdictBoard = 'williams' | 'lynch' | 'prophet' | 'target';
+export type VerdictBoard = 'williams' | 'lynch' | 'prophet' | 'target' | 'fable';
 
 export interface BoardVerdict {
   board: VerdictBoard;
@@ -103,6 +103,24 @@ export const BOARD_VERDICTS: Record<VerdictBoard, BoardVerdict> = {
       'complete (reinvoke-chain infra); sp500 alone is decisive per the pre-committed ' +
       'binding rule (reports/fix-1/composite-verdict.md). The prior avaa64 run was INVALID ' +
       '(all-null candidates); this q5qdh7 run is the first valid composite backtest.',
+  },
+  fable: {
+    board: 'fable',
+    status: 'NO_EDGE',
+    window: '2018-01-31 → 2024-12-31, sp500, monthly, discreteSignalOnly, 20bps rt',
+    excessVsSPYPp: -73.4,
+    excessVsQQQPp: null,
+    ic: -0.0173,
+    rollingWindowsWon: null,
+    runId: 'bt_20260713215334_w80rb8',
+    date: '2026-07-14',
+    note:
+      'FABLE (Claude\'s board) — pre-committed rule applied (reports/fable/design.md): ' +
+      'net +34.5% vs SPY +107.9% (−73.4pp) FAIL; IC −0.0173 FAIL; monthly-active t −1.29 FAIL. ' +
+      'All three criteria failed ⇒ NO_EDGE. Clean run: 84/84 rebalances, 2,018 trades, ' +
+      '0.07% ticker-failure rate, offline SPY cross-check matches the engine to the decimal. ' +
+      'FABLE ships as a labelled screener (like Target) — the gate/pillars still describe ' +
+      'trend quality; they do not claim validated alpha over buy-and-hold.',
   },
 };
 
