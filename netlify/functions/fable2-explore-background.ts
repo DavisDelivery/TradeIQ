@@ -30,7 +30,13 @@ export const handler: Handler = async (event) => {
   const log = logger.child({ fn: 'fable2-explore-background' });
   if (event.httpMethod !== 'POST') return { statusCode: 405, body: 'POST only' };
 
-  let body: { runId?: string; label?: string; universe?: IndexTag; config?: Partial<PolicyConfig> };
+  let body: {
+    runId?: string;
+    label?: string;
+    universe?: IndexTag;
+    config?: Partial<PolicyConfig>;
+    insiderMode?: 'live' | 'none';
+  };
   try {
     body = JSON.parse(event.body ?? '{}');
   } catch {
@@ -51,6 +57,7 @@ export const handler: Handler = async (event) => {
   };
   const clampApplied = clamped.startDate !== requested.startDate || clamped.endDate !== requested.endDate;
 
+  const insiderMode = body.insiderMode === 'none' ? 'none' : 'live';
   const db = getAdminDb();
   const doc = db.collection(COLLECTION).doc(runId);
   const startedAt = new Date().toISOString();
@@ -60,6 +67,7 @@ export const handler: Handler = async (event) => {
     universe,
     status: 'running',
     config: clamped,
+    insiderMode,
     clampApplied,
     startedAt,
   });
@@ -72,6 +80,7 @@ export const handler: Handler = async (event) => {
       warmupFrom: WARMUP_FROM,
       concurrency: 8,
       logger: log,
+      insiderMode,
     });
     const loadMs = Date.now() - t0;
     const t1 = Date.now();

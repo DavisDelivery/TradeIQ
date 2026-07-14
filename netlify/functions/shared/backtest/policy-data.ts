@@ -20,6 +20,26 @@ import { evaluateFoundationGate, FABLE_CONSTANTS, type FableBar, type FableInsid
 import { monthEndCheckpoints, type PolicyInputs, type PolicyConfig, type PolicyTickerData } from './policy-engine';
 import type { Logger } from '../logger';
 
+/** (checkpoint × gate-passer) pairs — shared by the loader and the warm-up sweep. */
+export function buildInsiderWorkList(
+  tickers: PolicyTickerData[],
+  checkpoints: string[],
+): Array<{ t: PolicyTickerData; cpIdx: number; cp: string }> {
+  const work: Array<{ t: PolicyTickerData; cpIdx: number; cp: string }> = [];
+  for (const t of tickers) {
+    const dateToIdx = new Map<string, number>();
+    t.bars.forEach((b, i) => dateToIdx.set(isoOf(b.t), i));
+    t.insiderByCheckpoint = new Array(checkpoints.length).fill(undefined);
+    for (let ci = 0; ci < checkpoints.length; ci++) {
+      const bi = dateToIdx.get(checkpoints[ci]);
+      if (bi === undefined || bi + 1 < FABLE_CONSTANTS.MIN_BARS) continue;
+      if (!evaluateFoundationGate(t.bars.slice(0, bi + 1)).pass) continue;
+      work.push({ t, cpIdx: ci, cp: checkpoints[ci] });
+    }
+  }
+  return work;
+}
+
 async function pool<T, R>(items: T[], size: number, fn: (item: T) => Promise<R>): Promise<R[]> {
   const out: R[] = new Array(items.length);
   let next = 0;
@@ -44,6 +64,17 @@ export interface LoadPolicyInputsOpts {
   warmupFrom: string; // e.g. '2016-06-01' for a 2018 start
   concurrency?: number;
   logger?: Logger;
+  /**
+   * 'live' (default): fetch insider for (checkpoint × gate-passer) pairs.
+   * 'none': skip insider entirely — passers score with [] transactions.
+   * Used by R2 exploration: CONSTRUCTION variants (sizing/regime/banding)
+   * see identical composites either way, so comparisons are unbiased,
+   * and it avoids a ~7k-call cold Finnhub sweep per run (v1's cache keys
+   * are at +30d-drift dates, not month-ends — zero reuse, learned live).
+   * The frozen config's pre-freeze confirmation and the holdout run use
+   * 'live' after fable2-insider-warm has filled the cache.
+   */
+  insiderMode?: 'live' | 'none';
 }
 
 export interface LoadPolicyInputsResult {
@@ -91,22 +122,31 @@ export async function loadPolicyInputs(opts: LoadPolicyInputsOpts): Promise<Load
     })
   ).filter((t): t is PolicyTickerData => t !== null);
 
-  // --- Insider: (checkpoint × gate-passer) pairs only, v1 cache keys.
+  // --- Insider: (checkpoint × gate-passer) pairs only.
   let insiderFetches = 0;
   let insiderFailures = 0;
-  const work: Array<{ t: PolicyTickerData; cpIdx: number; cp: string }> = [];
-  for (const t of tickers) {
-    const dateToIdx = new Map<string, number>();
-    t.bars.forEach((b, i) => dateToIdx.set(isoOf(b.t), i));
-    t.insiderByCheckpoint = new Array(checkpoints.length).fill(undefined);
-    for (let ci = 0; ci < checkpoints.length; ci++) {
-      const bi = dateToIdx.get(checkpoints[ci]);
-      if (bi === undefined || bi + 1 < FABLE_CONSTANTS.MIN_BARS) continue;
-      if (!evaluateFoundationGate(t.bars.slice(0, bi + 1)).pass) continue;
-      work.push({ t, cpIdx: ci, cp: checkpoints[ci] });
-    }
+  const work = buildInsiderWorkList(tickers, checkpoints);
+  log?.info?.('fable2_insider_plan', {
+    pairs: work.length,
+    tickers: tickers.length,
+    checkpoints: checkpoints.length,
+    mode: opts.insiderMode ?? 'live',
+  });
+
+  if ((opts.insiderMode ?? 'live') === 'none') {
+    for (const w of work) w.t.insiderByCheckpoint![w.cpIdx] = [];
+    return {
+      inputs: { tickers, spyBars, checkpoints, config },
+      stats: {
+        universeSize: entries.length,
+        tickersWithBars: tickers.length,
+        barFetchFailures,
+        insiderFetches: 0,
+        insiderFailures: 0,
+        checkpoints: checkpoints.length,
+      },
+    };
   }
-  log?.info?.('fable2_insider_plan', { pairs: work.length, tickers: tickers.length, checkpoints: checkpoints.length });
 
   await pool(work, 4, async (w) => {
     const txs = (await pitCacheWrap(
