@@ -19,6 +19,14 @@ export const handler: Handler = async (event) => {
   const q = event.queryStringParameters ?? {};
   try {
     const db = getAdminDb();
+    if (q.warm === '1') {
+      const snap = await db.collection('fable2InsiderWarm').get();
+      return {
+        statusCode: 200,
+        headers,
+        body: JSON.stringify({ ok: true, progress: snap.docs.map((d) => ({ id: d.id, ...d.data() })) }),
+      };
+    }
     if (q.runId) {
       const snap = await db.collection(COLLECTION).doc(q.runId).get();
       if (!snap.exists) return { statusCode: 404, headers, body: JSON.stringify({ ok: false, error: 'not found' }) };

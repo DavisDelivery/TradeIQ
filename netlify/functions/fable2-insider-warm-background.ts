@@ -12,8 +12,11 @@
 // returns 202 immediately; progress lands in fable2InsiderWarm/progress)
 // until `done: true`. Idempotent: cached pairs are skipped at full speed.
 //
-// Uses the TRAIN window bounds; the holdout sweep happens only with the
-// (separate, post-freeze) confirmatory tooling.
+// window: 'train' (default) sweeps 2018-2023 checkpoints; 'holdout'
+// sweeps 2024-01-01 → 2026-06-30. The holdout sweep is DATA PREFETCH
+// ONLY — it evaluates no configuration and reveals no strategy result,
+// so it does not breach the protocol's holdout rule (§3); it exists so
+// the single confirmatory run can complete inside one invocation.
 
 import type { Handler } from '@netlify/functions';
 import { DEFAULT_POLICY_CONFIG } from './shared/backtest/policy-engine';
@@ -31,24 +34,30 @@ const BUDGET_MS = 12 * 60 * 1000;
 export const handler: Handler = async (event) => {
   const log = logger.child({ fn: 'fable2-insider-warm' });
   if (event.httpMethod !== 'POST') return { statusCode: 405, body: 'POST only' };
-  let body: { universe?: IndexTag; startAfter?: number };
+  let body: { universe?: IndexTag; startAfter?: number; window?: 'train' | 'holdout' };
   try {
     body = JSON.parse(event.body ?? '{}');
   } catch {
     return { statusCode: 400, body: JSON.stringify({ ok: false, error: 'invalid json' }) };
   }
   const universe: IndexTag = body.universe === 'ndx' ? 'ndx' : 'sp500';
+  const window = body.window === 'holdout' ? 'holdout' : 'train';
   const startAfter = Math.max(0, Number(body.startAfter ?? 0) || 0);
   const start = Date.now();
   const db = getAdminDb();
-  const progressDoc = db.collection('fable2InsiderWarm').doc(`${universe}`);
+  const progressDoc = db.collection('fable2InsiderWarm').doc(`${universe}-${window}`);
+
+  const windowBounds =
+    window === 'holdout'
+      ? { startDate: '2024-01-01', endDate: '2026-06-30' }
+      : { startDate: '2018-01-01', endDate: TRAIN_END_MAX };
 
   try {
-    // Bars are pit-cached by now (explore runs fetch them) — this load is fast.
+    // Bars are pit-cached after the first pass — this load is fast when warm.
     const { inputs } = await loadPolicyInputs({
       universe,
-      config: { ...DEFAULT_POLICY_CONFIG, startDate: '2018-01-01', endDate: TRAIN_END_MAX },
-      warmupFrom: WARMUP_FROM,
+      config: { ...DEFAULT_POLICY_CONFIG, ...windowBounds },
+      warmupFrom: window === 'holdout' ? '2022-06-01' : WARMUP_FROM,
       concurrency: 8,
       logger: log,
       insiderMode: 'none', // we only need bars + checkpoints + the work list
@@ -90,6 +99,7 @@ export const handler: Handler = async (event) => {
     const done = idx >= work.length;
     const progress = {
       universe,
+      window,
       totalPairs: work.length,
       cursor: idx,
       done,
