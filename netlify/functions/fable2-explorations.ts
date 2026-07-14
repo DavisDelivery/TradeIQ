@@ -27,6 +27,11 @@ export const handler: Handler = async (event) => {
         body: JSON.stringify({ ok: true, progress: snap.docs.map((d) => ({ id: d.id, ...d.data() })) }),
       };
     }
+    if (q.holdoutRunId) {
+      const snap = await db.collection('fable2Holdout').doc(q.holdoutRunId).get();
+      if (!snap.exists) return { statusCode: 404, headers, body: JSON.stringify({ ok: false, error: 'not found' }) };
+      return { statusCode: 200, headers, body: JSON.stringify({ ok: true, run: snap.data() }) };
+    }
     if (q.runId) {
       const snap = await db.collection(COLLECTION).doc(q.runId).get();
       if (!snap.exists) return { statusCode: 404, headers, body: JSON.stringify({ ok: false, error: 'not found' }) };
