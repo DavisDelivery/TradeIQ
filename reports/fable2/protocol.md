@@ -84,3 +84,87 @@ design horizon. v2's engine tests the ACTUAL policy.
 - Horizon-matched rank-IC (63d/126d) in run metrics.
 - Exploration runner with endDate clamp + auto-append to the log.
 - Reuses the PIT caches (bars + insider) already warmed by v1's runs.
+
+---
+
+## APPENDIX A — FROZEN CONFIG (2026-07-14, exploration closed at 20/20)
+
+Chosen: the board AS DESIGNED — insider pillar LIVE — because the
+holdout must test the system that would actually ship, not its
+best-scoring lab variant. The insider-off twin (fbl2_16, +62.88pp) vs
+the identical insider-live run (fbl2_20, +25.26pp) differ by 37pp from
+a 0.2-weight pillar: documented FRAGILITY of a 15-slot book to
+entry-band reshuffles. The honest train estimate of the shipped system
+is fbl2_20's, not fbl2_16's.
+
+```json
+{
+  "universe": "sp500",
+  "insiderMode": "live",
+  "config": {
+    "startDate": "<window>", "endDate": "<window>",
+    "initialCapital": 100000,
+    "enterPctl": 90, "exitPctl": 60,
+    "maxHoldDays": 126, "stopPct": 0.12,
+    "slippageBpsPerLeg": 10,
+    "sizeAlpha": 1.0,
+    "maxPositionPct": 0.20, "maxPositions": 15,
+    "regimeMode": "none"
+  }
+}
+```
+
+Train reference (fbl2_20_cand_insider_live, 2018-01-01→2023-12-29):
+net +102.10% vs SPY +76.85% = **+25.26pp**; rank-IC63 +0.029; IC126
++0.029; 333 trades; monthly-active t 0.474; maxDD 20.59%; Sharpe (see
+doc). Sub-window stability measured on the insider-off twin (+10.4 /
++5.0pp both positive).
+
+Pre-holdout expectation, stated for the record: with train t at 0.47
+(n=71 months), the combined t≥2.5 criterion is nearly unreachable —
+the holdout would need ~+3%/month active for 30 straight months. The
+bar is doing its job: absent overwhelming evidence, FABLE-2 will NOT
+claim validated alpha even if it beats SPY out-of-sample; it would
+ship as a screener with measured OOS results noted, and only the
+6-month live forward test could change that. No third outcome.
+
+The single confirmatory holdout run (2024-01-01 → 2026-06-30) executes
+via a dedicated endpoint with this config HARDCODED. One shot.
+
+---
+
+## VERDICT (2026-07-14) — the pre-registered bar, applied
+
+Confirmatory run `fbl2h_confirmatory` (frozen APPENDIX A config, single
+shot, holdout 2024-01-01 → 2026-06-30, insider live): **net +86.01% vs
+SPY +58.00%** — the frozen system beat SPY by **+28.01pp on 2.5 years
+of data no design decision ever touched**, with rank-IC63 **+0.068**,
+maxDD 17.63%, 149 trades.
+
+| Criterion (frozen §3, before any run) | Measured | Result |
+|---|---|---|
+| 1. Holdout net > SPY | +86.01% vs +58.00% (+28.01pp) | **PASS** |
+| 2. Holdout 63d rank-IC > 0 | +0.068 | **PASS** |
+| 3. Combined train+holdout monthly-active t ≥ 2.5 | mean +0.397%/mo, sd 4.545%, n=100 → **t = +0.87** | **FAIL** |
+
+**Outcome per the binding rule: NOT PROMOTED.** Two of three. The
+direction is confirmed out-of-sample; the statistical-proof bar is not
+met — with a 15-position book's tracking error (sd 4.5%/mo), even a
+real +0.4%/mo edge needs ~8+ years of months to clear t≥2.5. That bar
+was set high ON PURPOSE (2nd pre-committed attempt + 20 explorations);
+it is doing exactly its job: refusing to call 2.5 good years "proof."
+
+What ships: FABLE-2 as a screener/strategy view with the measured
+out-of-sample result stated plainly — "+28pp vs SPY on untouched
+2024-2026 data; 2 of 3 pre-registered criteria passed; NOT statistically
+validated" — and NO validated-alpha chip. The 6-month LIVE forward
+paper test (R4) is the standing referee; only sustained live
+outperformance can upgrade the claim. Honest context recorded: the
+insider-sensitivity fragility (fbl2_16 +62.9 vs fbl2_20 +25.3 on train),
+and the fact that both train and holdout windows were concentration-
+friendly regimes — if that regime breaks, expect the live test to say so.
+
+Campaign integrity: exploration 20/20 budget, all runs logged, holdout
+touched exactly once, config frozen before the holdout endpoint existed,
+no constant changed after freeze. runIds: train fbl2_20_cand_insider_live,
+holdout fbl2h_confirmatory.
