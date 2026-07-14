@@ -10,6 +10,7 @@
 // in TopBar; this component is purely controlled.
 
 import React, { useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
 import { Logo } from '../components/Badges.jsx';
 
@@ -31,7 +32,13 @@ export function MobileDrawer({ open, onClose, views, activeView, setActiveView, 
     };
   }, [open, onClose]);
 
-  return (
+  // PORTAL — the drawer mounts on document.body, NOT inside the header.
+  // The header has backdrop-blur-xl, and a backdrop-filter ancestor creates
+  // a new containing block: `fixed inset-0` then positions relative to the
+  // HEADER's box instead of the viewport, clipping the drawer to the first
+  // ~76px of the screen (exactly the failure seen on device). Portaling out
+  // makes the drawer immune to any ancestor filter/transform/blur.
+  return createPortal(
     <div
       className={`fixed inset-0 z-50 sm:hidden ${open ? '' : 'pointer-events-none'}`}
       aria-hidden={!open}
@@ -106,6 +113,7 @@ export function MobileDrawer({ open, onClose, views, activeView, setActiveView, 
           v{appVersion}
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
