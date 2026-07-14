@@ -56,6 +56,22 @@ describe('MobileDrawer', () => {
     expect(screen.getByText('Desk').closest('button')).not.toHaveAttribute('aria-current');
   });
 
+  it('portals to document.body — never trapped inside a filtered ancestor', () => {
+    // Device-audit regression: the drawer was mounted inside the sticky
+    // header, whose backdrop-blur creates a containing block that captures
+    // `position: fixed` — the drawer clipped to the header's ~76px box.
+    // Render inside a decoy "header" and assert the drawer escapes it.
+    const { container } = render(
+      <header style={{ backdropFilter: 'blur(4px)' }}>
+        <MobileDrawer open onClose={() => {}} views={VIEWS} activeView="desk" setActiveView={() => {}} appVersion="t" />
+      </header>,
+    );
+    const drawer = screen.getByTestId('mobile-drawer');
+    expect(container.querySelector('[data-testid="mobile-drawer"]')).toBeNull(); // not inside the render tree
+    expect(drawer.closest('header')).toBeNull(); // escaped the filtered ancestor
+    expect(drawer.parentElement?.parentElement).toBe(document.body); // wrapper is a direct body child
+  });
+
   it('locks body scroll while open and restores it on unmount', () => {
     const { unmount } = render(
       <MobileDrawer open onClose={() => {}} views={VIEWS} activeView="desk" setActiveView={() => {}} appVersion="t" />,
