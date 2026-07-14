@@ -17,7 +17,13 @@ import { inIndex, SPY, type IndexTag } from '../universe';
 import { getDailyBars, getFinnhubInsiderTransactionsWithStatus } from '../data-provider';
 import { pitCacheWrap } from '../pit-cache';
 import { evaluateFoundationGate, FABLE_CONSTANTS, type FableBar, type FableInsiderTx } from '../fable-scoring';
-import { monthEndCheckpoints, type PolicyInputs, type PolicyConfig, type PolicyTickerData } from './policy-engine';
+import {
+  monthEndCheckpoints,
+  dropPartialMonthCheckpoints,
+  type PolicyInputs,
+  type PolicyConfig,
+  type PolicyTickerData,
+} from './policy-engine';
 import type { Logger } from '../logger';
 
 /** (checkpoint × gate-passer) pairs — shared by the loader and the warm-up sweep. */
@@ -113,7 +119,16 @@ export async function loadPolicyInputs(opts: LoadPolicyInputsOpts): Promise<Load
   if (!spyBars || spyBars.length < 500) {
     throw new Error(`policy-data: SPY series too short (${spyBars?.length ?? 0})`);
   }
-  const checkpoints = monthEndCheckpoints(spyBars, config.startDate, config.endDate);
+  // Live windows: the current partial month must not produce a phantom
+  // moving "month-end" checkpoint (race day-1 failure). Historical runs
+  // (endDate < today) keep every checkpoint, including a final month
+  // that legitimately ends on/near endDate.
+  const checkpoints = liveWindow
+    ? dropPartialMonthCheckpoints(
+        monthEndCheckpoints(spyBars, config.startDate, config.endDate),
+        todayIso,
+      )
+    : monthEndCheckpoints(spyBars, config.startDate, config.endDate);
 
   // --- Universe bars (one full series per ticker)
   let barFetchFailures = 0;

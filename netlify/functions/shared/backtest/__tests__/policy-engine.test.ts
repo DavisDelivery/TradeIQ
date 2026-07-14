@@ -7,6 +7,7 @@ import { describe, it, expect } from 'vitest';
 import {
   runPolicyBacktest,
   monthEndCheckpoints,
+  dropPartialMonthCheckpoints,
   spearman,
   pctlAmong,
   DEFAULT_POLICY_CONFIG,
@@ -232,5 +233,34 @@ describe('policy-engine — helpers', () => {
     // strictly ascending, one per month
     const months = cps.map((d) => d.slice(0, 7));
     expect(new Set(months).size).toBe(months.length);
+  });
+
+  it('dropPartialMonthCheckpoints removes the phantom moving checkpoint of the current month', () => {
+    const cps = ['2026-05-29', '2026-06-30', '2026-07-13'];
+    expect(dropPartialMonthCheckpoints(cps, '2026-07-14')).toEqual(['2026-05-29', '2026-06-30']);
+    // On the 1st of a new month, the prior month-end is complete and kept.
+    expect(dropPartialMonthCheckpoints(['2026-06-30', '2026-07-31'], '2026-08-01')).toEqual([
+      '2026-06-30',
+      '2026-07-31',
+    ]);
+  });
+
+  it('minCalendarDays override lets a legitimately short live window simulate', () => {
+    const spy = mkBars('2026-06-01', 30, up(400, 1.0005));
+    const { startDate, endDate } = {
+      startDate: new Date(spy[0].t).toISOString().slice(0, 10),
+      endDate: new Date(spy[spy.length - 1].t).toISOString().slice(0, 10),
+    };
+    const inputs: PolicyInputs = {
+      tickers: [{ ticker: 'WIN', bars: mkBars('2024-01-02', 700, up(100, 1.002)) }],
+      spyBars: spy,
+      checkpoints: monthEndCheckpoints(spy, startDate, endDate),
+      config: { ...DEFAULT_POLICY_CONFIG, startDate, endDate, enterPctl: 0, exitPctl: 0, regimeMode: 'none' as const, minCalendarDays: 5 },
+    };
+    expect(() => runPolicyBacktest(inputs)).not.toThrow();
+    // and without the override the guard still protects backtests
+    expect(() =>
+      runPolicyBacktest({ ...inputs, config: { ...inputs.config, minCalendarDays: undefined } }),
+    ).toThrow(/calendar too short/);
   });
 });
