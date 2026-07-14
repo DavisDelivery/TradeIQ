@@ -27,7 +27,7 @@ import { useStockDetail } from '../../hooks/useStockDetail.js';
 import { StockDetailHero } from './StockDetailHero.jsx';
 import { ThesisParagraph } from './ThesisParagraph.jsx';
 import { FablePillarsSection } from './FablePillarsSection.jsx';
-import { DetailPriceChart } from './DetailPriceChart.jsx';
+import { AdvancedPriceChart } from './AdvancedPriceChart.jsx';
 import { RelativeStrengthChart } from './RelativeStrengthChart.jsx';
 import { FundamentalsChart } from './FundamentalsChart.jsx';
 import { KeyMetricsPanel } from './KeyMetricsPanel.jsx';
@@ -89,7 +89,17 @@ export function StockDetailPanel({ board, ticker, row }) {
         />
       )}
 
-      <DetailPriceChart ticker={ticker} />
+      <AdvancedPriceChart
+        ticker={ticker}
+        priceLines={
+          isFable && row?.entry
+            ? [
+                { price: row.entry.pivot, color: '#38bdf8', title: 'entry pivot' },
+                { price: row.entry.stop, color: '#ff5577', title: 'stop' },
+              ]
+            : []
+        }
+      />
       <KeyMetricsPanel ticker={ticker} />
       <RelativeStrengthChart ticker={ticker} />
       <FundamentalsChart ticker={ticker} />
