@@ -68,10 +68,12 @@ describe('StockDetailPanel', () => {
     expect(screen.getByRole('heading', { name: 'NVDA' })).toBeInTheDocument();
     // Thesis arrives from the williams-rationale endpoint.
     await waitFor(() => expect(screen.getByText(/No actionable Williams setup/)).toBeInTheDocument());
-    // All seven staged sections render in order.
-    for (const title of ['Price Chart', 'Key Metrics', 'Relative Strength', 'Fundamentals', 'Catalysts', 'Risk Callouts', 'Score Breakdown']) {
+    // All seven staged sections render in order. (The chart section's
+    // header is 'Chart' since the AdvancedPriceChart upgrade.)
+    for (const title of ['Chart', 'Key Metrics', 'Relative Strength', 'Fundamentals', 'Catalysts', 'Risk Callouts', 'Score Breakdown']) {
       expect(screen.getByText(title)).toBeInTheDocument();
     }
+    expect(screen.getByTestId('advanced-price-chart')).toBeInTheDocument();
   });
 
   it('williams: hits ONLY the williams-rationale endpoint (+ stock-detail), not lynch/target', async () => {
