@@ -366,6 +366,14 @@
   to = "/.netlify/functions/fable-board"
   status = 200
 
+# FABLE-2 — exploration log reader (reports/fable2/protocol.md). The
+# exploration RUNNER has no /api alias on purpose: fire it at its raw
+# /.netlify/functions/fable2-explore-background path (train-clamped).
+[[redirects]]
+  from = "/api/fable2-explorations"
+  to = "/.netlify/functions/fable2-explorations"
+  status = 200
+
 # SPA fallback
 [[redirects]]
   from = "/*"
