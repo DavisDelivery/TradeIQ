@@ -94,11 +94,22 @@ export async function loadPolicyInputs(opts: LoadPolicyInputsOpts): Promise<Load
   const log = opts.logger;
   const entries = inIndex(universe);
 
-  // --- SPY full series (pit-cached; endDate is historical for train runs)
-  const spyBars = (await pitCacheWrap(
-    { provider: 'polygon', dataClass: 'bars', ticker: SPY, asOfDate: config.endDate, extra: `from=${warmupFrom}:fable2-full` },
-    () => getDailyBars(SPY, warmupFrom, config.endDate),
-  )) as FableBar[];
+  // Live-window guard (track-3 M1 lesson): a bar window ending today or
+  // later is STILL GROWING — caching it would freeze a truncated series
+  // under a key tomorrow's reads won't correct within the same day. The
+  // live forward tracker runs with endDate = today, so bypass the pit
+  // cache entirely for such windows; historical runs cache as before.
+  const todayIso = new Date().toISOString().slice(0, 10);
+  const liveWindow = config.endDate >= todayIso;
+
+  // --- SPY full series (pit-cached only for immutable historical windows)
+  const fetchSpy = () => getDailyBars(SPY, warmupFrom, config.endDate);
+  const spyBars = (liveWindow
+    ? await fetchSpy()
+    : await pitCacheWrap(
+        { provider: 'polygon', dataClass: 'bars', ticker: SPY, asOfDate: config.endDate, extra: `from=${warmupFrom}:fable2-full` },
+        fetchSpy,
+      )) as FableBar[];
   if (!spyBars || spyBars.length < 500) {
     throw new Error(`policy-data: SPY series too short (${spyBars?.length ?? 0})`);
   }
@@ -109,10 +120,13 @@ export async function loadPolicyInputs(opts: LoadPolicyInputsOpts): Promise<Load
   const tickers: PolicyTickerData[] = (
     await pool(entries, opts.concurrency ?? 8, async (e) => {
       try {
-        const bars = (await pitCacheWrap(
-          { provider: 'polygon', dataClass: 'bars', ticker: e.ticker, asOfDate: config.endDate, extra: `from=${warmupFrom}:fable2-full` },
-          () => getDailyBars(e.ticker, warmupFrom, config.endDate),
-        )) as FableBar[];
+        const fetchOne = () => getDailyBars(e.ticker, warmupFrom, config.endDate);
+        const bars = (liveWindow
+          ? await fetchOne()
+          : await pitCacheWrap(
+              { provider: 'polygon', dataClass: 'bars', ticker: e.ticker, asOfDate: config.endDate, extra: `from=${warmupFrom}:fable2-full` },
+              fetchOne,
+            )) as FableBar[];
         if (!bars || bars.length < FABLE_CONSTANTS.MIN_BARS) return null;
         return { ticker: e.ticker, bars } as PolicyTickerData;
       } catch {
@@ -149,18 +163,22 @@ export async function loadPolicyInputs(opts: LoadPolicyInputsOpts): Promise<Load
   }
 
   await pool(work, 4, async (w) => {
-    const txs = (await pitCacheWrap(
-      { provider: 'finnhub', dataClass: 'insider', ticker: w.t.ticker, asOfDate: w.cp, extra: 'daysBack=200:fable' },
-      async () => {
-        insiderFetches++;
-        const status = await getFinnhubInsiderTransactionsWithStatus(w.t.ticker, 200, { asOfDate: w.cp });
-        if (status.rateLimitExhausted || status.errorMessage) {
-          insiderFailures++;
-          throw new Error(`fable2 insider fetch failed ${w.t.ticker}@${w.cp}: ${status.errorMessage ?? 'rate-limit exhausted'}`);
-        }
-        return status.data;
-      },
-    )) as FableInsiderTx[];
+    const loader = async () => {
+      insiderFetches++;
+      const status = await getFinnhubInsiderTransactionsWithStatus(w.t.ticker, 200, { asOfDate: w.cp });
+      if (status.rateLimitExhausted || status.errorMessage) {
+        insiderFailures++;
+        throw new Error(`fable2 insider fetch failed ${w.t.ticker}@${w.cp}: ${status.errorMessage ?? 'rate-limit exhausted'}`);
+      }
+      return status.data;
+    };
+    // A checkpoint on/after today is still-forming — never pit-cache it.
+    const txs = (w.cp >= todayIso
+      ? await loader().catch(() => [])
+      : await pitCacheWrap(
+          { provider: 'finnhub', dataClass: 'insider', ticker: w.t.ticker, asOfDate: w.cp, extra: 'daysBack=200:fable' },
+          loader,
+        )) as FableInsiderTx[];
     w.t.insiderByCheckpoint![w.cpIdx] = txs ?? [];
   });
 

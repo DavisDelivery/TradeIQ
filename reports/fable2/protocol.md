@@ -168,3 +168,28 @@ Campaign integrity: exploration 20/20 budget, all runs logged, holdout
 touched exactly once, config frozen before the holdout endpoint existed,
 no constant changed after freeze. runIds: train fbl2_20_cand_insider_live,
 holdout fbl2h_confirmatory.
+
+---
+
+## APPENDIX B — THE LIVE HORSE RACE (pre-registered 2026-07-14, Chad's call)
+
+Chad's ruling on the insider pillar (it overlaps his app's pre-existing
+insider metric, entering FABLE via research convergence AND the
+deliberate data-availability constraint): settle it on the live tape,
+not with another backtest — the holdout is spent and stays spent.
+
+Two variants of the identical frozen construction paper-trade daily vs
+SPY (collection `fable2LiveTrack`, engine re-simulated from inception
+each run, live-window cache guard active, no lookahead possible):
+
+- **A "insider-live"** — the frozen APPENDIX A system exactly.
+- **B "insider-free"** — same construction, insider pillar off (its
+  train twin fbl2_16 scored +62.9pp vs A's +25.3pp; never holdout-run).
+
+Inception: books seeded at the 2026-06-30 checkpoint (disclosed
+backfill of two weeks); genuinely live from 2026-07-14. Referee rule,
+frozen now: **after 6 months of live tracking (2027-01-14), the variant
+with the higher net return SHIPS AS THE BOARD, provided its live excess
+vs SPY is positive; if both trail SPY live, FABLE-2 demotes to the same
+labelled-screener status as v1 and the VALIDATED chip never appears.**
+No mid-race tuning of either variant; the race doc is append-only.
