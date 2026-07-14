@@ -10,14 +10,11 @@
 
 import React, { useEffect, useMemo, useState } from 'react';
 import { VerdictChip } from './components/VerdictChip.jsx';
+import { MasterDetail } from './layout/MasterDetail.jsx';
+import { StockDetailPanel } from './components/detail/StockDetailPanel.jsx';
+import { FABLE_LEGEND, FABLE_ENTRY_LEGEND } from './components/detail/FablePillarsSection.jsx';
 
-const PILLARS = [
-  ['ascent', 'Ascent', 'weighted relative strength (0.4·3m + 0.2·6m/9m/12m)'],
-  ['smoothPath', 'Smooth Path', 'frog-in-the-pan smoothness + idiosyncratic momentum IR'],
-  ['highGround', 'High Ground', 'proximity to the 52-week high'],
-  ['coiledSpring', 'Coiled Spring', 'ATR/range contraction + volume dry-up, extension-damped'],
-  ['insiderEdge', 'Insider Edge', 'opportunistic Form-4 cluster buying, 180d decay'],
-];
+const PILLARS = Object.entries(FABLE_LEGEND).map(([key, m]) => [key, m.label, m.short]);
 
 const REGIME_STYLES = {
   offense: 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300',
@@ -43,7 +40,7 @@ function PillarBar({ value }) {
   );
 }
 
-function FableCard({ row, rank }) {
+function FableCard({ row, rank, onOpen }) {
   const [open, setOpen] = useState(false);
   const d = row.diagnostics || {};
   return (
@@ -100,8 +97,40 @@ function FableCard({ row, rank }) {
             days without re-qualifying; composite {row.composite}. Screener rank only — the
             pre-committed backtest measured NO_EDGE vs SPY (see board note).
           </p>
+          <button
+            onClick={() => onOpen?.(row)}
+            className="mt-1 w-full rounded-lg border border-sky-500/40 bg-sky-500/10 px-3 py-2 text-xs font-medium text-sky-300 hover:bg-sky-500/20"
+          >
+            Full investor profile — chart · financials · company info →
+          </button>
         </div>
       )}
+    </div>
+  );
+}
+
+/** Board-level legend: what every pillar and entry stat means, in plain language. */
+function FableLegend() {
+  return (
+    <div className="rounded-xl border border-neutral-800 bg-neutral-900/60 p-4 space-y-3 text-[12px] leading-relaxed">
+      <div className="text-xs uppercase tracking-wide text-neutral-400">How to read this board</div>
+      {Object.values(FABLE_LEGEND).map((m) => (
+        <p key={m.label} className="text-neutral-400">
+          <span className="font-semibold text-neutral-200">{m.label}</span> — {m.plain}
+        </p>
+      ))}
+      <div className="border-t border-neutral-800 pt-2 space-y-2">
+        {FABLE_ENTRY_LEGEND.map((m) => (
+          <p key={m.key} className="text-neutral-400">
+            <span className="font-semibold text-neutral-200">{m.label}</span> — {m.plain}
+          </p>
+        ))}
+      </div>
+      <p className="border-t border-neutral-800 pt-2 text-neutral-500">
+        A stock only appears here at all if it passed the FOUNDATION gate: price above its rising
+        50/150/200-day averages, at least 30% off its 52-week low, within 25% of its 52-week high,
+        and positive 12-month momentum. The percentile ranks gate-passers against each other.
+      </p>
     </div>
   );
 }
@@ -110,6 +139,8 @@ export function FableView() {
   const [data, setData] = useState(null);
   const [err, setErr] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [selected, setSelected] = useState(null);
+  const [showLegend, setShowLegend] = useState(false);
 
   const load = async (force = false) => {
     setLoading(true);
@@ -133,18 +164,27 @@ export function FableView() {
   const picks = useMemo(() => data?.picks ?? [], [data]);
   const regime = data?.regime ?? null;
 
-  return (
+  const list = (
     <div className="mx-auto max-w-3xl space-y-4 p-3">
       <div className="flex flex-wrap items-center gap-2">
         <h1 className="text-xl font-bold text-neutral-100">FABLE</h1>
         <VerdictChip board="fable" />
         <button
-          onClick={() => load(true)}
+          onClick={() => setShowLegend(!showLegend)}
           className="ml-auto rounded-lg border border-neutral-700 px-3 py-1 text-xs text-neutral-300 hover:bg-neutral-800"
+          aria-expanded={showLegend}
+        >
+          {showLegend ? 'Hide legend' : 'Legend'}
+        </button>
+        <button
+          onClick={() => load(true)}
+          className="rounded-lg border border-neutral-700 px-3 py-1 text-xs text-neutral-300 hover:bg-neutral-800"
         >
           Rescan
         </button>
       </div>
+
+      {showLegend && <FableLegend />}
 
       <p className="text-xs leading-relaxed text-neutral-500">
         My board — designed from a blank slate for 30–170 day holds. A hard trend-template
@@ -194,9 +234,19 @@ export function FableView() {
 
       <div className="space-y-2">
         {picks.map((row, i) => (
-          <FableCard key={row.ticker} row={row} rank={i + 1} />
+          <FableCard key={row.ticker} row={row} rank={i + 1} onOpen={setSelected} />
         ))}
       </div>
     </div>
+  );
+
+  return (
+    <MasterDetail
+      selected={selected}
+      onClose={() => setSelected(null)}
+      list={list}
+      detail={selected ? <StockDetailPanel board="fable" ticker={selected.ticker} row={selected} /> : null}
+      closeLabel="Close FABLE detail"
+    />
   );
 }

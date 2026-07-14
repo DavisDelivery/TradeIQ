@@ -35,6 +35,24 @@ function VerdictPill({ verdict }) {
 export function ScoreBadge({ board, rationale, row }) {
   const direction = rationale?.direction ?? row?.direction ?? null;
 
+  if (board === 'fable') {
+    // FABLE: percentile among gate-passers is the display number.
+    const pctl = row?.percentile ?? null;
+    const composite = row?.composite ?? null;
+    return (
+      <div className="flex items-baseline gap-2">
+        {pctl != null && (
+          <span className="font-mono tabular-nums text-2xl font-semibold leading-none text-neutral-100">
+            {Math.round(pctl)}
+          </span>
+        )}
+        {composite != null && (
+          <span className="font-mono tabular-nums text-xs text-neutral-500">({composite} comp)</span>
+        )}
+      </div>
+    );
+  }
+
   if (board === 'target') {
     const tier = rationale?.tier ?? row?.tier ?? null;
     const composite = rationale?.composite ?? row?.composite ?? null;
