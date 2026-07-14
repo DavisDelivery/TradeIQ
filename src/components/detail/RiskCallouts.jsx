@@ -40,7 +40,9 @@ export function RiskCallouts({ board, ticker }) {
 
       {!q && (
         <div className="text-[11px] font-mono uppercase tracking-widest text-neutral-600">
-          target composite — no falsifiable per-component callouts
+          {board === 'fable'
+            ? 'risk is mechanical here — 12% stop, exit below 60th pctile, 126-day max hold'
+            : 'target composite — no falsifiable per-component callouts'}
         </div>
       )}
 

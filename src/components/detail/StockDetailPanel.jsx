@@ -26,6 +26,7 @@ import { useTargetRationale } from '../../hooks/useTargetRationale.js';
 import { useStockDetail } from '../../hooks/useStockDetail.js';
 import { StockDetailHero } from './StockDetailHero.jsx';
 import { ThesisParagraph } from './ThesisParagraph.jsx';
+import { FablePillarsSection } from './FablePillarsSection.jsx';
 import { DetailPriceChart } from './DetailPriceChart.jsx';
 import { RelativeStrengthChart } from './RelativeStrengthChart.jsx';
 import { FundamentalsChart } from './FundamentalsChart.jsx';
@@ -38,6 +39,7 @@ export function StockDetailPanel({ board, ticker, row }) {
   const isWilliams = board === 'williams';
   const isLynch = board === 'lynch';
   const isTarget = board === 'target';
+  const isFable = board === 'fable'; // no server rationale — pillars section renders from the row
 
   // Mount all three; enabled-gating means only the active board's endpoint is
   // hit (Rules of Hooks: call unconditionally, gate via `enabled`).
@@ -54,11 +56,13 @@ export function StockDetailPanel({ board, ticker, row }) {
   // williams/lynch carry a server-generated thesis string; the target board's
   // composite thesis lives on the board row (rationale endpoint returns the
   // per-analyst breakdown, not prose).
-  const thesis = isTarget
-    ? (row?.rationale ?? null)
-    : (rationale?.thesis ?? null);
-  const thesisLoading = !isTarget && rationaleQuery.isLoading;
-  const thesisError = !isTarget && rationaleQuery.isError;
+  const thesis = isFable
+    ? null
+    : isTarget
+      ? (row?.rationale ?? null)
+      : (rationale?.thesis ?? null);
+  const thesisLoading = !isTarget && !isFable && rationaleQuery.isLoading;
+  const thesisError = !isTarget && !isFable && rationaleQuery.isError;
 
   return (
     <div className="space-y-4" data-testid="stock-detail-panel" data-board={board}>
@@ -71,13 +75,19 @@ export function StockDetailPanel({ board, ticker, row }) {
         thesis={thesis}
       />
 
-      <ThesisParagraph
-        thesis={thesis}
-        loading={thesisLoading}
-        error={thesisError}
-        onRetry={() => rationaleQuery.refetch()}
-        board={board}
-      />
+      {isFable ? (
+        // FABLE: my pillars at the top (Chad's spec), then the full
+        // investor profile. No server thesis/rationale endpoint.
+        <FablePillarsSection row={row} />
+      ) : (
+        <ThesisParagraph
+          thesis={thesis}
+          loading={thesisLoading}
+          error={thesisError}
+          onRetry={() => rationaleQuery.refetch()}
+          board={board}
+        />
+      )}
 
       <DetailPriceChart ticker={ticker} />
       <KeyMetricsPanel ticker={ticker} />
@@ -85,7 +95,7 @@ export function StockDetailPanel({ board, ticker, row }) {
       <FundamentalsChart ticker={ticker} />
       <CatalystsFeed ticker={ticker} />
       <RiskCallouts board={board} ticker={ticker} />
-      <ScoreBreakdown board={board} ticker={ticker} />
+      {!isFable && <ScoreBreakdown board={board} ticker={ticker} />}
     </div>
   );
 }
