@@ -84,3 +84,49 @@ design horizon. v2's engine tests the ACTUAL policy.
 - Horizon-matched rank-IC (63d/126d) in run metrics.
 - Exploration runner with endDate clamp + auto-append to the log.
 - Reuses the PIT caches (bars + insider) already warmed by v1's runs.
+
+---
+
+## APPENDIX A — FROZEN CONFIG (2026-07-14, exploration closed at 20/20)
+
+Chosen: the board AS DESIGNED — insider pillar LIVE — because the
+holdout must test the system that would actually ship, not its
+best-scoring lab variant. The insider-off twin (fbl2_16, +62.88pp) vs
+the identical insider-live run (fbl2_20, +25.26pp) differ by 37pp from
+a 0.2-weight pillar: documented FRAGILITY of a 15-slot book to
+entry-band reshuffles. The honest train estimate of the shipped system
+is fbl2_20's, not fbl2_16's.
+
+```json
+{
+  "universe": "sp500",
+  "insiderMode": "live",
+  "config": {
+    "startDate": "<window>", "endDate": "<window>",
+    "initialCapital": 100000,
+    "enterPctl": 90, "exitPctl": 60,
+    "maxHoldDays": 126, "stopPct": 0.12,
+    "slippageBpsPerLeg": 10,
+    "sizeAlpha": 1.0,
+    "maxPositionPct": 0.20, "maxPositions": 15,
+    "regimeMode": "none"
+  }
+}
+```
+
+Train reference (fbl2_20_cand_insider_live, 2018-01-01→2023-12-29):
+net +102.10% vs SPY +76.85% = **+25.26pp**; rank-IC63 +0.029; IC126
++0.029; 333 trades; monthly-active t 0.474; maxDD 20.59%; Sharpe (see
+doc). Sub-window stability measured on the insider-off twin (+10.4 /
++5.0pp both positive).
+
+Pre-holdout expectation, stated for the record: with train t at 0.47
+(n=71 months), the combined t≥2.5 criterion is nearly unreachable —
+the holdout would need ~+3%/month active for 30 straight months. The
+bar is doing its job: absent overwhelming evidence, FABLE-2 will NOT
+claim validated alpha even if it beats SPY out-of-sample; it would
+ship as a screener with measured OOS results noted, and only the
+6-month live forward test could change that. No third outcome.
+
+The single confirmatory holdout run (2024-01-01 → 2026-06-30) executes
+via a dedicated endpoint with this config HARDCODED. One shot.
