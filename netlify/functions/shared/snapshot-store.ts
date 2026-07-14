@@ -35,7 +35,8 @@ export type BoardName =
   | 'williams'
   | 'lynch'
   | 'earnings'
-  | 'fable';
+  | 'fable'
+  | 'crosses';
 
 export type UniverseKey =
   | 'sp500'
@@ -130,6 +131,9 @@ export const FRESHNESS_BUDGETS_MS: Record<BoardName, number> = {
   insider: 24 * 60 * 60_000,
   lynch: 24 * 60 * 60_000,
   fable: 26 * 60 * 60_000,
+  // crosses scan nightly after the close; 26h budget matches the other
+  // daily boards so weekends serve Friday's snapshot un-flagged.
+  crosses: 26 * 60 * 60_000,
 };
 
 // ====================================================================

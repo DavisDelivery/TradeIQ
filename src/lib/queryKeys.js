@@ -36,6 +36,10 @@ export const queryKeys = {
   insider: (universe, windowDays) =>
     ['tradeiq', 'insider', universe, windowDays ?? 90],
   williams: (universe) => ['tradeiq', 'williams', universe],
+  // Crosses is server-filtered by type + window, so the key carries both
+  // (same lesson as catalyst M1 / insider M2 — a key that omits a queryFn
+  // input silently serves the previous filter's rows within staleTime).
+  crosses: (type, days) => ['tradeiq', 'crosses', type ?? 'all', days ?? 365],
   lynch: (universe) => ['tradeiq', 'lynch', universe],
   earnings: (windowDays, universe) =>
     ['tradeiq', 'earnings', windowDays, universe ?? 'all'],
