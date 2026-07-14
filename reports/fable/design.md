@@ -181,3 +181,56 @@ null-cursor zombie fail-out in `recoverStuckBacktestRuns`;
 retry envelope on the insider PIT fetch. Every failure mode above was
 *visible* because failures throw instead of caching empties — the
 4t-W1c lesson, honored.
+
+---
+
+## VERDICT (2026-07-14) — the rule applied, no interpretation
+
+Run `bt_20260713215334_w80rb8` completed 2026-07-14T01:13:39Z, status
+`complete`, CLEAN: 84/84 rebalances, 2,018 trades, 42,703 scoring
+attempts, 31 ticker failures (0.07%), offline SPY cross-check matches
+the engine benchmark to the decimal (+107.90%), equity-curve total
+matches metrics to the decimal (+34.52%).
+
+| Criterion (frozen 2026-07-13) | Measured | Result |
+|---|---|---|
+| 1. Net total return > SPY | **+34.52%** vs SPY **+107.90%** (−73.38 pp) | **FAIL** |
+| 2. IC of composite vs fwd 1-mo returns > 0 | **−0.0173** | **FAIL** |
+| 3. t-stat of mean monthly active return ≥ 2.0 | mean −0.516%/mo, sd 3.637%, n=83 → **t = −1.29** | **FAIL** |
+
+Supporting metrics: Sharpe 0.317, Sortino 0.434, IR −0.441, maxDD
+33.0%, win rate 53.1%, profit factor —, CAGR ~4.3%.
+
+**VERDICT: NO_EDGE.** All three criteria failed — not marginally.
+Consequence per the binding rule: FABLE ships as a **labelled
+screener**, exactly like Target. The chip shows NO_EDGE with the
+measured spread; the tab copy says "screener, not edge"; nothing in the
+product claims validated alpha.
+
+### Honest post-mortem (analysis, not re-tuning)
+
+- The −73.4 pp echo of Target's −74.2 pp (and Williams' −73.4 pp) is
+  not a coincidence of implementation — three structurally different
+  selection systems, measured identically, all trail a 2018-2024 SPY
+  that compounded +107.9%. Monthly-rebalanced top-20 baskets net of
+  costs faced a market where cap-weighted mega-tech WAS the market's
+  return. The gate's cash-forcing (defense regimes, sparse-pass months)
+  protects drawdown little here (maxDD 33.0% ≈ SPY's) while forfeiting
+  the violent recoveries (2019, 2020-H2, 2023) that made the index.
+- The negative IC (−0.017) is the harder verdict: WITHIN gate-passers,
+  a higher composite did not rank next-month returns better than a
+  lower one. The published-anomaly premia (skip-month RS, FIP, 52w-high)
+  did not survive this universe/window/horizon at monthly granularity —
+  consistent with the post-publication-decay literature the design
+  itself cited as the expected outcome.
+- What survives: the FOUNDATION gate as a *descriptive* filter (100 of
+  498 names in a strong uptrend structure today is real information),
+  the insider overlay as color, and the regime banner. That is a
+  screener, and it is labelled as one.
+- No constants were touched after the first backtest was fired. The
+  measurement stands as designed.
+
+Predicted honest outcome (written before the run): "low-single-digit
+annual active return … if the backtest shows a monster edge, suspect
+the test." The actual result was worse than the honest prediction — and
+the discipline holds: measurement outranks narrative, including mine.

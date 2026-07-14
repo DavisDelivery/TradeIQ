@@ -106,17 +106,21 @@ export const BOARD_VERDICTS: Record<VerdictBoard, BoardVerdict> = {
   },
   fable: {
     board: 'fable',
-    status: 'PENDING',
-    window: '2018-01-31 → 2024-12-31, sp500, monthly, discrete — pre-committed in reports/fable/design.md',
-    excessVsSPYPp: null,
+    status: 'NO_EDGE',
+    window: '2018-01-31 → 2024-12-31, sp500, monthly, discreteSignalOnly, 20bps rt',
+    excessVsSPYPp: -73.4,
     excessVsQQQPp: null,
-    ic: null,
+    ic: -0.0173,
     rollingWindowsWon: null,
-    runId: null,
-    date: null,
+    runId: 'bt_20260713215334_w80rb8',
+    date: '2026-07-14',
     note:
-      'FABLE (Claude\'s board) — UNVALIDATED until the pre-committed backtest completes. ' +
-      'Rule: beats SPY net of 20bps rt AND IC>0 AND t≥2; fail any ⇒ NO_EDGE screener.',
+      'FABLE (Claude\'s board) — pre-committed rule applied (reports/fable/design.md): ' +
+      'net +34.5% vs SPY +107.9% (−73.4pp) FAIL; IC −0.0173 FAIL; monthly-active t −1.29 FAIL. ' +
+      'All three criteria failed ⇒ NO_EDGE. Clean run: 84/84 rebalances, 2,018 trades, ' +
+      '0.07% ticker-failure rate, offline SPY cross-check matches the engine to the decimal. ' +
+      'FABLE ships as a labelled screener (like Target) — the gate/pillars still describe ' +
+      'trend quality; they do not claim validated alpha over buy-and-hold.',
   },
 };
 

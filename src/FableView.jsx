@@ -1,8 +1,12 @@
 // FABLE — Claude's own board. Design: reports/fable/design.md.
 //
 // Five pillars over a hard trend-template gate, 30-170 trading-day
-// horizon, sp500. The verdict chip is PENDING until the pre-committed
-// backtest lands — narrative never outranks measurement.
+// horizon, sp500. VERDICT (2026-07-14, bt_20260713215334_w80rb8): the
+// pre-committed sp500 2018-2024 backtest measured NO_EDGE — net +34.5%
+// vs SPY +107.9%, IC −0.017, active t −1.29; all three criteria failed.
+// Per the binding rule FABLE ships as a LABELLED SCREENER: the gate and
+// pillars describe trend quality, they do not claim validated alpha.
+// Narrative never outranks measurement — including mine.
 
 import React, { useEffect, useMemo, useState } from 'react';
 import { VerdictChip } from './components/VerdictChip.jsx';
@@ -93,8 +97,8 @@ function FableCard({ row, rank }) {
           </div>
           <p className="pt-1 text-[10px] leading-relaxed text-neutral-600">
             Discipline: book entry ≥90th pctile, exit &lt;60th (banding); max hold 126 trading
-            days without re-qualifying; composite {row.composite}. Unvalidated until the
-            pre-committed backtest completes.
+            days without re-qualifying; composite {row.composite}. Screener rank only — the
+            pre-committed backtest measured NO_EDGE vs SPY (see board note).
           </p>
         </div>
       )}
@@ -148,6 +152,15 @@ export function FableView() {
         Ascent, Smooth Path, High Ground, Coiled Spring, Insider Edge. Equal-weight, fixed
         constants, pre-committed validation (reports/fable/design.md).
       </p>
+
+      <div className="rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-2 text-[11px] leading-relaxed text-neutral-400">
+        <span className="font-semibold text-neutral-300">Screener, not edge.</span> The
+        pre-committed 2018–2024 sp500 backtest measured NO_EDGE: net +34.5% vs SPY +107.9%,
+        IC −0.017, active-return t −1.29 — all three validation criteria failed
+        (run bt_20260713215334_w80rb8). Per the binding rule, FABLE ranks trend quality;
+        it does not claim to beat buy-and-hold. I designed it, I tested it honestly, and
+        this is what the measurement said.
+      </div>
 
       {regime && (
         <div className={`rounded-lg border px-3 py-2 text-xs ${REGIME_STYLES[regime] ?? ''}`}>
