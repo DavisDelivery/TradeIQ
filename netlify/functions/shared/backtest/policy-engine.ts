@@ -63,6 +63,13 @@ export interface PolicyConfig {
    *  'none'        — no regime gate.
    */
   regimeMode: 'entry-only' | 'cash' | 'none';
+  /**
+   * Sanity floor on the simulation calendar (default 100 trading days —
+   * right for multi-year backtests). The live forward tracker re-simulates
+   * from a recent inception, so its window is legitimately short; it sets
+   * this to a few days.
+   */
+  minCalendarDays?: number;
 }
 
 export const DEFAULT_POLICY_CONFIG: PolicyConfig = {
@@ -226,7 +233,7 @@ export function runPolicyBacktest(inputs: PolicyInputs): PolicyResult {
     spyCloseByDate.set(d, b.c);
     if (d >= config.startDate && d <= config.endDate) cal.push(d);
   }
-  if (cal.length < 100) {
+  if (cal.length < (config.minCalendarDays ?? 100)) {
     throw new Error(`policy-engine: calendar too short (${cal.length} days) — check spyBars/window`);
   }
   const calIdx = new Map(cal.map((d, i) => [d, i] as const));
@@ -559,4 +566,16 @@ export function monthEndCheckpoints(spyBars: FableBar[], startDate: string, endD
     byMonth.set(d.slice(0, 7), d); // ascending — last write wins
   }
   return Array.from(byMonth.values()).sort();
+}
+
+/**
+ * Drop checkpoints belonging to a month that is not over yet as of
+ * `todayIso`. Without this, a live window ending mid-month produces a
+ * phantom "month-end" at the latest bar — the tracker would re-trade a
+ * moving checkpoint every day and cold-fetch insider data at an
+ * uncacheable today-date (live race day-1 failure, 2026-07-14).
+ */
+export function dropPartialMonthCheckpoints(checkpoints: string[], todayIso: string): string[] {
+  const currentMonth = todayIso.slice(0, 7);
+  return checkpoints.filter((cp) => cp.slice(0, 7) < currentMonth);
 }

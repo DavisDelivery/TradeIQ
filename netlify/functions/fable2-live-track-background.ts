@@ -46,6 +46,9 @@ const RACE_CONFIG_BASE: Omit<PolicyConfig, 'endDate'> = {
   maxPositionPct: 0.20,
   maxPositions: 15,
   regimeMode: 'none',
+  // The race window is legitimately young (inception 2026-06-30); the
+  // default 100-day floor is a backtest guard, not a tracker one.
+  minCalendarDays: 5,
 };
 
 const VARIANTS = [
