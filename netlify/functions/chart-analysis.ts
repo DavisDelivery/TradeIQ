@@ -127,19 +127,45 @@ export const handler: Handler = async (event) => {
 
   try {
     const to = new Date().toISOString().slice(0, 10);
-    const from = new Date(Date.now() - lookback * 86400000).toISOString().slice(0, 10);
-    const bars = await getDailyBars(ticker, from, to);
+    // Indicators need warmup data BEFORE the visible window. A 200-day SMA is
+    // null until it has seen 200 trading days, so fetching only `lookback`
+    // calendar days (~124 trading days at the default 180) left sma200 null for
+    // EVERY visible bar — the 200 line never drew and the tooltip/AI read only
+    // ever saw SMA20/50. Fetch the display window PLUS a ~200-trading-day warmup
+    // (365 calendar days ≈ 250 trading days), compute indicators over the full
+    // series, then slice everything back to the requested display window.
+    const SMA_WARMUP_DAYS = 365;
+    const displayFromMs = Date.now() - lookback * 86400000;
+    const from = new Date(displayFromMs - SMA_WARMUP_DAYS * 86400000).toISOString().slice(0, 10);
+    const allBars = await getDailyBars(ticker, from, to);
+
+    const allCloses = allBars.map((b) => b.c);
+    const allSma20 = sma(allCloses, 20);
+    const allSma50 = sma(allCloses, 50);
+    const allSma200 = sma(allCloses, 200);
+    const allRsi14 = rsi(allCloses, 14);
+    const allMacd = macd(allCloses);
+
+    // Trim the warmup bars back off: they fed the indicators but must not be
+    // drawn. di is the first bar inside the visible window; slicing all arrays
+    // at di keeps price ↔ indicator alignment intact.
+    const displayStart = allBars.findIndex((b) => b.t >= displayFromMs);
+    const di = displayStart < 0 ? allBars.length : displayStart;
+    const bars = allBars.slice(di);
     if (bars.length < 30) {
-      log.warn('insufficient_data', { ticker, bars: bars.length, durationMs: Date.now() - start });
+      log.warn('insufficient_data', {
+        ticker, bars: bars.length, warmupBars: allBars.length, durationMs: Date.now() - start,
+      });
       return json(200, { ok: false, error: `insufficient data for ${ticker} (${bars.length} bars)` });
     }
 
-    const closes = bars.map((b) => b.c);
-    const sma20 = sma(closes, 20);
-    const sma50 = sma(closes, 50);
-    const sma200 = sma(closes, 200);
-    const rsi14 = rsi(closes, 14);
-    const { macd: macdLine, signal: macdSignal, hist: macdHist } = macd(closes);
+    const sma20 = allSma20.slice(di);
+    const sma50 = allSma50.slice(di);
+    const sma200 = allSma200.slice(di);
+    const rsi14 = allRsi14.slice(di);
+    const macdLine = allMacd.macd.slice(di);
+    const macdSignal = allMacd.signal.slice(di);
+    const macdHist = allMacd.hist.slice(di);
 
     const latest = bars[bars.length - 1];
     const prev = bars[bars.length - 2];
