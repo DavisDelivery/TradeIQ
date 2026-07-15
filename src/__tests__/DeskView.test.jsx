@@ -27,6 +27,10 @@ vi.mock('../hooks/useLiveQuotes.js', () => ({
 vi.mock('../hooks/useDeskStats.js', () => ({ useDeskStats: (...a) => mockUseDeskStats(...a) }));
 vi.mock('../hooks/useEarningsRadar.js', () => ({ useEarningsRadar: (...a) => mockUseEarningsRadar(...a) }));
 vi.mock('../hooks/useTargetBoard.js', () => ({ useTargetBoard: (...a) => mockUseTargetBoard(...a) }));
+// BrokerPanel uses a raw useQuery (needs a QueryClientProvider this harness
+// deliberately omits) — stub it; it renders null until a broker sync exists
+// anyway, and has no assertions here.
+vi.mock('../components/desk/BrokerPanel.jsx', () => ({ BrokerPanel: () => null }));
 vi.mock('../hooks/useProphet.js', () => ({ useProphet: (...a) => mockUseProphet(...a) }));
 // The focus workspace's heavy children are covered by their own suites.
 vi.mock('../components/PriceChart.jsx', () => ({

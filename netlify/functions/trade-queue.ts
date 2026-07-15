@@ -13,12 +13,12 @@
 //         (Firestore tradeLog — the app's live subscription picks it up),
 //         source-tagged to the originating board.
 //
-// AUTH — deliberate departure from the rest of the app's open-mutation
-// posture: this queue drives REAL-MONEY orders, so every mutation requires
-// the shared secret in the `x-trade-queue-token` header, checked against
-// TRADE_QUEUE_TOKEN. FAIL-CLOSED: if the env var is unset, mutations 501
-// rather than default open. The owner enters the token once in Settings
-// (sent by the queue UI) and gives the same token to the executor agent.
+// AUTH — login, not secrets (owner's explicit preference): every mutation
+// requires a Firebase ID token from a Google sign-in whose email is on the
+// OWNER_EMAILS allowlist (shared/auth.ts). FAIL-CLOSED when unconfigured.
+// Consequence: the executor agent cannot PATCH fills unattended — fills are
+// confirmed with one tap ("Mark filled") in the Journal queue panel, behind
+// the same login. That keeps a human on every money-adjacent write.
 //
 // State machine (one-way, no resurrection):
 //   queued -> executed | cancelled | expired
@@ -27,6 +27,7 @@
 
 import type { Handler } from '@netlify/functions';
 import { getAdminDb } from './shared/firebase-admin';
+import { verifyOwnerBearer } from './shared/auth';
 import { logger } from './shared/logger';
 
 const log = logger.child({ fn: 'trade-queue' });
@@ -62,18 +63,7 @@ function json(status: number, body: unknown) {
   };
 }
 
-function mutationAuth(event: { headers: Record<string, string | undefined> }): { ok: boolean; res?: any } {
-  const secret = process.env.TRADE_QUEUE_TOKEN;
-  if (!secret) {
-    // Fail closed — a money-adjacent mutation surface must never default open.
-    return { ok: false, res: json(501, { ok: false, error: 'TRADE_QUEUE_TOKEN not configured — queue mutations disabled' }) };
-  }
-  const supplied = event.headers['x-trade-queue-token'] ?? event.headers['X-Trade-Queue-Token'];
-  if (supplied !== secret) {
-    return { ok: false, res: json(401, { ok: false, error: 'invalid trade-queue token' }) };
-  }
-  return { ok: true };
-}
+
 
 export const handler: Handler = async (event) => {
   const db = getAdminDb();
@@ -102,9 +92,9 @@ export const handler: Handler = async (event) => {
       return json(200, { ok: true, rows, count: rows.length });
     }
 
-    // ---------------- mutations: token required ----------------
-    const auth = mutationAuth(event as any);
-    if (!auth.ok) return auth.res;
+    // ---------------- mutations: signed-in owner required ----------------
+    const auth = await verifyOwnerBearer((event.headers ?? {}) as Record<string, string | undefined>);
+    if (!auth.ok) return json(auth.status ?? 401, { ok: false, error: auth.error });
 
     let body: any = {};
     try { body = JSON.parse(event.body ?? '{}'); } catch {

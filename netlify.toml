@@ -442,6 +442,12 @@
   to = "/.netlify/functions/trade-queue"
   status = 200
 
+# Broker snapshot sync — agentic account balance/positions for the Desk.
+[[redirects]]
+  from = "/api/broker-sync"
+  to = "/.netlify/functions/broker-sync"
+  status = 200
+
 # SPA fallback
 [[redirects]]
   from = "/*"

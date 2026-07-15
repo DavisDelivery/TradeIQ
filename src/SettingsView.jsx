@@ -1,44 +1,46 @@
 import React, { useState } from 'react';
 import { AlertTriangle, ShoppingCart } from 'lucide-react';
 import { StatusDot } from './components/Badges.jsx';
-import { TQ_TOKEN_KEY } from './components/QueueOrderButton.jsx';
+import { signIn, signOutUser, onAuthChange } from './lib/auth.js';
 
-// Agentic Trading (runbook Phase 2): the shared secret that authorizes
-// trade-queue mutations. The server fails CLOSED without it (mutations
-// 501 until TRADE_QUEUE_TOKEN is configured in the Netlify env); this
-// field stores the matching token locally so the Queue Buy buttons and
-// the Journal queue panel can mutate. The execution agent uses the same
-// token via the x-trade-queue-token header.
+// Agentic Trading — Google sign-in (owner preference: a login, no shared
+// secrets). Queue mutations send the Firebase ID token; the server
+// verifies it and requires the email to be on the OWNER_EMAILS allowlist
+// (Netlify env, fail-closed). The executor agent reports fills in chat;
+// you confirm them with one tap in the Journal's queue panel — every
+// money-adjacent write stays behind this login.
 function AgenticTradingSettings() {
-  const [token, setToken] = useState(() => {
-    try { return localStorage.getItem(TQ_TOKEN_KEY) ?? ''; } catch { return ''; }
-  });
-  const [saved, setSaved] = useState(false);
-  const save = () => {
-    try { localStorage.setItem(TQ_TOKEN_KEY, token.trim()); } catch { /* private mode */ }
-    setSaved(true);
-    setTimeout(() => setSaved(false), 1500);
+  const [user, setUser] = React.useState(undefined); // undefined = loading
+  const [err, setErr] = React.useState('');
+  React.useEffect(() => onAuthChange((u) => setUser(u ?? null)), []);
+  const doSignIn = async () => {
+    setErr('');
+    try { await signIn(); } catch (e) { setErr(String(e?.message || e)); }
   };
   return (
     <div className="border border-neutral-800 p-5">
       <h3 className="font-serif text-lg mb-1 flex items-center gap-2"><ShoppingCart className="h-4 w-4 text-neutral-500" /> Agentic Trading</h3>
       <p className="text-[11px] text-neutral-500 font-mono mb-3 leading-relaxed">
-        Shared secret for the trade queue. Queue mutations are token-gated and fail closed —
-        set TRADE_QUEUE_TOKEN in the Netlify env, paste the same value here, and give it to the
-        execution agent. Queuing an order IS the approval; the agent only executes queued rows.
+        Sign in with Google to queue orders and confirm fills. The server only accepts
+        accounts on its owner allowlist — no tokens to copy, nothing to store.
       </p>
-      <div className="flex items-center gap-2 max-w-md">
-        <input
-          type="password"
-          value={token}
-          onChange={(e) => setToken(e.target.value)}
-          placeholder="trade-queue token"
-          className="flex-1 h-9 px-2.5 bg-neutral-950 border border-neutral-700 text-[12px] font-mono text-neutral-200 placeholder:text-neutral-600 outline-none focus:border-neutral-500"
-        />
-        <button type="button" onClick={save} className="px-3 h-9 border border-neutral-700 text-[11px] font-mono uppercase tracking-widest text-neutral-300 hover:border-neutral-500">
-          {saved ? 'Saved ✓' : 'Save'}
+      {user === undefined && <div className="text-[11px] font-mono text-neutral-600">checking sign-in…</div>}
+      {user === null && (
+        <button type="button" onClick={doSignIn}
+          className="px-4 h-9 border border-neutral-700 text-[11px] font-mono uppercase tracking-widest text-neutral-200 hover:border-neutral-500">
+          Sign in with Google
         </button>
-      </div>
+      )}
+      {user && (
+        <div className="flex items-center gap-3 flex-wrap">
+          <span className="text-[12px] font-mono text-emerald-300">✓ {user.email}</span>
+          <button type="button" onClick={() => signOutUser()}
+            className="px-3 h-8 border border-neutral-700 text-[10px] font-mono uppercase tracking-widest text-neutral-400 hover:border-neutral-500">
+            Sign out
+          </button>
+        </div>
+      )}
+      {err && <div className="mt-2 text-[11px] font-mono text-rose-400">{err}</div>}
     </div>
   );
 }

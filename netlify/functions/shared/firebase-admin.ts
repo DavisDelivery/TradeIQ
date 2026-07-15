@@ -15,8 +15,9 @@
 //   const db = getAdminDb();
 //   await db.collection('boardSnapshots').doc(...).set(...);
 
-import { initializeApp, cert, getApps, type App } from 'firebase-admin/app';
+import { initializeApp, cert, getApps, getApp, type App } from 'firebase-admin/app';
 import { getFirestore, type Firestore } from 'firebase-admin/firestore';
+import { getAuth, type Auth } from 'firebase-admin/auth';
 
 let _app: App | null = null;
 let _db: Firestore | null = null;
@@ -64,4 +65,13 @@ export function getAdminDb(): Firestore {
 export function _resetAdminForTest(): void {
   _app = null;
   _db = null;
+}
+
+
+/** Admin Auth on the same service-account app — used to verify Firebase ID
+ *  tokens for login-gated endpoints (trade queue). */
+export function getAdminAuth(): Auth {
+  // Ensure the app is initialized (getAdminDb performs the init + env checks).
+  getAdminDb();
+  return getAuth(getApps().length ? getApp() : undefined);
 }
