@@ -109,10 +109,11 @@ export const handler: Handler = async (event) => {
       // Event index grouped by ticker (built once, kept in the checkpoint).
       let tickers = cp.cursor.tickers as string[] | undefined;
       if (!tickers) {
+        // Range on a single field only — no composite needed.
         const snap = await db.collection(VECTOR_COLLECTIONS.events)
           .where('date', '>=', VALIDATION.window.start)
           .where('date', '<=', VALIDATION.window.end)
-          .select('ticker').get();
+          .select('ticker', 'date').get();
         const set = new Set<string>();
         for (const d of snap.docs) set.add((d.data() as any).ticker);
         tickers = [...set].sort();
@@ -137,11 +138,17 @@ export const handler: Handler = async (event) => {
 
       for (; i < tickers.length && Date.now() - started < BUDGET_MS; i++) {
         const ticker = tickers[i];
-        const evSnap = await db.collection(VECTOR_COLLECTIONS.events)
-          .where('ticker', '==', ticker)
-          .where('date', '>=', VALIDATION.window.start)
-          .where('date', '<=', VALIDATION.window.end).get();
-        if (evSnap.empty) { cp.counters.tickersDone++; continue; }
+        // Composite-index-free: equality-only fetch, window-filter in
+        // memory (equality + range on different fields needs a composite
+        // index Firestore doesn't have — audit finding, would have
+        // FAILED_PRECONDITION'd every validation run).
+        const evSnapAll = await db.collection(VECTOR_COLLECTIONS.events)
+          .where('ticker', '==', ticker).get();
+        const evDocs = evSnapAll.docs.filter((d) => {
+          const dt = (d.data() as any).date as string;
+          return dt >= VALIDATION.window.start && dt <= VALIDATION.window.end;
+        });
+        if (!evDocs.length) { cp.counters.tickersDone++; continue; }
 
         let bars: StudyBar[];
         try {
@@ -153,7 +160,7 @@ export const handler: Handler = async (event) => {
         }
         if (bars.length < 30) { cp.counters.skippedNoBars++; continue; }
 
-        for (const doc of evSnap.docs) {
+        for (const doc of evDocs) {
           const e = doc.data() as any;
           const bench = e.sizeBucket === 'LARGE' ? spy : iwm;
           const res = carForEvent(bars, bench, e.date, HORIZON[e.type as CarRow['type']], e.sizeBucket);

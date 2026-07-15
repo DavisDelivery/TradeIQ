@@ -96,17 +96,14 @@ export const handler: Handler = async (event) => {
     // runs ever land in that path); startedAt for the inclusive view
     // (every run has a startedAt — written by the trigger).
     const orderField = includeIncomplete ? 'startedAt' : 'completedAt';
-    let query = db
+    // Composite-index-free: where('status') + orderBy needs a composite
+    // index that doesn't exist (?status= 500'd live; audit 2026-07-15).
+    // Over-fetch on the single-field order; the status filter below (which
+    // already existed for the no-param path) trims in memory.
+    const query = db
       .collection('backtestRuns')
       .orderBy(orderField, 'desc')
-      .limit(params.limit);
-    if (params.status !== undefined) {
-      query = db
-        .collection('backtestRuns')
-        .where('status', '==', params.status)
-        .orderBy(orderField, 'desc')
-        .limit(params.limit);
-    }
+      .limit(params.status !== undefined ? params.limit * 4 : params.limit);
     const snap = await query.get();
 
     const filterStatus: AllowedStatus | undefined = params.status;
@@ -137,7 +134,10 @@ export const handler: Handler = async (event) => {
         if (filterStatus !== undefined) return r.status === filterStatus;
         if (!includeIncomplete) return r.status === 'complete';
         return true;
-      });
+      })
+      // Trim the over-fetch (status path reads limit*4) back to the
+      // requested page size.
+      .slice(0, params.limit);
 
     log.info('response', {
       status: 200,

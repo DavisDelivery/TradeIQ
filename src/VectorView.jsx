@@ -290,7 +290,7 @@ export const VectorView = () => {
       {!feed.isLoading && events.length === 0 && !feed.error && (
         <div className="border border-neutral-800 p-10 text-center">
           <div className="text-neutral-500 font-mono text-sm mb-2">No events in the library yet.</div>
-          <div className="text-neutral-600 text-[11px] font-mono">The backfills populate this feed; live events appear the evening they print.</div>
+          <div className="text-neutral-600 text-[11px] font-mono">Backfills populate this feed. A scheduled live scanner is a named follow-up — until it ships, new events only land when a backfill runs.</div>
         </div>
       )}
       <div className="space-y-2">

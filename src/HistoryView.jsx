@@ -24,7 +24,11 @@ const BOARDS = [
 
 const UNIVERSES_PER_BOARD = {
   'target-board': ['sp500', 'ndx', 'dow', 'russell2k'],
-  prophet: ['sp500', 'ndx', 'dow', 'russell2k'],
+  // Prophet producers store under largecap/russell2k/all (see
+  // scan-prophet-{largecap,russell,all}-background) — the per-index keys
+  // were never written, so sp500/ndx/dow rendered "No snapshots yet"
+  // forever (audit 2026-07-15).
+  prophet: ['largecap', 'russell2k', 'all'],
   catalyst: ['sp500', 'ndx', 'dow', 'russell2k'],
   insider: ['sp500', 'ndx', 'dow', 'russell2k'],
   williams: ['sp500', 'ndx', 'dow', 'russell2k'],
