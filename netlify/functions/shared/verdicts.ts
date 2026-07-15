@@ -106,19 +106,21 @@ export const BOARD_VERDICTS: Record<VerdictBoard, BoardVerdict> = {
   },
   vector: {
     board: 'vector',
-    status: 'PENDING',
+    status: 'MIXED',
     window: 'events 2016-01-31 → 2024-12-31, full-hygiene universe incl. delisted, tiered costs',
     excessVsSPYPp: null,
     excessVsQQQPp: null,
     ic: null,
     rollingWindowsWon: null,
-    runId: null,
+    runId: 'vrun_v1_initial',
     date: '2026-07-15',
     note:
-      'VECTOR (event library) — pre-committed rule in reports/vector/design.md: per-trigger ' +
-      'hypotheses H1(E1)/H2(E2)/H3(E3) at t≥3 and a book sim vs IWM at t≥2. Chip stays PENDING ' +
-      'until the backfills complete and the validation run fires; per-trigger and book ' +
-      'sub-verdicts render from the vector_runs doc. No constant changes after the first run.',
+      'VECTOR run vrun_v1_initial (51,680 CAR rows): E1 trigger NO_EDGE — agreement cohort ' +
+      'mean +1.17% 60td net CAR, t 1.30 vs the binding t≥3 (MID+SMALL pooled weaker still); ' +
+      'E1 ships as a labelled event monitor. H4 not measurable (PRIME unreachable until ' +
+      'fscore/insider/13F features populate — quadrants are descriptive taxonomy for now). ' +
+      'E2/E3 triggers PENDING (backfills incomplete at measurement; vrun_v2 resolves them). ' +
+      'Book NO_EDGE/n-a — no validated triggers to trade. Full log: reports/vector/design.md.',
   },
   fable: {
     board: 'fable',
