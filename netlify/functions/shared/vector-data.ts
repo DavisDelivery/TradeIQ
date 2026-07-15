@@ -113,13 +113,23 @@ export async function edgarFetch(url: string): Promise<Response> {
   await edgarThrottle();
   const res = await fetch(url, { headers: { 'user-agent': EDGAR_UA, 'accept-encoding': 'gzip' } });
   if (res.status === 429 || res.status === 403) {
-    // Back off hard once, then retry once; still failing => THROW.
-    logger.child({ fn: 'vector-data' }).warn('edgar_throttled', { url, status: res.status });
-    await new Promise((r) => setTimeout(r, 5000));
-    await edgarThrottle();
-    const retry = await fetch(url, { headers: { 'user-agent': EDGAR_UA } });
-    if (!retry.ok) throw new Error(`edgar ${url}: HTTP ${retry.status} after backoff`);
-    return retry;
+    // SEC's WAF serves "Request Rate Threshold Exceeded" 403s that flag the
+    // EGRESS IP (shared on Netlify) for ~10 minutes — a 5s retry was far too
+    // impatient and killed the first E3 backfill on its very first request.
+    // Ladder: 15s, then 100s. Still blocked => THROW; the checkpointed job
+    // records failure and a later resume retries after the flag lifts.
+    const log = logger.child({ fn: 'vector-data' });
+    for (const waitMs of [15_000, 100_000]) {
+      log.warn('edgar_throttled', { url, status: res.status, waitMs });
+      await new Promise((r) => setTimeout(r, waitMs));
+      await edgarThrottle();
+      const retry = await fetch(url, { headers: { 'user-agent': EDGAR_UA, 'accept-encoding': 'gzip' } });
+      if (retry.ok) return retry;
+      if (retry.status !== 429 && retry.status !== 403) {
+        throw new Error(`edgar ${url}: HTTP ${retry.status} after backoff`);
+      }
+    }
+    throw new Error(`edgar ${url}: HTTP 403 rate-threshold persisted through backoff ladder`);
   }
   if (!res.ok) throw new Error(`edgar ${url}: HTTP ${res.status}`);
   return res;

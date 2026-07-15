@@ -45,7 +45,7 @@ vi.mock('../shared/firebase-admin', () => ({
   })),
 }));
 
-import { _internals } from '../scan-institutional-flow-largecap';
+import { _internals } from '../scan-institutional-flow-largecap-background';
 
 beforeEach(() => {
   for (const k of Object.keys(fixtureTrades)) delete fixtureTrades[k];
