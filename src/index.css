@@ -93,3 +93,17 @@ html.theme-light .text-violet-400 { color:#6d28d9 !important; }
 html.theme-light .text-fuchsia-400 { color:#a21caf !important; }
 html.theme-light .min-h-screen { background-image:none !important; }
 html.theme-light .hover\:text-neutral-100:hover, html.theme-light .hover\:text-neutral-200:hover { color:#0f1115 !important; }
+
+/* Desk 3-pane grid: auto-fit so panes wrap instead of overflowing the
+   viewport (the old fixed minmax(430/480/360)=1270px min clipped every
+   laptop once the 224px sidebar was subtracted). The weighted 3-column
+   layout only engages when there's genuinely room (very wide / 4k).
+   Never scrolls the page horizontally. */
+.desk-grid {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 340px), 1fr));
+}
+@media (min-width: 1600px) {
+  .desk-grid {
+    grid-template-columns: minmax(360px, 1fr) minmax(440px, 1.4fr) minmax(340px, 0.9fr);
+  }
+}

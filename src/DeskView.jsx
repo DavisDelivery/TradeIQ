@@ -142,7 +142,7 @@ export function DeskView() {
     return (
       <div data-testid="desk-view" className="max-w-[1920px] mx-auto">
         <TapeStrip regime={regime} />
-        <div className="grid gap-3 p-3" style={{ gridTemplateColumns: 'minmax(430px, 1fr) minmax(480px, 1.4fr) minmax(360px, 0.9fr)' }}>
+        <div className="desk-grid grid gap-3 p-3">
           <div className="min-w-0">{watchlist}</div>
           <div className="min-w-0">{focus}</div>
           <div className="min-w-0">{rightRail}</div>
