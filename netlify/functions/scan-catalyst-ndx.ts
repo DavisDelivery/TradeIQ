@@ -1,78 +1,28 @@
-// Per-universe scheduled scan: catalyst board.
-// Catalyst is the heaviest scan (4 providers per ticker — Quiver insider,
-// congressional, contracts, patents — plus setup detection). Per-universe
-// isolation is most important here; russell2k alone was blowing the 15-min cap.
+// Scheduled trigger for the catalyst ndx scan.
 //
-// Board:    catalyst
-// Universe: ndx (stored as 'ndx')
-// Schedule: 0,30 13-21 * * 1-5
-//
-// Split from Phase 1's multi-universe scan-catalyst.ts so each universe gets
-// its own 15-min Netlify background container instead of competing for one.
+// Cron: 0,30 13-21 * * 1-5. The scan itself runs in scan-catalyst-ndx-background (Netlify grants
+// the 15-minute budget only to *-background workers — the previous inline
+// version was killed at the synchronous ceiling before it could write a
+// snapshot; dead-cron remediation, runtime audit 2026-07-15).
 
 import { schedule } from '@netlify/functions';
-import { runCatalystScan, type CatalystUniverseKey } from './shared/scan-catalyst';
-import { writeSnapshot, FRESHNESS_BUDGETS_MS, type UniverseKey } from './shared/snapshot-store';
-import { MODEL_VERSION } from './shared/model-version';
 import { logger } from './shared/logger';
 
-// 14 min — leaves 60s margin under the 15-min Netlify background timeout.
-const PER_SCAN_BUDGET_MS = 14 * 60_000;
-
-const UNIVERSE: CatalystUniverseKey = 'ndx';
-const STORE_KEY: UniverseKey = 'ndx';
+const WORKER_PATH = '/.netlify/functions/scan-catalyst-ndx-background';
 
 export const handler = schedule('0,30 13-21 * * 1-5', async () => {
-  const log = logger.child({ fn: 'scan-catalyst-ndx', universe: UNIVERSE });
-  const overallStart = Date.now();
-  log.info('scheduled_scan_started', { board: 'catalyst', universe: UNIVERSE });
-
+  const log = logger.child({ fn: 'scan-catalyst-ndx', universe: 'ndx' });
+  const origin = process.env.URL ?? 'https://tradeiq-alpha.netlify.app';
   try {
-    const scan = await runCatalystScan({
-      universe: UNIVERSE,
-      scanBudgetMs: PER_SCAN_BUDGET_MS,
-      concurrency: 8,
-      logger: log,
+    const res = await fetch(`${origin}${WORKER_PATH}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
     });
-
-    const { snapshotId } = await writeSnapshot('catalyst', STORE_KEY, {
-      modelVersion: MODEL_VERSION,
-      generatedAt: new Date().toISOString(),
-      scanDurationMs: scan.scanDurationMs,
-      universeChecked: scan.universeChecked,
-      results: scan.picks,
-      freshnessBudgetMs: FRESHNESS_BUDGETS_MS.catalyst,
-      warnings: scan.warnings,
-    });
-
-    const count = scan.picks.length;
-    log.info('snapshot_written', {
-      snapshotId,
-      picks: count,
-      universeChecked: scan.universeChecked,
-      scanDurationMs: scan.scanDurationMs,
-      overallDurationMs: Date.now() - overallStart,
-    });
-
-    return {
-      statusCode: 200,
-      body: JSON.stringify({
-        ok: true,
-        board: 'catalyst',
-        universe: UNIVERSE,
-        snapshotId,
-        picks: count,
-        universeChecked: scan.universeChecked,
-        scanDurationMs: scan.scanDurationMs,
-        warnings: scan.warnings,
-      }),
-    };
+    log.info('worker_dispatched', { status: res.status });
+    return { statusCode: 200, body: JSON.stringify({ ok: true, board: 'catalyst', universe: 'ndx', workerStatus: res.status }) };
   } catch (err: any) {
-    const msg = String(err?.message ?? err);
-    log.error('scheduled_scan_failed', { err: msg, universe: UNIVERSE });
-    return {
-      statusCode: 500,
-      body: JSON.stringify({ ok: false, board: 'catalyst', universe: UNIVERSE, error: msg }),
-    };
+    log.error('worker_dispatch_failed', { err: String(err?.message ?? err) });
+    return { statusCode: 500, body: JSON.stringify({ ok: false, board: 'catalyst', universe: 'ndx', error: String(err?.message ?? err) }) };
   }
 });

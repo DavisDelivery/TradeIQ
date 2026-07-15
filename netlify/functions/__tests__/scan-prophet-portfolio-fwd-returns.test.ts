@@ -37,7 +37,7 @@ import {
   MAX_FWD_RETURN_ATTEMPTS,
   maturedWindowsFor,
   populateForwardReturns,
-} from '../scan-prophet-portfolio-fwd-returns';
+} from '../scan-prophet-portfolio-fwd-returns-background';
 
 function row(decisionDate: string, ticker: string, patch: Partial<MockRow> = {}): MockRow {
   return {

@@ -1,82 +1,28 @@
-// Per-universe scheduled scan: insider board (daily, after US close).
+// Scheduled trigger for the insider ndx scan.
 //
-// Board:    insider
-// Universe: ndx (stored as 'ndx')
-// Schedule: 40 21 * * 1-5
-//
-// Split from Phase 1's multi-universe scan-insider.ts so each universe gets
-// its own 15-min Netlify background container instead of competing for one.
-//
-// Phase 4o W1 — staggered from 21:30 to 21:40 so it doesn't share a
-// Finnhub-quota minute with russell2k (21:30), sp500 (21:35), or dow (21:45).
+// Cron: 40 21 * * 1-5. The scan itself runs in scan-insider-ndx-background (Netlify grants
+// the 15-minute budget only to *-background workers — the previous inline
+// version was killed at the synchronous ceiling before it could write a
+// snapshot; dead-cron remediation, runtime audit 2026-07-15).
 
 import { schedule } from '@netlify/functions';
-import { runInsiderScan, type InsiderUniverseKey } from './shared/scan-insider';
-import { writeSnapshot, FRESHNESS_BUDGETS_MS, type UniverseKey } from './shared/snapshot-store';
-import { MODEL_VERSION } from './shared/model-version';
 import { logger } from './shared/logger';
-import { INSIDER_SCHEDULED_WINDOW_DAYS } from './shared/scan-insider';
 
-// 14 min — leaves 60s margin under the 15-min Netlify background timeout.
-const PER_SCAN_BUDGET_MS = 14 * 60_000;
-
-const UNIVERSE: InsiderUniverseKey = 'ndx';
-const STORE_KEY: UniverseKey = 'ndx';
+const WORKER_PATH = '/.netlify/functions/scan-insider-ndx-background';
 
 export const handler = schedule('40 21 * * 1-5', async () => {
-  const log = logger.child({ fn: 'scan-insider-ndx', universe: UNIVERSE });
-  const overallStart = Date.now();
-  log.info('scheduled_scan_started', { board: 'insider', universe: UNIVERSE });
-
+  const log = logger.child({ fn: 'scan-insider-ndx', universe: 'ndx' });
+  const origin = process.env.URL ?? 'https://tradeiq-alpha.netlify.app';
   try {
-    const scan = await runInsiderScan({
-      universe: UNIVERSE,
-      windowDays: INSIDER_SCHEDULED_WINDOW_DAYS,
-      scanBudgetMs: PER_SCAN_BUDGET_MS,
-      concurrency: 8,
-      enrichRoles: true,
-      enrichPrice: true,
-      logger: log,
+    const res = await fetch(`${origin}${WORKER_PATH}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
     });
-
-    const { snapshotId } = await writeSnapshot('insider', STORE_KEY, {
-      modelVersion: MODEL_VERSION,
-      generatedAt: new Date().toISOString(),
-      scanDurationMs: scan.scanDurationMs,
-      universeChecked: scan.universeChecked,
-      results: scan.rows,
-      freshnessBudgetMs: FRESHNESS_BUDGETS_MS.insider,
-      warnings: scan.warnings,
-    });
-
-    const count = scan.rows.length;
-    log.info('snapshot_written', {
-      snapshotId,
-      rows: count,
-      universeChecked: scan.universeChecked,
-      scanDurationMs: scan.scanDurationMs,
-      overallDurationMs: Date.now() - overallStart,
-    });
-
-    return {
-      statusCode: 200,
-      body: JSON.stringify({
-        ok: true,
-        board: 'insider',
-        universe: UNIVERSE,
-        snapshotId,
-        rows: count,
-        universeChecked: scan.universeChecked,
-        scanDurationMs: scan.scanDurationMs,
-        warnings: scan.warnings,
-      }),
-    };
+    log.info('worker_dispatched', { status: res.status });
+    return { statusCode: 200, body: JSON.stringify({ ok: true, board: 'insider', universe: 'ndx', workerStatus: res.status }) };
   } catch (err: any) {
-    const msg = String(err?.message ?? err);
-    log.error('scheduled_scan_failed', { err: msg, universe: UNIVERSE });
-    return {
-      statusCode: 500,
-      body: JSON.stringify({ ok: false, board: 'insider', universe: UNIVERSE, error: msg }),
-    };
+    log.error('worker_dispatch_failed', { err: String(err?.message ?? err) });
+    return { statusCode: 500, body: JSON.stringify({ ok: false, board: 'insider', universe: 'ndx', error: String(err?.message ?? err) }) };
   }
 });
