@@ -436,6 +436,12 @@
   to = "/.netlify/functions/vector-status"
   status = 200
 
+# Trade queue — agentic execution bridge (token-gated mutations).
+[[redirects]]
+  from = "/api/trade-queue"
+  to = "/.netlify/functions/trade-queue"
+  status = 200
+
 # SPA fallback
 [[redirects]]
   from = "/*"

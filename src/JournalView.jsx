@@ -9,6 +9,7 @@ import { useResearch } from './hooks/useResearch.js';
 import { queryKeys } from './lib/queryKeys.js';
 import { fetchWithRetry } from './lib/validateResponse.js';
 import { FundamentalsStrip } from './components/detail/FundamentalsStrip.jsx';
+import { TradeQueuePanel } from './components/TradeQueuePanel.jsx';
 
 const SOURCE_META = {
   earnings: { label: 'Earnings', icon: Zap, color: 'text-sky-400 border-sky-500/40 bg-sky-500/5' },
@@ -144,6 +145,9 @@ export const JournalView = () => {
 
   return (
     <div className="px-3 py-4 sm:p-6 max-w-[1600px] mx-auto pb-20 sm:pb-6">
+      {/* Agentic order queue (runbook Phase 2) — fills land below as journal
+          entries, so the loop closes on this page. Hidden while empty. */}
+      <TradeQueuePanel />
       <header className="mb-4">
         <div className="flex items-baseline gap-3 mb-2">
           <BookMarked className="h-4 w-4 text-emerald-400" />
@@ -423,7 +427,10 @@ const SetupStopEditor = ({ trade, onSaved }) => {
 const SummaryStat = ({ label, value, color }) => (
   <div className="border border-neutral-800 bg-neutral-950/40 p-2.5">
     <div className="text-[9px] font-mono uppercase tracking-widest text-neutral-500 mb-0.5">{label}</div>
-    <div className="font-mono text-lg tabular-nums" style={color ? { color } : { color: '#e5e5e5' }}>{value}</div>
+    {/* No inline default hex — inline styles bypass the theme-light override
+        layer and rendered near-white-on-white (formatting audit #2). The
+        text-neutral-200 class IS theme-remapped. */}
+    <div className={`font-mono text-lg tabular-nums${color ? '' : ' text-neutral-200'}`} style={color ? { color } : undefined}>{value}</div>
   </div>
 );
 

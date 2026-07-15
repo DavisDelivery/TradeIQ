@@ -19,7 +19,10 @@ export const Logo = ({ appVersion }) => (
       <div className="font-serif font-bold text-base tracking-[-0.01em]">
         TradeIQ <span className="text-emerald-400 italic font-light">Alpha</span>
       </div>
-      <div className="text-[10px] text-neutral-500 font-mono tracking-wider uppercase mt-0.5">
+      {/* Hidden below sm: the mobile header row (hamburger + logo + view
+          name + theme toggle) overflowed 390px viewports and clipped
+          (formatting audit #3/#4). The version stays visible in the drawer. */}
+      <div className="hidden sm:block text-[10px] text-neutral-500 font-mono tracking-wider uppercase mt-0.5">
         multi-factor · {appVersion}
       </div>
     </div>
