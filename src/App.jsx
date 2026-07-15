@@ -40,6 +40,7 @@ import { SettingsView } from './SettingsView.jsx';
 import { BacktestView } from './BacktestView.jsx';
 import { ResearchPanel } from './components/ResearchPanel.jsx';
 import { Logo, StatusDot, ConvictionBadge, DirectionPill } from './components/Badges.jsx';
+import { ThemeToggle } from './components/ThemeToggle.jsx';
 import { fmt, safeTimestamp, tierColor, tierGlow, directionIcon, analystIcon, analystLabel } from './lib/formatters.jsx';
 import { MOCK_REGIME, MOCK_TARGETS, MOCK_ANALYSTS, MOCK_ALERTS, MOCK_EQUITY_CURVE } from './lib/mockData.js';
 import { useRegime } from './hooks/useRegime.js';
@@ -202,6 +203,10 @@ const TopBar = ({ activeView, setActiveView, regime, universeStats }) => {
             <span className="text-[13px] font-medium truncate">{activeMeta.label}</span>
           </div>
         )}
+        {/* Mobile: theme toggle on the right of the header row */}
+        <ThemeToggle className="sm:hidden ml-auto flex-shrink-0" />
+        {/* Desktop: theme toggle before the inline nav */}
+        <ThemeToggle className="hidden sm:inline-flex flex-shrink-0" />
         {/* Desktop: inline nav (tabs fit on one row) */}
         <nav className="hidden sm:block flex-1 min-w-0 overflow-x-auto scrollbar-hide">
           <div className="flex items-center justify-end gap-1 whitespace-nowrap">

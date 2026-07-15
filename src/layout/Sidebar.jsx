@@ -9,6 +9,7 @@
 
 import React from 'react';
 import { Logo } from '../components/Badges.jsx';
+import { ThemeToggle } from '../components/ThemeToggle.jsx';
 
 export function Sidebar({ views, activeView, setActiveView, appVersion }) {
   return (
@@ -61,8 +62,9 @@ export function Sidebar({ views, activeView, setActiveView, appVersion }) {
           );
         })}
       </nav>
-      <div className="px-4 py-3 border-t border-neutral-800/60 text-[10px] font-mono uppercase tracking-[0.18em] text-neutral-600">
-        v{appVersion}
+      <div className="px-4 py-3 border-t border-neutral-800/60 flex items-center justify-between gap-2">
+        <span className="text-[10px] font-mono uppercase tracking-[0.18em] text-neutral-600">v{appVersion}</span>
+        <ThemeToggle />
       </div>
     </aside>
   );
