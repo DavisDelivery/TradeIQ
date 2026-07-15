@@ -16,6 +16,12 @@ const SOURCE_META = {
   board: { label: 'Board', icon: Target, color: 'text-emerald-400 border-emerald-500/40 bg-emerald-500/5' },
   williams: { label: 'Williams', icon: Activity, color: 'text-fuchsia-400 border-fuchsia-500/40 bg-fuchsia-500/5' },
   lynch: { label: 'Lynch', icon: Shield, color: 'text-violet-400 border-violet-500/40 bg-violet-500/5' },
+  // Trades logged from Prophet picks and the FABLE/VECTOR detail heroes
+  // carry these sources; without entries they fell back to the "Chart"
+  // badge and had no filter chip (audit 2026-07-15).
+  prophet: { label: 'Prophet', icon: TrendingUp, color: 'text-emerald-300 border-emerald-500/40 bg-emerald-500/5' },
+  fable: { label: 'FABLE', icon: TrendingUp, color: 'text-sky-300 border-sky-500/40 bg-sky-500/5' },
+  vector: { label: 'VECTOR', icon: Zap, color: 'text-violet-300 border-violet-500/40 bg-violet-500/5' },
   chart: { label: 'Chart', icon: TrendingUp, color: 'text-neutral-400 border-neutral-700 bg-neutral-900/40' },
   // DESK-1 W4 — manual entries logged from the Journal form.
   manual: { label: 'Manual', icon: BookMarked, color: 'text-neutral-300 border-neutral-600 bg-neutral-900/40' },

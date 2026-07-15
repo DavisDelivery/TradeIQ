@@ -47,7 +47,10 @@ export const AnalystsView = ({ analysts }) => (
               </div>
               <div>
                 <div className="text-[10px] uppercase tracking-widest text-neutral-500 font-mono">Cost 24h</div>
-                <div className="font-mono text-lg text-neutral-100 mt-1">{Number.isFinite(a.cost) ? `$${a.cost.toFixed(2)}` : '—'}</div>
+                {/* analysts-status hardcodes cost:0 (no measurement layer yet) —
+                    a confident $0.00 misreads as a measurement; render — until
+                    a real producer writes it (audit 2026-07-15). */}
+                <div className="font-mono text-lg text-neutral-100 mt-1">{Number.isFinite(a.cost) && a.cost > 0 ? `$${a.cost.toFixed(2)}` : '—'}</div>
               </div>
             </div>
           </div>
