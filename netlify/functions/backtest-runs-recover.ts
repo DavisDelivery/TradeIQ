@@ -166,9 +166,24 @@ export const handler: Handler = async (event) => {
     }
 
     const failedCount = swept.filter((r) => r.action !== 'skipped').length;
+
+    // VECTOR — sweep vector_scan_state zombies in the same pass (a
+    // checkpointed backfill whose chain died mid-flight stays 'running'
+    // forever without this; failed-out jobs resume via POST {resume:true}).
+    let vectorZombies: string[] = [];
+    if (!dryRun) {
+      try {
+        const { failOutZombies } = await import('./shared/vector-store');
+        vectorZombies = await failOutZombies(staleMinutes * 60_000);
+      } catch (err) {
+        log.warn('vector_zombie_sweep_failed', { err: String((err as Error)?.message ?? err) });
+      }
+    }
+
     log.info('recover_sweep_complete', {
       inspected: docs.length,
       failed: failedCount,
+      vectorZombies,
       dryRun,
       staleMinutes,
     });

@@ -9,6 +9,7 @@
 //             required by SEC policy; hard-capped at 8 req/s.
 
 import { logger } from './logger';
+import { getFinnhubBucket, fetchWithRateLimit } from './rate-limiter';
 
 const POLYGON = 'https://api.polygon.io';
 const polygonKey = () => {
@@ -141,4 +142,36 @@ export function dailyIndexUrl(date: string): string {
   const q = Math.floor((m - 1) / 3) + 1;
   const compact = date.replace(/-/g, '');
   return `https://www.sec.gov/Archives/edgar/daily-index/${y}/QTR${q}/form.${compact}.idx`;
+}
+
+// ---------------------------------------------------------------------
+// Finnhub — per-symbol earnings calendar (historical hour resolution)
+// ---------------------------------------------------------------------
+
+export interface EarningsCalRow {
+  date: string;
+  hour: 'bmo' | 'amc' | 'dmh' | '';
+}
+
+/**
+ * Per-symbol earnings calendar over an explicit historical range. Depth is
+ * plan-dependent (#107: history may cap at recent quarters) — callers must
+ * treat a missing date as "hour unknown" and fall back, never fabricate.
+ * Non-OK => THROW (nothing cached).
+ */
+export async function getEarningsCalendarForSymbol(
+  ticker: string,
+  from: string,
+  to: string,
+): Promise<EarningsCalRow[]> {
+  const key = process.env.FINNHUB_API_KEY;
+  if (!key) throw new Error('FINNHUB_API_KEY unset');
+  await getFinnhubBucket().acquire();
+  const url = `https://finnhub.io/api/v1/calendar/earnings?from=${from}&to=${to}&symbol=${encodeURIComponent(ticker)}&token=${key}`;
+  const { res } = await fetchWithRateLimit(url, undefined);
+  if (!res.ok) throw new Error(`finnhub calendar ${ticker}: HTTP ${res.status}`);
+  const data = (await res.json()) as { earningsCalendar?: { date?: string; hour?: string }[] };
+  return (data.earningsCalendar ?? [])
+    .filter((e) => e.date)
+    .map((e) => ({ date: e.date as string, hour: (e.hour ?? '') as EarningsCalRow['hour'] }));
 }
