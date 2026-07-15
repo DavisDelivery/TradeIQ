@@ -454,6 +454,12 @@
   to = "/.netlify/functions/broker-sync"
   status = 200
 
+# Broker connect — links Robinhood for server-side execution (login-gated).
+[[redirects]]
+  from = "/api/broker-auth"
+  to = "/.netlify/functions/broker-auth"
+  status = 200
+
 # SPA fallback
 [[redirects]]
   from = "/*"
