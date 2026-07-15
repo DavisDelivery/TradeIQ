@@ -354,3 +354,53 @@ Every recommendation logged with model version, inputs, time, user. Exportable a
 Scope: Firestore `recommendationLog/{date}/{eventId}`; per-recommendation disclaimer (v{model}/{date} stamp on each card); `src/views/AuditView.jsx` + `scripts/export-audit.ts` (CSV/JSON for date range); compliance disclaimer surfacing beyond global footer ("Not financial advice" per-action); `shared/inputs-hash.ts` (deterministic hash of all inputs).
 
 **Dependencies.** Phase 12 auth so user is identified.
+
+---
+
+## Reconciliation — 2026-05-19 → 2026-07-15 (append-only)
+
+The status table above froze at 2026-05-19. 66 commits landed since. This
+section is the authoritative record through 2026-07-15; trust it over any
+older row it contradicts. Production is `v0.23.0-alpha`.
+
+### Landed, in order
+
+| Window | Work | PRs |
+|---|---|---|
+| May 19-31 | Phase 6 stock-detail panel complete (rationale endpoints, panel shell, price/RS charts, fundamental charts, metrics/catalysts/risks, FundamentalsStrip everywhere, resilience, sortable columns, scheduled Prophet snapshot + thesis cache, background trigger) | #55-#63, #65 |
+| May 22 | Phase 4w W2: Massive Financials migration (VX sunset) | #54 |
+| Jun 6-10 | Universe expansion to full constituents (largecap 508, russell 1928); snapshot freshness widened 30min→26h; serve-stale over live-scan for large universes; doc-size trim; true scan coverage | #66-#72 |
+| Jun 10-20 | Full-system code review (12 critical, ~35 major) + remediation waves: P0 crashes; 2A backtest PIT-strict; 2B scoring null-discipline; 2C earnings announcement-date semantics; 2D prophet cron→background producers; 3A portfolio split-safe returns; 3B trading-day marks + delisting realization; 3C earnings event-window methodology; 3D frontend query keys; 3E Anthropic spend repricing; 4A schedule-aware freshness + keep-daily-close retention; 4B provider transport-null discipline (M8); 4C Lynch TTM + technical-setups; 4D minors | #73-#89 |
+| Jun 20-23 | Prophet 'all' 3-stage sieve; engine-test real breakdown; wiring audit (5 dead surfaces); lynch/williams cold-load 504; research date anchor | #90-#94 |
+| Jun 23-29 | Dead-cron remediation: insider-sp500, lynch-russell2k, catalyst sp500+russell2k → checkpoint-resume background workers | #95-#97 |
+| Jun 29 | Live price/%-change overlay on all boards; force-rescan dispatches bg worker; insider cluster wording honesty | #98-#100 |
+| Jul 8-11 | **FIX-1**: prod triage (earnings scan checkpoint-resume + publish guard, insider cron de-conflict 21:35→22:45, health.ts key fixes, zombie-run sweep); invalid-run hard guard; pre-committed composite verdict → **Target board measured NO VALIDATED EDGE** (+33.7% vs SPY +107.9%, IC −0.0105, 2018-2024; runId bt_20260711013530_q5qdh7) → demoted to screener per the binding rule; DESK-1 trader workstation; earnings-radar cache discipline | #101-#104 |
+| Jul 11-12 | **FIX-2 PR-A**: earnings PIT scoring path + PEAD event-study engine; Finnhub depth finding (earnings history caps ~4 recent quarters on current plan) | #105, #107 |
+| Jul 13 | SMA200 chart warmup fix (200-day line never rendered — 180d fetch < 200-bar warmup) | #108 |
+| Jul 13-14 | **FABLE**: Claude-designed five-pillar gated board (Minervini gate, pre-committed validation) → verdict **NO_EDGE** (2026-07-14; −73pp vs SPY, IC −0.017) → ships as labelled screener. Investor dossier + plain-language legend. Advanced charting (candlesticks, volume/RSI panes, MAs, crosshair). | #109, #111, #114 |
+| Jul 14 | **FABLE-2**: policy-mode engine (banded entry/exit, hold/stop discipline, train-clamped exploration 2018-2023, 20-run budget, frozen config at run 20); race hotfix (phantom checkpoint + calendar floor); **live horse race** insider-live vs insider-free running as forward paper test | #110, #112, #113 |
+| Jul 14 | **Crosses board**: nightly SMA50/200 golden/death cross scan (sp500, completed closes, ~12mo history, 776 events seeded), Alerts integration, sortable tab; mobile nav drawer replaces horizontal tab strip (+ portal fix for backdrop-filter clipping) | #115, #116 |
+| Jul 15 | getEarningsHistory live TTL cache (heals prophet/lynch/target staleness) | direct: ea11c4b |
+
+### Verdict registry (binding results to date)
+
+- **Target composite** (10-analyst): NO VALIDATED EDGE (FIX-1 W3, 2026-07-11) → screener.
+- **Williams, Lynch**: NO VALIDATED EDGE (FIX-1 W4) → Unvalidated nav section.
+- **FABLE v1** (five-pillar momentum): NO_EDGE (2026-07-14) → labelled screener; PENDING chip resolved.
+- **FABLE-2**: exploration closed (20/20 runs, train window only); frozen config in design appendix; live horse race running; holdout + 6-month forward test gate any VALIDATED claim.
+- **Crosses / earnings PEAD / VECTOR**: no verdicts yet — VECTOR's pre-committed rule is in `reports/vector/design.md`.
+
+### Open PRs (status + recommendation)
+
+- **#24** Phase 5a ML scaffolding (draft, 2026-05-14) — was blocked on <10k mlTraining rows; rows have been accumulating since. Keep open; unblock check before next 5a session.
+- **#49** 4t W2/W3 configs + analysis script — superseded by FIX-1's composite verdict (#104 landed the measurement it was building toward). Recommend close.
+- **#52** 4t W1b diagnosis (russell2k UNIVERSE_HISTORY pre-2022 gap) — diagnosis remains valid and UNFIXED (russell2k backtests before 2022-01-31 still silently no-op; validateConfig guard never landed). Keep open as the tracking issue or convert to one.
+- **#53** 4t W1c diagnosis (chronic-silent earnings/insider) — E1 (Finnhub history depth) addressed by #105/#107/ea11c4b; E2 (runEarnings Date.now() clock leak) **still unfixed** and independently re-confirmed by the 2026-07 repo audit. Keep open until E2 lands.
+- **#64** repo bug-scan (draft, 2026-05-31) — queryKeys/insider/catalyst fixes landed independently (#82); remaining items (maxDrawdown peakIdx, health earnings key — the latter landed in FIX-1) partially superseded. Recommend close after cherry-checking maxDrawdown.
+
+### Standing security items (unchanged, still outstanding)
+
+PAT rotation + Firebase SA key rotation still pending. The 2026-07 audit
+additionally flagged: live PATs committed in briefs/kickoffs (revoke +
+purge), unauthenticated background-scan/force endpoints (token-gate), and
+Firestore tradeLog world-writable until 2026-10-01 (Phase 12 auth).
