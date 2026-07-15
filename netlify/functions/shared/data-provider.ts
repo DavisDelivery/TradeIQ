@@ -17,6 +17,7 @@ import {
 } from './schemas';
 import { snapshotBeforeDate } from './snapshot-store';
 import { fetchWithRateLimit, getFinnhubBucket } from './rate-limiter';
+import { liveCacheGet, liveCacheSet, type LiveCacheKey } from './provider-live-cache';
 import {
   fetchRatiosWithStatus,
   fetchIncomeStatementsWithStatus,
@@ -1055,6 +1056,14 @@ function assignAnnounceDates(
 /**
  * PIT-cacheable: keyed by (ticker, limit, asOfDate).
  *
+ * LIVE-cacheable (2026-07-15): keyed by (ticker, limit, join-flag) with a
+ * 26h TTL for non-empty histories (quarterly data — a day of staleness is
+ * immaterial to the trend/quality layers) and 6h for legitimately-empty
+ * ones (an ETF stays empty, but empty is also what a plan gap looks like,
+ * so re-verify often). Entries expire on their own per-ticker clocks, so
+ * the daily refresh rolls gradually across scan slots instead of hitting
+ * one run with a full-universe cold sweep.
+ *
  * Date semantics (CR-3 fix): each row carries BOTH the fiscal `period`
  * end and the true `announceDate` (joined from the earnings calendar —
  * see EarningsSurprise). The join runs when `withAnnounceDates` is set or
@@ -1067,11 +1076,39 @@ function assignAnnounceDates(
  * could not be resolved are EXCLUDED — period-end is never a visibility
  * proxy.
  */
+const EARNINGS_HISTORY_LIVE_TTL_MS = 26 * 60 * 60_000;
+const EARNINGS_HISTORY_LIVE_EMPTY_TTL_MS = 6 * 60 * 60_000;
+const earningsHistoryTtlMs = (rows: EarningsSurprise[]): number =>
+  rows.length > 0 ? EARNINGS_HISTORY_LIVE_TTL_MS : EARNINGS_HISTORY_LIVE_EMPTY_TTL_MS;
+
 export async function getEarningsHistory(
   ticker: string,
   limit = 8,
   opts: { asOfDate?: string; withAnnounceDates?: boolean } = {},
 ): Promise<EarningsSurprise[]> {
+  // 2026-07-15 stale-board fix — LIVE calls are served from a Firestore
+  // TTL cache so each (ticker, limit, join) variant costs ONE paced
+  // Finnhub call per TTL window instead of one per scan run. The #105
+  // bucket pacing below is correct but repriced every large-universe scan
+  // that calls this per ticker (prophet stage-2: 487 survivors ≈ 9 min of
+  // tokens vs a 244s stage budget → chronic partial → `_latest` frozen;
+  // lynch/sp500: +9 min blew the 15-min container). Earnings history
+  // changes quarterly — refetching it every 30-min slot was the disease.
+  // PIT calls (asOfDate set) bypass this entirely and keep their existing
+  // pit-cache semantics at the call sites.
+  const liveKey: LiveCacheKey | null = opts.asOfDate
+    ? null
+    : {
+        provider: 'finnhub',
+        endpoint: 'stock/earnings',
+        ticker,
+        extra: `limit=${limit}:join=${opts.withAnnounceDates ? 1 : 0}`,
+      };
+  if (liveKey) {
+    const hit = await liveCacheGet<EarningsSurprise[]>(liveKey, earningsHistoryTtlMs);
+    if (Array.isArray(hit)) return hit;
+  }
+
   try {
     // Fetch extra to absorb post-filter losses when asOfDate is set.
     const fetchLimit = opts.asOfDate ? Math.max(limit * 4, 32) : limit;
@@ -1116,9 +1153,22 @@ export async function getEarningsHistory(
       // backtest must not guess when the report became public.
       rows = rows.filter((r) => r.announceDate !== null && r.announceDate <= opts.asOfDate!);
     }
-    return rows
+    const final = rows
       .sort((a, b) => b.period.localeCompare(a.period))
       .slice(0, limit);
+
+    // Cache success-shaped LIVE results only (M8: this line is only
+    // reachable when res.ok and the schema parse produced an array — the
+    // !ok early-return and the catch below never write). One extra guard:
+    // when the caller asked for the announce-date join and the calendar
+    // call failed (every announceDate null despite rows), the result is
+    // join-degraded — serve it fresh but don't persist it for 26h.
+    if (liveKey) {
+      const joinDegraded =
+        opts.withAnnounceDates && final.length > 0 && final.every((r) => r.announceDate === null);
+      if (!joinDegraded) await liveCacheSet(liveKey, final);
+    }
+    return final;
   } catch {
     return [];
   }

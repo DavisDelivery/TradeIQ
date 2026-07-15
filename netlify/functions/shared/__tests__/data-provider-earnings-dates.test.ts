@@ -23,12 +23,17 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 import { getEarningsHistory } from '../data-provider';
 import { _resetFinnhubBucketForTests } from '../rate-limiter';
+import { __clearLiveCacheL1ForTesting } from '../provider-live-cache';
 
 const ORIGINAL_FETCH = globalThis.fetch;
 
 beforeEach(() => {
   process.env.FINNHUB_API_KEY = 'test-finn';
   _resetFinnhubBucketForTests();
+  // 2026-07-15 — getEarningsHistory now fronts a live cache with an
+  // in-process L1; clear it so fixtures don't leak across cases (the
+  // Firestore layer is inert here — no admin creds in vitest).
+  __clearLiveCacheL1ForTesting();
 });
 
 afterEach(() => {
