@@ -36,6 +36,7 @@ import { getPoliticalActivity } from '../political-provider';
 import { getGovContractActivity } from '../govcontracts-provider';
 import { getFinnhubInsiderTransactionsWithStatus } from '../data-provider';
 import * as quiverClient from '../quiver-client';
+import { __clearLiveCacheL1ForTesting } from '../provider-live-cache';
 
 const finnhubMock = vi.mocked(getFinnhubInsiderTransactionsWithStatus);
 const quiverMock = vi.mocked(quiverClient.quiverGetTickerWithStatus);
@@ -43,6 +44,9 @@ const quiverMock = vi.mocked(quiverClient.quiverGetTickerWithStatus);
 beforeEach(() => {
   finnhubMock.mockReset();
   quiverMock.mockReset();
+  // 2026-07-15 — the providers now front a live cache with an in-process
+  // L1; clear it so one case's verified-empty doesn't serve the next case.
+  __clearLiveCacheL1ForTesting();
 });
 
 // ---------------------------------------------------------------------------

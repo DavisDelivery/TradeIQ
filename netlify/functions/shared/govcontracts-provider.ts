@@ -16,6 +16,7 @@
 
 import { quiverGetTickerWithStatus, q, qn, qdate } from './quiver-client';
 import { QuiverGovContractArraySchema } from './schemas';
+import { liveCacheWrap } from './provider-live-cache';
 
 export interface GovContract {
   date: string;
@@ -54,10 +55,30 @@ export interface GovContractActivity {
  *
  * PIT-cacheable: keyed by (ticker, lookbackDays, asOfDate).
  */
+// LIVE-cacheable (2026-07-15 stale-scan incident, fix #2): federal
+// contract awards publish on a daily cadence — live results (including
+// verified-empties) cache for 24h. Transport-failure nulls never cached (M8).
+const GOVCONTRACT_ACTIVITY_LIVE_TTL_MS = 24 * 60 * 60_000;
+
 export async function getGovContractActivity(
   ticker: string,
   lookbackDays = 180,
   opts: { asOfDate?: string } = {},
+): Promise<GovContractActivity | null> {
+  if (!opts.asOfDate) {
+    return liveCacheWrap<GovContractActivity>(
+      { provider: 'quiver', endpoint: 'govcontract-activity', ticker, extra: `days=${lookbackDays}` },
+      () => GOVCONTRACT_ACTIVITY_LIVE_TTL_MS,
+      () => computeGovContractActivity(ticker, lookbackDays, opts),
+    );
+  }
+  return computeGovContractActivity(ticker, lookbackDays, opts);
+}
+
+async function computeGovContractActivity(
+  ticker: string,
+  lookbackDays: number,
+  opts: { asOfDate?: string },
 ): Promise<GovContractActivity | null> {
   const empty: GovContractActivity = {
     ticker, lookbackDays,

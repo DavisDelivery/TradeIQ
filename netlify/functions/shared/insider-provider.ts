@@ -18,6 +18,7 @@
 
 import { getFinnhubInsiderTransactionsWithStatus, type FinnhubInsiderTx } from './data-provider';
 import { lookupInsiderRole } from './edgar-roles';
+import { liveCacheWrap } from './provider-live-cache';
 
 export interface InsiderTransaction {
   name: string; share: number; change: number;
@@ -57,11 +58,39 @@ export interface InsiderActivity {
  * outage must never score as "no insider activity, confidence 0.1".
  *
  * PIT-cacheable: keyed by (ticker, lookbackDays, asOfDate).
+ *
+ * LIVE-cacheable (2026-07-15 stale-scan incident, fix #2): live-mode
+ * results (including verified-empties) are served from the shared
+ * providerLiveCache for 6h, keyed (ticker, lookbackDays). Form 4s file on
+ * a daily cadence, so 6h staleness is immaterial to a 90-day-lookback
+ * score — while every 30-min prophet stage-3 slot, catalyst scan, and
+ * target analyst pass re-fetching the same tickers through the paced,
+ * patient-retried Finnhub path was exactly the contention that kept
+ * prophet stage 3 chronically partial. M8 preserved: transport-failure
+ * nulls are never cached, so an outage can't become a sticky
+ * "no insider activity".
  */
+const INSIDER_ACTIVITY_LIVE_TTL_MS = 6 * 60 * 60_000;
+
 export async function getInsiderActivity(
   ticker: string,
   lookbackDays = 90,
   opts: { asOfDate?: string } = {},
+): Promise<InsiderActivity | null> {
+  if (!opts.asOfDate) {
+    return liveCacheWrap<InsiderActivity>(
+      { provider: 'finnhub', endpoint: 'insider-activity', ticker, extra: `days=${lookbackDays}` },
+      () => INSIDER_ACTIVITY_LIVE_TTL_MS,
+      () => computeInsiderActivity(ticker, lookbackDays, opts),
+    );
+  }
+  return computeInsiderActivity(ticker, lookbackDays, opts);
+}
+
+async function computeInsiderActivity(
+  ticker: string,
+  lookbackDays: number,
+  opts: { asOfDate?: string },
 ): Promise<InsiderActivity | null> {
   const empty: InsiderActivity = {
     ticker, lookbackDays,

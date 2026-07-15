@@ -26,6 +26,7 @@
 
 import { quiverGetTickerWithStatus, q, qn, qdate } from './quiver-client';
 import { QuiverCongressionalArraySchema, QuiverLobbyingArraySchema } from './schemas';
+import { liveCacheWrap } from './provider-live-cache';
 
 export interface CongressTrade {
   politician: string;
@@ -92,10 +93,31 @@ export interface PoliticalActivity {
  *
  * PIT-cacheable: keyed by (ticker, lookbackDays, asOfDate).
  */
+// LIVE-cacheable (2026-07-15 stale-scan incident, fix #2): congressional
+// disclosures and lobbying filings land on a daily-at-best cadence, so
+// live results (including verified-empties) cache for 24h. Transport-
+// failure nulls (incl. Quiver subscription 403s) are never cached — M8.
+const POLITICAL_ACTIVITY_LIVE_TTL_MS = 24 * 60 * 60_000;
+
 export async function getPoliticalActivity(
   ticker: string,
   lookbackDays = 180,
   opts: { asOfDate?: string } = {},
+): Promise<PoliticalActivity | null> {
+  if (!opts.asOfDate) {
+    return liveCacheWrap<PoliticalActivity>(
+      { provider: 'quiver', endpoint: 'political-activity', ticker, extra: `days=${lookbackDays}` },
+      () => POLITICAL_ACTIVITY_LIVE_TTL_MS,
+      () => computePoliticalActivity(ticker, lookbackDays, opts),
+    );
+  }
+  return computePoliticalActivity(ticker, lookbackDays, opts);
+}
+
+async function computePoliticalActivity(
+  ticker: string,
+  lookbackDays: number,
+  opts: { asOfDate?: string },
 ): Promise<PoliticalActivity | null> {
   try {
     const anchorMs = opts.asOfDate

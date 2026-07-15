@@ -117,15 +117,43 @@ export async function liveCacheGet<T>(
  * the M8 rule (never cache a failure-shaped empty) is enforced at the
  * call site, where failure shapes are distinguishable. Write failures
  * are swallowed: caching is best-effort.
+ *
+ * Values are JSON-sanitized before the Firestore write: the admin SDK
+ * rejects documents containing `undefined` (it isn't a Firestore type),
+ * and provider result objects are full of optional fields (`latestBuy?`,
+ * `surprisePct?`). Round-tripping through JSON strips undefined keys —
+ * without this, any value with one optional-absent field silently never
+ * cached (the set() threw into the swallow below).
  */
 export async function liveCacheSet<T>(key: LiveCacheKey, value: T): Promise<void> {
   const id = liveCacheId(key);
   const createdAt = new Date().toISOString();
-  l1.set(id, { at: Date.parse(createdAt), value });
+  const sanitized = JSON.parse(JSON.stringify(value)) as T;
+  l1.set(id, { at: Date.parse(createdAt), value: sanitized });
   try {
-    const doc: LiveCacheDoc = { key, value, createdAt };
+    const doc: LiveCacheDoc = { key, value: sanitized, createdAt };
     await db().collection(COLLECTION).doc(id).set(doc);
   } catch {
     // Best-effort: the fresh value is already being returned to the caller.
   }
+}
+
+/**
+ * Wrap a live-mode provider fetch with the cache. The M8 convention all
+ * catalyst-layer providers share — `null` = transport failure, typed
+ * empty object = verified-empty — maps directly: null results are NEVER
+ * cached (a Finnhub outage must not become sticky "no insider activity"),
+ * success shapes (including verified-empties) are cached at the caller's
+ * TTL. Callers must route PIT reads (asOfDate) around this entirely.
+ */
+export async function liveCacheWrap<T>(
+  key: LiveCacheKey,
+  ttlMsFor: (value: T) => number,
+  fetcher: () => Promise<T | null>,
+): Promise<T | null> {
+  const hit = await liveCacheGet<T>(key, ttlMsFor);
+  if (hit !== null) return hit;
+  const fresh = await fetcher();
+  if (fresh !== null && fresh !== undefined) await liveCacheSet(key, fresh);
+  return fresh;
 }
