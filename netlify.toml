@@ -380,6 +380,24 @@
   to = "/.netlify/functions/crosses-board"
   status = 200
 
+# VECTOR — event library (reports/vector/design.md). Backfill/validation
+# RUNNERS have no /api aliases on purpose: fire them at their raw
+# /.netlify/functions/vector-* paths.
+[[redirects]]
+  from = "/api/vector-feed"
+  to = "/.netlify/functions/vector-feed"
+  status = 200
+
+[[redirects]]
+  from = "/api/vector-evaluate"
+  to = "/.netlify/functions/vector-evaluate"
+  status = 200
+
+[[redirects]]
+  from = "/api/vector-cohort"
+  to = "/.netlify/functions/vector-cohort"
+  status = 200
+
 # SPA fallback
 [[redirects]]
   from = "/*"

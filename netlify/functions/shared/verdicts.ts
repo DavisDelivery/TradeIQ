@@ -18,7 +18,7 @@
 
 export type VerdictStatus = 'NO_EDGE' | 'MIXED' | 'PENDING' | 'VALIDATED';
 
-export type VerdictBoard = 'williams' | 'lynch' | 'prophet' | 'target' | 'fable';
+export type VerdictBoard = 'williams' | 'lynch' | 'prophet' | 'target' | 'fable' | 'vector';
 
 export interface BoardVerdict {
   board: VerdictBoard;
@@ -103,6 +103,22 @@ export const BOARD_VERDICTS: Record<VerdictBoard, BoardVerdict> = {
       'complete (reinvoke-chain infra); sp500 alone is decisive per the pre-committed ' +
       'binding rule (reports/fix-1/composite-verdict.md). The prior avaa64 run was INVALID ' +
       '(all-null candidates); this q5qdh7 run is the first valid composite backtest.',
+  },
+  vector: {
+    board: 'vector',
+    status: 'PENDING',
+    window: 'events 2016-01-31 → 2024-12-31, full-hygiene universe incl. delisted, tiered costs',
+    excessVsSPYPp: null,
+    excessVsQQQPp: null,
+    ic: null,
+    rollingWindowsWon: null,
+    runId: null,
+    date: '2026-07-15',
+    note:
+      'VECTOR (event library) — pre-committed rule in reports/vector/design.md: per-trigger ' +
+      'hypotheses H1(E1)/H2(E2)/H3(E3) at t≥3 and a book sim vs IWM at t≥2. Chip stays PENDING ' +
+      'until the backfills complete and the validation run fires; per-trigger and book ' +
+      'sub-verdicts render from the vector_runs doc. No constant changes after the first run.',
   },
   fable: {
     board: 'fable',
