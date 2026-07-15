@@ -191,7 +191,10 @@ function RadioPill({ value, label, subtitle, selected, disabled, onSelect, title
         <span className="font-mono text-[11px] font-semibold tracking-wide">{label}</span>
       </div>
       {subtitle && (
-        <div className="text-[10px] font-mono text-neutral-500 mt-0.5 truncate">{subtitle}</div>
+        {/* No truncate: these subtitles carry warnings ("may exceed 15m cap",
+            "more trades = more slippage") that were being cut mid-phrase
+            (formatting audit #5). Wrap instead. */}
+        <div className="text-[10px] font-mono text-neutral-500 mt-0.5 leading-snug">{subtitle}</div>
       )}
     </button>
   );

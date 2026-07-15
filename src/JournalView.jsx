@@ -427,7 +427,10 @@ const SetupStopEditor = ({ trade, onSaved }) => {
 const SummaryStat = ({ label, value, color }) => (
   <div className="border border-neutral-800 bg-neutral-950/40 p-2.5">
     <div className="text-[9px] font-mono uppercase tracking-widest text-neutral-500 mb-0.5">{label}</div>
-    <div className="font-mono text-lg tabular-nums" style={color ? { color } : { color: '#e5e5e5' }}>{value}</div>
+    {/* No inline default hex — inline styles bypass the theme-light override
+        layer and rendered near-white-on-white (formatting audit #2). The
+        text-neutral-200 class IS theme-remapped. */}
+    <div className={`font-mono text-lg tabular-nums${color ? '' : ' text-neutral-200'}`} style={color ? { color } : undefined}>{value}</div>
   </div>
 );
 
