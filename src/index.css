@@ -2,9 +2,8 @@
 @tailwind components;
 @tailwind utilities;
 
-:root {
-  color-scheme: dark;
-}
+:root { color-scheme: dark; }
+html.theme-light { color-scheme: light; }
 
 html,
 body,
@@ -25,3 +24,72 @@ body {
   -ms-overflow-style: none;
   scrollbar-width: none;
 }
+
+/* ==================================================================
+   LIGHT THEME (default) — override layer.
+   The app hardcodes dark Tailwind palette classes (no dark: variants),
+   so light mode remaps the exact classes in use, scoped to
+   html.theme-light. Dark mode = remove the class; nothing else changes.
+   Also lifts the faint neutral-600/700 text that was hard to read.
+   ================================================================== */
+html.theme-light, html.theme-light body, html.theme-light #root { background:#f5f6f8; }
+html.theme-light body { color:#181b21; }
+html.theme-light .bg-neutral-950\/40 { background-color:rgba(255,255,255,0.85) !important; }
+html.theme-light .bg-neutral-900\/40 { background-color:rgba(244,245,247,0.85) !important; }
+html.theme-light .bg-neutral-950\/60 { background-color:rgba(255,255,255,0.85) !important; }
+html.theme-light .bg-neutral-950\/30 { background-color:rgba(255,255,255,0.85) !important; }
+html.theme-light .bg-neutral-900\/60 { background-color:rgba(244,245,247,0.85) !important; }
+html.theme-light .bg-neutral-800 { background-color:rgba(228,231,236,1.00) !important; }
+html.theme-light .bg-neutral-900\/30 { background-color:rgba(244,245,247,0.85) !important; }
+html.theme-light .bg-neutral-900\/80 { background-color:rgba(244,245,247,0.85) !important; }
+html.theme-light .bg-neutral-900 { background-color:rgba(244,245,247,1.00) !important; }
+html.theme-light .bg-neutral-950\/95 { background-color:rgba(255,255,255,0.95) !important; }
+html.theme-light .bg-neutral-900\/50 { background-color:rgba(244,245,247,0.85) !important; }
+html.theme-light .bg-neutral-800\/60 { background-color:rgba(228,231,236,0.85) !important; }
+html.theme-light .bg-neutral-950 { background-color:rgba(255,255,255,1.00) !important; }
+html.theme-light .bg-neutral-900\/20 { background-color:rgba(244,245,247,0.85) !important; }
+html.theme-light .bg-neutral-800\/50 { background-color:rgba(228,231,236,0.85) !important; }
+html.theme-light .bg-neutral-800\/40 { background-color:rgba(228,231,236,0.85) !important; }
+html.theme-light .bg-neutral-600 { background-color:rgba(200,205,213,1.00) !important; }
+html.theme-light .bg-neutral-950\/50 { background-color:rgba(255,255,255,0.85) !important; }
+html.theme-light .bg-neutral-800\/80 { background-color:rgba(228,231,236,0.85) !important; }
+html.theme-light .bg-neutral-800\/30 { background-color:rgba(228,231,236,0.85) !important; }
+html.theme-light .bg-neutral-700\/10 { background-color:rgba(214,218,225,0.85) !important; }
+html.theme-light .bg-\[\#0a0b0d\]\/95 { background-color:rgba(255,255,255,0.95) !important; }
+html.theme-light .bg-\[\#0a0b0d\] { background-color:rgba(255,255,255,1.00) !important; }
+html.theme-light .bg-\[\#090a0c\] { background-color:rgba(244,245,247,1.00) !important; }
+html.theme-light .bg-\[\#050607\] { background-color:rgba(245,246,248,1.00) !important; }
+html.theme-light .border-neutral-800 { border-color:rgba(224,227,233,1.00) !important; }
+html.theme-light .border-neutral-700 { border-color:rgba(206,211,219,1.00) !important; }
+html.theme-light .border-neutral-800\/60 { border-color:rgba(224,227,233,0.70) !important; }
+html.theme-light .border-neutral-800\/80 { border-color:rgba(224,227,233,0.80) !important; }
+html.theme-light .border-neutral-600 { border-color:rgba(176,182,193,1.00) !important; }
+html.theme-light .border-neutral-900 { border-color:rgba(236,238,241,1.00) !important; }
+html.theme-light .border-neutral-500 { border-color:rgba(150,157,170,1.00) !important; }
+html.theme-light .border-neutral-900\/60 { border-color:rgba(236,238,241,0.70) !important; }
+html.theme-light .border-neutral-900\/40 { border-color:rgba(236,238,241,0.70) !important; }
+html.theme-light .border-neutral-800\/40 { border-color:rgba(224,227,233,0.70) !important; }
+html.theme-light .border-neutral-700\/40 { border-color:rgba(206,211,219,0.70) !important; }
+html.theme-light .border-neutral-700\/30 { border-color:rgba(206,211,219,0.70) !important; }
+html.theme-light .text-neutral-100 { color:#0f1115 !important; }
+html.theme-light .text-neutral-200 { color:#181b21 !important; }
+html.theme-light .text-neutral-300 { color:#2b303a !important; }
+html.theme-light .text-neutral-400 { color:#4b5563 !important; }
+html.theme-light .text-neutral-500 { color:#616b78 !important; }
+html.theme-light .text-neutral-600 { color:#6b7280 !important; }
+html.theme-light .text-neutral-700 { color:#79828f !important; }
+html.theme-light .text-neutral-800 { color:#8a93a1 !important; }
+html.theme-light .text-emerald-300 { color:#047857 !important; }
+html.theme-light .text-emerald-400 { color:#059669 !important; }
+html.theme-light .text-emerald-200 { color:#065f46 !important; }
+html.theme-light .text-amber-300 { color:#b45309 !important; }
+html.theme-light .text-amber-400 { color:#b45309 !important; }
+html.theme-light .text-sky-300 { color:#0369a1 !important; }
+html.theme-light .text-sky-400 { color:#0369a1 !important; }
+html.theme-light .text-rose-300 { color:#be123c !important; }
+html.theme-light .text-rose-400 { color:#be123c !important; }
+html.theme-light .text-violet-300 { color:#6d28d9 !important; }
+html.theme-light .text-violet-400 { color:#6d28d9 !important; }
+html.theme-light .text-fuchsia-400 { color:#a21caf !important; }
+html.theme-light .min-h-screen { background-image:none !important; }
+html.theme-light .hover\:text-neutral-100:hover, html.theme-light .hover\:text-neutral-200:hover { color:#0f1115 !important; }

@@ -4,7 +4,12 @@ import App from './App.jsx';
 import { initSentry } from './lib/sentry.js';
 import { QueryClientProvider } from '@tanstack/react-query';
 import { queryClient } from './lib/queryClient.js';
+import { applyTheme, getTheme } from './lib/theme.js';
 import './index.css';
+
+// Apply the persisted theme (default light) BEFORE first paint so there's
+// no dark→light flash on load.
+applyTheme(getTheme());
 
 // Init early so cold-start errors and the App ErrorBoundary both have a
 // place to land. No-op until VITE_SENTRY_DSN is configured.
