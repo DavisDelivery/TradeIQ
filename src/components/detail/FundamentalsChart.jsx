@@ -121,7 +121,16 @@ export function FundamentalsChart({ ticker }) {
   const tab = TABS.find((t) => t.id === tabId);
   const range = RANGES.find((r) => r.id === rangeId);
 
-  const allQuarters = Array.isArray(data?.fundamentalsHistory?.quarterly) ? data.fundamentalsHistory.quarterly : [];
+  // Defensive ascending sort by endDate. The component assumes oldest→newest
+  // (slice(-keep) = most recent window, [0]=oldest label, [last]=latest), but
+  // the API sometimes returns quarters newest-first — which inverted the
+  // oldest/latest footer AND made the 5Y window select the OLDEST quarters
+  // instead of the recent ones (user-reported: "oldest 2026-03-31 · latest
+  // 2024-06-30"). Sorting here fixes both regardless of upstream order.
+  const allQuarters = useMemo(() => {
+    const raw = Array.isArray(data?.fundamentalsHistory?.quarterly) ? data.fundamentalsHistory.quarterly : [];
+    return [...raw].sort((a, b) => String(a.endDate ?? '').localeCompare(String(b.endDate ?? '')));
+  }, [data]);
   const _reason = data?.fundamentalsHistory?._reason;
 
   const rows = useMemo(() => {
