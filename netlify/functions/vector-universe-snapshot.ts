@@ -85,11 +85,40 @@ export const handler: Handler = async (event) => {
   let day = walkFrom;
   let targetIdx = 0;
   let snapshotsThisRun = 0;
+  // Data-floor discovery: the Polygon plan serves ~10y of history and
+  // 403s below it. Until the first day with rows arrives, a 403 means
+  // "below the entitlement floor" — advance and count. AFTER data has
+  // flowed, a 403 is a real failure and THROWs. Days-with-data gates
+  // snapshot emission: a month-end without a full 287-trading-day runway
+  // after the floor is recorded as unreachable, never mis-built.
+  let dataFlowing = (prior?.cursor?.dataFlowing as boolean) ?? false;
+  let daysWithData = (prior?.cursor?.daysWithData as number) ?? 0;
+  const unreachable: string[] = (prior?.cursor?.unreachableMonthEnds as string[]) ?? [];
 
   try {
     while (targetIdx < nextTargets.length && Date.now() - started < BUDGET_MS) {
-      const rows = await getGroupedDaily(day);
+      let rows: Awaited<ReturnType<typeof getGroupedDaily>>;
+      try {
+        rows = await getGroupedDaily(day);
+      } catch (err) {
+        const msg = String((err as Error)?.message ?? err);
+        if (!dataFlowing && msg.includes('HTTP 403')) {
+          cp.counters.belowFloorDays = (cp.counters.belowFloorDays ?? 0) + 1;
+          if (!cp.cursor.dataFloorProbe) cp.cursor.dataFloorProbe = day;
+          day = new Date(Date.parse(day) + 86_400_000).toISOString().slice(0, 10);
+          continue;
+        }
+        throw err;
+      }
       cp.counters.groupedCalls++;
+      if (rows.length > 0) {
+        if (!dataFlowing) {
+          dataFlowing = true;
+          cp.cursor.dataFloor = day;
+          log.info('data_floor_discovered', { dataFloor: day });
+        }
+        daysWithData++;
+      }
       for (const r of rows) {
         if (!r.T || r.c == null || r.v == null) continue;
         let s = state.get(r.T);
@@ -104,6 +133,17 @@ export const handler: Handler = async (event) => {
       // the calendar month-end).
       while (targetIdx < nextTargets.length && day >= nextTargets[targetIdx]) {
         const asOf = nextTargets[targetIdx];
+        // Runway gate: without HYGIENE.minBars trading days of data since
+        // the entitlement floor, the 287-bar check would empty the list —
+        // that's a data gap, not an empty market. Record and move on.
+        if (daysWithData < HYGIENE.minBars) {
+          unreachable.push(asOf);
+          cp.cursor.unreachableMonthEnds = unreachable;
+          cp.cursor.doneThrough = asOf;
+          targetIdx++;
+          log.warn('month_end_unreachable', { asOf, daysWithData });
+          continue;
+        }
         // Warmup-only pass (resume path): re-warmed state but this target
         // predates doneThrough — cannot happen since nextTargets filtered.
         const list: { ticker: string; sizeBucket: string; medianDollarVol: number; close: number }[] = [];
@@ -145,6 +185,8 @@ export const handler: Handler = async (event) => {
     }
 
     const finished = targetIdx >= nextTargets.length;
+    cp.cursor.dataFlowing = dataFlowing;
+    cp.cursor.daysWithData = daysWithData;
     cp.status = finished ? 'complete' : 'running';
     cp.heartbeatAt = new Date().toISOString();
     if (finished) cp.completedAt = new Date().toISOString();

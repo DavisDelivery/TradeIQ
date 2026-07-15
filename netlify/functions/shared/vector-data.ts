@@ -125,6 +125,31 @@ export async function edgarFetch(url: string): Promise<Response> {
   return res;
 }
 
+/**
+ * Per-ticker daily aggs with an entitlement-floor retry: the current
+ * Polygon plan serves ~10 years of history and 403s below it. On a 403,
+ * retry once from (today - 9.5y); if that also fails, THROW. The clamp is
+ * RECORDED by returning `clampedFrom` so callers can surface it — a
+ * shortened series is a fact, never a silent substitution.
+ */
+export async function getDailyBarsClamped(
+  ticker: string,
+  from: string,
+  to: string,
+): Promise<{ bars: { t: number; o: number; h: number; l: number; c: number; v: number }[]; clampedFrom: string | null }> {
+  const url = (f: string) =>
+    `${POLYGON}/v2/aggs/ticker/${encodeURIComponent(ticker)}/range/1/day/${f}/${to}?adjusted=true&sort=asc&limit=50000&apiKey=${polygonKey()}`;
+  let res = await fetch(url(from));
+  let clampedFrom: string | null = null;
+  if (res.status === 403) {
+    clampedFrom = new Date(Date.now() - Math.floor(9.5 * 365.25) * 86_400_000).toISOString().slice(0, 10);
+    res = await fetch(url(clampedFrom));
+  }
+  if (!res.ok) throw new Error(`polygon bars ${ticker}: HTTP ${res.status}${clampedFrom ? ' (after floor clamp)' : ''}`);
+  const data = (await res.json()) as { results?: any[] };
+  return { bars: (data.results ?? []) as any[], clampedFrom };
+}
+
 /** CIK (10-digit, zero-padded) -> ticker map from company_tickers.json. */
 export async function getCikTickerMap(): Promise<Map<string, string>> {
   const res = await edgarFetch('https://www.sec.gov/files/company_tickers.json');
