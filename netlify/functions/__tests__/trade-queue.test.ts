@@ -33,27 +33,38 @@ const dbMock = {
 };
 vi.mock('../shared/firebase-admin', () => ({ getAdminDb: () => dbMock }));
 
+// Login auth double: 'good' bearer = signed-in owner; anything else fails
+// the way shared/auth.ts fails (401), and authState 'unconfigured' = 501.
+let authState: 'ok' | 'unconfigured' = 'ok';
+vi.mock('../shared/auth', () => ({
+  verifyOwnerBearer: async (headers: Record<string, string | undefined>) => {
+    if (authState === 'unconfigured') return { ok: false, status: 501, error: 'OWNER_EMAILS not configured — login-gated mutations disabled' };
+    const raw = headers['authorization'] ?? '';
+    if (raw === 'Bearer good') return { ok: true, email: 'owner@example.com' };
+    return { ok: false, status: 401, error: 'sign in required (missing bearer token)' };
+  },
+}));
+
 import { handler } from '../trade-queue';
 
-const TOKEN = 'test-secret';
 const evt = (method: string, body?: any, headers: Record<string, string> = {}, qs: Record<string, string> = {}) =>
   ({ httpMethod: method, headers, body: body ? JSON.stringify(body) : null, queryStringParameters: qs }) as any;
-const authed = { 'x-trade-queue-token': TOKEN };
+const authed = { authorization: 'Bearer good' };
 
 beforeEach(() => {
   store.clear();
-  process.env.TRADE_QUEUE_TOKEN = TOKEN;
+  authState = 'ok';
 });
 
-describe('trade-queue auth (fail-closed)', () => {
-  it('mutations 501 when TRADE_QUEUE_TOKEN is unset — never default-open', async () => {
-    delete process.env.TRADE_QUEUE_TOKEN;
+describe('trade-queue auth (login-gated, fail-closed)', () => {
+  it('mutations 501 when the owner allowlist is unconfigured — never default-open', async () => {
+    authState = 'unconfigured';
     const res: any = await handler(evt('POST', { ticker: 'AAPL', side: 'buy', qty: 1, sourceBoard: 'fable' }, authed), {} as any, () => {});
     expect(res.statusCode).toBe(501);
   });
 
-  it('mutations 401 on wrong/missing token; GET stays open', async () => {
-    const bad: any = await handler(evt('POST', { ticker: 'AAPL', side: 'buy', qty: 1, sourceBoard: 'fable' }, { 'x-trade-queue-token': 'nope' }), {} as any, () => {});
+  it('mutations 401 without a valid sign-in; GET stays open', async () => {
+    const bad: any = await handler(evt('POST', { ticker: 'AAPL', side: 'buy', qty: 1, sourceBoard: 'fable' }, { authorization: 'Bearer nope' }), {} as any, () => {});
     expect(bad.statusCode).toBe(401);
     const get: any = await handler(evt('GET'), {} as any, () => {});
     expect(get.statusCode).toBe(200);

@@ -34,6 +34,7 @@ import { WatchlistPanel } from './components/desk/WatchlistPanel.jsx';
 import { buildSignalMap } from './components/desk/SignalCell.jsx';
 import { DossierTabs } from './components/desk/DossierTabs.jsx';
 import { PositionsPanel } from './components/desk/PositionsPanel.jsx';
+import { BrokerPanel } from './components/desk/BrokerPanel.jsx';
 import { BaseRatesPanel } from './components/desk/BaseRatesPanel.jsx';
 import { EarningsRadarPanel } from './components/desk/EarningsRadarPanel.jsx';
 
@@ -123,6 +124,9 @@ export function DeskView() {
 
   const rightRail = (
     <div className="space-y-3">
+      {/* Robinhood Agentic account snapshot (broker-sync) — hidden until
+          the executor agent pushes the first sync. */}
+      <BrokerPanel />
       <PositionsPanel
         quotesByTicker={quotesByTicker}
         focusTicker={focusTicker}

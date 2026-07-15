@@ -1,23 +1,17 @@
 import React, { useState } from 'react';
 import { ShoppingCart } from 'lucide-react';
+import { getIdToken } from '../lib/auth.js';
 
-// Queue a buy order for the execution agent (Robinhood Agentic runbook,
-// Phase 2). Queuing IS the approval — the human clicked it. Mutations
-// require the shared trade-queue token (Settings → Agentic Trading); the
-// server fails closed without it, so this button degrades to an explainer
-// rather than silently doing nothing.
-
-export const TQ_TOKEN_KEY = 'tradeiq-trade-queue-token';
+// Queue a buy order for the execution agent. Queuing IS the approval — the
+// human clicked it, signed in. Mutations carry the Firebase ID token
+// (Google sign-in, Settings → Agentic Trading); the server verifies token
+// + owner email and fails closed when unconfigured. No shared secrets.
 
 export function QueueOrderButton({ ticker, sourceBoard, price, rationale, className = '' }) {
   const [state, setState] = useState('idle'); // idle | form | busy | queued | error
   const [qty, setQty] = useState('');
   const [limit, setLimit] = useState(price ? String(price) : '');
   const [err, setErr] = useState('');
-
-  const token = (() => {
-    try { return localStorage.getItem(TQ_TOKEN_KEY) ?? ''; } catch { return ''; }
-  })();
 
   const submit = async (ev) => {
     ev.preventDefault();
@@ -27,9 +21,11 @@ export function QueueOrderButton({ ticker, sourceBoard, price, rationale, classN
     setState('busy');
     setErr('');
     try {
+      const token = await getIdToken();
+      if (!token) throw new Error('sign in first (Settings → Agentic Trading)');
       const res = await fetch('/api/trade-queue', {
         method: 'POST',
-        headers: { 'content-type': 'application/json', 'x-trade-queue-token': token },
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
         body: JSON.stringify({
           ticker,
           side: 'buy',
@@ -58,7 +54,7 @@ export function QueueOrderButton({ ticker, sourceBoard, price, rationale, classN
 
   if (state === 'form' || state === 'busy') {
     return (
-      <form onSubmit={submit} onClick={(e) => e.stopPropagation()} className={`inline-flex items-center gap-1.5 text-[11px] font-mono ${className}`}>
+      <form onSubmit={submit} onClick={(e) => e.stopPropagation()} className={`inline-flex items-center gap-1.5 text-[11px] font-mono flex-wrap ${className}`}>
         <input
           value={qty} onChange={(e) => setQty(e.target.value)} placeholder="qty" inputMode="decimal"
           className="w-14 h-7 px-1.5 bg-neutral-950 border border-neutral-700 text-neutral-200 placeholder:text-neutral-600 outline-none focus:border-neutral-500"
@@ -72,7 +68,7 @@ export function QueueOrderButton({ ticker, sourceBoard, price, rationale, classN
           {state === 'busy' ? '…' : 'Queue'}
         </button>
         <button type="button" onClick={(e) => { e.stopPropagation(); setState('idle'); }} className="px-1.5 h-7 text-neutral-500">✕</button>
-        {err && <span className="text-rose-400 text-[10px] max-w-[200px] truncate" title={err}>{err}</span>}
+        {err && <span className="text-rose-400 text-[10px] max-w-[220px] truncate" title={err}>{err}</span>}
       </form>
     );
   }
@@ -80,16 +76,8 @@ export function QueueOrderButton({ ticker, sourceBoard, price, rationale, classN
   return (
     <button
       type="button"
-      onClick={(e) => {
-        e.stopPropagation();
-        if (!token) {
-          setErr('set the trade-queue token in Settings first');
-          setState('form');
-          return;
-        }
-        setState('form');
-      }}
-      title="Queue a buy for the execution agent (approval = queuing)"
+      onClick={(e) => { e.stopPropagation(); setState('form'); }}
+      title="Queue a buy for the execution agent (requires sign-in; queuing = approval)"
       className={`inline-flex items-center gap-1 px-2 py-1 text-[10px] font-mono uppercase tracking-wider border border-neutral-700 text-neutral-400 hover:text-emerald-300 hover:border-emerald-500/50 transition-colors ${className}`}
     >
       <ShoppingCart className="h-3 w-3" /> Queue Buy

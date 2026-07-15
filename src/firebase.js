@@ -33,12 +33,41 @@ function loadFirebase() {
         collection, getDocs, onSnapshot, query, orderBy, limit, where,
         serverTimestamp
       } from "https://www.gstatic.com/firebasejs/${FB_VERSION}/firebase-firestore.js";
+      import {
+        getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect,
+        onAuthStateChanged, signOut
+      } from "https://www.gstatic.com/firebasejs/${FB_VERSION}/firebase-auth.js";
 
       try {
         const app = initializeApp(${JSON.stringify(FIREBASE_CONFIG)});
         const db = getFirestore(app);
+        const auth = getAuth(app);
         window._fbTradeiq = {
           db,
+          // Google sign-in (no shared secrets): the server verifies the ID
+          // token + owner email for trade-queue mutations.
+          auth: {
+            signIn: async () => {
+              const provider = new GoogleAuthProvider();
+              try {
+                await signInWithPopup(auth, provider);
+              } catch (err) {
+                // Mobile browsers often block popups — fall back to redirect.
+                if (String(err && err.code).includes('popup')) {
+                  await signInWithRedirect(auth, provider);
+                } else {
+                  throw err;
+                }
+              }
+            },
+            signOut: () => signOut(auth),
+            onChange: (cb) => onAuthStateChanged(auth, cb),
+            getIdToken: async () => {
+              const u = auth.currentUser;
+              return u ? u.getIdToken() : null;
+            },
+            currentUser: () => auth.currentUser,
+          },
           ops: {
             write: async (path, data) => {
               await setDoc(doc(db, ...path.split('/')), data, { merge: true });
