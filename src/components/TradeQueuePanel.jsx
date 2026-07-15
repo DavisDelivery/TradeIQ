@@ -6,7 +6,7 @@ import { getIdToken } from '../lib/auth.js';
 
 // Pending agentic orders. Renders inside the Journal — fills land below as
 // journal entries, so the loop closes here. Cancel and "Mark filled" both
-// require the Google sign-in (no shared secrets): the executor agent
+// require the app login (a password, no shared secrets): the executor agent
 // reports fills in chat; the owner confirms with one tap here, which
 // writes the fill AND the source-tagged journal entry server-side.
 

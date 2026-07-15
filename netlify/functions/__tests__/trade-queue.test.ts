@@ -38,10 +38,10 @@ vi.mock('../shared/firebase-admin', () => ({ getAdminDb: () => dbMock }));
 let authState: 'ok' | 'unconfigured' = 'ok';
 vi.mock('../shared/auth', () => ({
   verifyOwnerBearer: async (headers: Record<string, string | undefined>) => {
-    if (authState === 'unconfigured') return { ok: false, status: 501, error: 'OWNER_EMAILS not configured — login-gated mutations disabled' };
+    if (authState === 'unconfigured') return { ok: false, status: 501, error: 'login not configured (SESSION_SECRET unset) — mutations disabled' };
     const raw = headers['authorization'] ?? '';
-    if (raw === 'Bearer good') return { ok: true, email: 'owner@example.com' };
-    return { ok: false, status: 401, error: 'sign in required (missing bearer token)' };
+    if (raw === 'Bearer good') return { ok: true, email: 'owner' };
+    return { ok: false, status: 401, error: 'sign in required' };
   },
 }));
 

@@ -14,11 +14,12 @@
 //         source-tagged to the originating board.
 //
 // AUTH — login, not secrets (owner's explicit preference): every mutation
-// requires a Firebase ID token from a Google sign-in whose email is on the
-// OWNER_EMAILS allowlist (shared/auth.ts). FAIL-CLOSED when unconfigured.
-// Consequence: the executor agent cannot PATCH fills unattended — fills are
-// confirmed with one tap ("Mark filled") in the Journal queue panel, behind
-// the same login. That keeps a human on every money-adjacent write.
+// requires an app session token minted by /api/auth-login after a password
+// check (shared/session.ts — no Firebase, no OAuth). FAIL-CLOSED when
+// unconfigured. Consequence: the executor agent cannot PATCH fills
+// unattended — fills are confirmed with one tap ("Mark filled") in the
+// Journal queue panel, behind the same login. That keeps a human on every
+// money-adjacent write.
 //
 // State machine (one-way, no resurrection):
 //   queued -> executed | cancelled | expired

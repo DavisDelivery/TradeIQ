@@ -6,7 +6,7 @@ import { getIdToken } from '../lib/auth.js';
 // approval (you clicked it, signed in). A buy can carry a stop-loss —
 // the executor places a NATIVE Robinhood stop order at fill, so the
 // protection lives at the broker and fires without any session running.
-// Mutations send the Firebase ID token; the server verifies owner email.
+// Mutations send the app session token; the server verifies its signature.
 
 async function queue(payload) {
   const token = await getIdToken();

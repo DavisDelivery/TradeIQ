@@ -1,40 +1,65 @@
 import React, { useState } from 'react';
 import { AlertTriangle, ShoppingCart } from 'lucide-react';
 import { StatusDot } from './components/Badges.jsx';
-import { signIn, signOutUser, onAuthChange } from './lib/auth.js';
+import { login, logout, isSignedIn, onAuthChange } from './lib/auth.js';
 
-// Agentic Trading — Google sign-in (owner preference: a login, no shared
-// secrets). Queue mutations send the Firebase ID token; the server
-// verifies it and requires the email to be on the OWNER_EMAILS allowlist
-// (Netlify env, fail-closed). The executor agent reports fills in chat;
-// you confirm them with one tap in the Journal's queue panel — every
+// Agentic Trading — app-native login (owner preference: a login to
+// TradeIQ itself, NOT Firebase/Google, so it never touches the shared
+// Firebase config the owner's other apps depend on). You sign in with a
+// password; the server returns a 30-day signed session token that rides
+// queue mutations as a Bearer header (shared/session.ts verifies it,
+// fail-closed when unconfigured). The executor agent reports fills in
+// chat; you confirm them with one tap in the Journal's queue panel — every
 // money-adjacent write stays behind this login.
 function AgenticTradingSettings() {
-  const [user, setUser] = React.useState(undefined); // undefined = loading
+  const [signedIn, setSignedIn] = React.useState(undefined); // undefined = loading
+  const [password, setPassword] = React.useState('');
+  const [busy, setBusy] = React.useState(false);
   const [err, setErr] = React.useState('');
-  React.useEffect(() => onAuthChange((u) => setUser(u ?? null)), []);
-  const doSignIn = async () => {
-    setErr('');
-    try { await signIn(); } catch (e) { setErr(String(e?.message || e)); }
+  React.useEffect(() => onAuthChange((t) => setSignedIn(!!t)), []);
+
+  const doLogin = async (ev) => {
+    ev.preventDefault();
+    if (!password) { setErr('enter your password'); return; }
+    setBusy(true); setErr('');
+    try {
+      await login(password);
+      setPassword('');
+    } catch (e) {
+      setErr(String(e?.message || e));
+    } finally {
+      setBusy(false);
+    }
   };
+
   return (
     <div className="border border-neutral-800 p-5">
       <h3 className="font-serif text-lg mb-1 flex items-center gap-2"><ShoppingCart className="h-4 w-4 text-neutral-500" /> Agentic Trading</h3>
       <p className="text-[11px] text-neutral-500 font-mono mb-3 leading-relaxed">
-        Sign in with Google to queue orders and confirm fills. The server only accepts
-        accounts on its owner allowlist — no tokens to copy, nothing to store.
+        Sign in to TradeIQ with your password to queue orders and confirm fills.
+        This is an app login — no Google, no Firebase, nothing to copy or store.
       </p>
-      {user === undefined && <div className="text-[11px] font-mono text-neutral-600">checking sign-in…</div>}
-      {user === null && (
-        <button type="button" onClick={doSignIn}
-          className="px-4 h-9 border border-neutral-700 text-[11px] font-mono uppercase tracking-widest text-neutral-200 hover:border-neutral-500">
-          Sign in with Google
-        </button>
+      {signedIn === undefined && <div className="text-[11px] font-mono text-neutral-600">checking sign-in…</div>}
+      {signedIn === false && (
+        <form onSubmit={doLogin} className="flex items-center gap-2 flex-wrap">
+          <input
+            type="password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            placeholder="password"
+            autoComplete="current-password"
+            className="h-9 px-3 w-56 bg-neutral-950 border border-neutral-700 text-[12px] font-mono text-neutral-200 placeholder:text-neutral-600 outline-none focus:border-neutral-500"
+          />
+          <button type="submit" disabled={busy}
+            className="px-4 h-9 border border-neutral-700 text-[11px] font-mono uppercase tracking-widest text-neutral-200 hover:border-neutral-500 disabled:opacity-50">
+            {busy ? 'signing in…' : 'Sign in'}
+          </button>
+        </form>
       )}
-      {user && (
+      {signedIn === true && (
         <div className="flex items-center gap-3 flex-wrap">
-          <span className="text-[12px] font-mono text-emerald-300">✓ {user.email}</span>
-          <button type="button" onClick={() => signOutUser()}
+          <span className="text-[12px] font-mono text-emerald-300">✓ signed in to TradeIQ</span>
+          <button type="button" onClick={() => logout()}
             className="px-3 h-8 border border-neutral-700 text-[10px] font-mono uppercase tracking-widest text-neutral-400 hover:border-neutral-500">
             Sign out
           </button>

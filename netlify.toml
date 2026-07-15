@@ -436,7 +436,13 @@
   to = "/.netlify/functions/vector-status"
   status = 200
 
-# Trade queue — agentic execution bridge (token-gated mutations).
+# App-native login — password → signed session token (no Firebase/OAuth).
+[[redirects]]
+  from = "/api/auth-login"
+  to = "/.netlify/functions/auth-login"
+  status = 200
+
+# Trade queue — agentic execution bridge (login-gated mutations).
 [[redirects]]
   from = "/api/trade-queue"
   to = "/.netlify/functions/trade-queue"
