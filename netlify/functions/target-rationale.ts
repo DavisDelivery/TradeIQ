@@ -68,7 +68,19 @@ export const handler: Handler = async (event) => {
       fetchBarCache([ticker]),
     ]);
     const macroBias = regime ? regimeToMacroBias(regime) : 0;
-    const { target, analysts } = await runAnalystsForTicker({ ticker, barCache, macroBias });
+    // Cap the 10-analyst provider fan-out: uncapped, a single hung vendor
+    // (Quiver insider/patent/political paths have no per-dep timeout) rode
+    // past the function ceiling and the platform killed us with 0 bytes —
+    // the UI spun forever (live-probe finding, 2026-07-15). A capped run
+    // returns an honest 504 the frontend can render.
+    const raced = await Promise.race([
+      runAnalystsForTicker({ ticker, barCache, macroBias }),
+      new Promise<null>((r) => setTimeout(() => r(null), 20_000)),
+    ]);
+    if (!raced) {
+      return json(504, { ok: false, ticker, error: 'analyst fan-out exceeded 20s — upstream provider hung; retry shortly' } as unknown as TargetRationaleResponse);
+    }
+    const { target, analysts } = raced;
 
     if (!target) {
       log.warn('no_bars', { ticker, durationMs: Date.now() - start });
