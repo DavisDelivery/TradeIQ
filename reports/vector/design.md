@@ -193,3 +193,41 @@ away. Measurement outranks narrative — including mine.
 launch)
 
 (empty — first entry will be the universe snapshot + backfill counts)
+
+### Run vrun_v1_initial — 2026-07-15 (E1 only; E2/E3 backfills incomplete)
+
+Universe: 88 PIT hygiene snapshots (2017-09 → 2024-12; entitlement floor
+~2016-07 discovered, 803 below-floor days recorded, earliest month-ends
+unreachable and enumerated on the checkpoint — left edge is vendor
+entitlement, not the rule). Events: E1 = 53,702 stored (51,680 CAR rows
+in-window), agreement trigger fired on 621. E2 = 0 (backfill still
+running at measurement), E3 = 0 (EDGAR egress-IP rate-blocks; patient
+backoff deployed, backfill resuming). Costs tiered per constants;
+benchmarks SPY (LARGE) / IWM (MID+SMALL); t+1-open entry; delistings
+closed at last print.
+
+**H1 (E1 agreement, MID+SMALL pooled): FAIL.** Pooled n=429
+(MID 237: mean +0.05%, t 0.04 · SMALL 192: mean +1.09%, t 0.70);
+all-buckets agreement n=597: mean +1.17%, t 1.30 — positive but far
+below the pre-committed t ≥ 3. Per the binding rule, **E1 chips
+NO_EDGE** and ships as a labelled event monitor. This matches the
+expected honest outcome written before any number existed ("E1 dead in
+LARGE, weak-positive in MID/SMALL if anywhere").
+
+**H4 (PRIME − PASS): NOT MEASURABLE in this run.** PRIME n=0 — with
+fscore, insiderNet90d, and instDelta not yet populated on E1 events
+(fscore module and 13F aggregation are named follow-ups), the F axis
+cannot reach STRONG, so PRIME is structurally unreachable. Quadrants
+remain descriptive taxonomy, exactly as the rule prescribes for an H4
+failure; the chip must say so. For context, PASS (n=45,151) measured
+mean −0.62%, t −6.49 — the broad earnings-event population net of costs
+underperforms its benchmark, consistent with Martineau.
+
+**H2/H3/H5b: PENDING** (E2/E3 libraries incomplete at measurement).
+**H5a** (amihud terciles) computed but not binding while H1's cohort
+carries no edge. **Book: NO_EDGE (not applicable)** — no validated
+triggers to trade, per the rule's "book trades validated triggers only".
+
+No constants were changed. A follow-up run (vrun_v2) fires when the E2
+and E3 backfills complete; H2/H3/H5b resolve there. fscore + 13F
+population is the named precondition for a meaningful H4 re-measure.
