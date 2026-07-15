@@ -18,7 +18,8 @@
 // Failures THROW; failed tickers stay on the checkpoint's retry list.
 
 import type { Handler } from '@netlify/functions';
-import { getFinnhubInsiderTransactionsWithStatus, getDailyBars } from './shared/data-provider';
+import { getFinnhubInsiderTransactionsWithStatus } from './shared/data-provider';
+import { getDailyBarsClamped } from './shared/vector-data';
 import {
   qualifiesE2, isRoutineInsider, detectClusters, sellClusterActive, type InsiderTx,
 } from './shared/vector-events';
@@ -78,7 +79,7 @@ export const handler: Handler = async (event) => {
 
     // Form 4 lookback anchored at the design's 2013-01-01 start.
     const daysBack = Math.ceil((Date.now() - Date.parse(E2.form4BackfillStart)) / 86_400_000);
-    const spy = (await getDailyBars('SPY', BARS_FROM, BARS_TO)) as unknown as FBar[];
+    const spy = (await getDailyBarsClamped('SPY', BARS_FROM, BARS_TO)).bars as unknown as FBar[];
 
     let i = startIdx;
     for (; i < universe.length && Date.now() - started < BUDGET_MS; i++) {
@@ -144,7 +145,7 @@ export const handler: Handler = async (event) => {
 
         const clusters = detectClusters(qualifying);
         if (clusters.length) {
-          const bars = (await getDailyBars(ticker, BARS_FROM, BARS_TO)) as unknown as FBar[];
+          const bars = (await getDailyBarsClamped(ticker, BARS_FROM, BARS_TO)).bars as unknown as FBar[];
           const barIdxByDay = new Map(bars.map((b, j) => [new Date(b.t).toISOString().slice(0, 10), j]));
           const dayOf = (d: string) => {
             // filing dates on non-trading days resolve to the next bar

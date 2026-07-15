@@ -29,8 +29,7 @@
 
 import type { Handler } from '@netlify/functions';
 import { getIncomeStatementsPit } from './shared/massive-fundamentals';
-import { getDailyBars } from './shared/data-provider';
-import { getEarningsCalendarForSymbol } from './shared/vector-data';
+import { getEarningsCalendarForSymbol, getDailyBarsClamped } from './shared/vector-data';
 import { computeSue, e1Agreement, resolveEventDay } from './shared/vector-events';
 import { computeFeatures, type FBar } from './shared/vector-features';
 import { VECTOR_MODEL_VERSION, VALIDATION, HYGIENE } from './shared/vector-constants';
@@ -121,7 +120,7 @@ export const handler: Handler = async (event) => {
     await writeCheckpoint(cp);
 
     // SPY series once per invocation: the trading calendar + benchmark.
-    const spy = (await getDailyBars('SPY', BARS_FROM, BARS_TO)) as unknown as FBar[];
+    const spy = (await getDailyBarsClamped('SPY', BARS_FROM, BARS_TO)).bars as unknown as FBar[];
     if (spy.length < 500) throw new Error(`SPY series too thin (${spy.length}) — refusing to fabricate a calendar`);
     const spyDays = spy.map((b) => new Date(b.t).toISOString().slice(0, 10));
     const spySet = new Set(spyDays);
@@ -180,7 +179,7 @@ export const handler: Handler = async (event) => {
           return null;
         };
 
-        const bars = (await getDailyBars(ticker, BARS_FROM, BARS_TO)) as unknown as FBar[];
+        const bars = (await getDailyBarsClamped(ticker, BARS_FROM, BARS_TO)).bars as unknown as FBar[];
         if (bars.length < 260) { cp.counters.skippedThinHistory++; cp.counters.tickersDone++; continue; }
         const barIdxByDay = new Map(bars.map((b, j) => [new Date(b.t).toISOString().slice(0, 10), j]));
 

@@ -22,7 +22,7 @@
 // the checkpoint records them; nothing is fabricated.
 
 import type { Handler } from '@netlify/functions';
-import { getDailyBars } from './shared/data-provider';
+import { getDailyBarsClamped } from './shared/vector-data';
 import { carForEvent, sampleStats, welchT, terciles, monotone, type StudyBar } from './shared/vector-study';
 import { runVectorSim, type SimEvent } from './shared/vector-sim';
 import { scoreFAxis, scoreTAxis } from './shared/vector-verdict';
@@ -100,8 +100,8 @@ export const handler: Handler = async (event) => {
     }
 
     // Benchmarks once per invocation.
-    const spy = (await getDailyBars('SPY', BARS_FROM, BARS_TO)) as unknown as StudyBar[];
-    const iwm = (await getDailyBars('IWM', BARS_FROM, BARS_TO)) as unknown as StudyBar[];
+    const spy = (await getDailyBarsClamped('SPY', BARS_FROM, BARS_TO)).bars as unknown as StudyBar[];
+    const iwm = (await getDailyBarsClamped('IWM', BARS_FROM, BARS_TO)).bars as unknown as StudyBar[];
     if (spy.length < 500 || iwm.length < 500) throw new Error('benchmark series too thin');
 
     // ---------------- phase: cars ----------------
@@ -145,7 +145,7 @@ export const handler: Handler = async (event) => {
 
         let bars: StudyBar[];
         try {
-          bars = (await getDailyBars(ticker, BARS_FROM, BARS_TO)) as unknown as StudyBar[];
+          bars = (await getDailyBarsClamped(ticker, BARS_FROM, BARS_TO)).bars as unknown as StudyBar[];
         } catch (err) {
           cp.counters.skippedNoBars++;
           log.warn('bars_failed', { ticker, err: String((err as Error)?.message ?? err) });
@@ -324,7 +324,7 @@ export const handler: Handler = async (event) => {
             return { statusCode: 200, body: JSON.stringify({ ok: true, runId, phase: 'sim-loading' }) };
           }
           try {
-            barsByTicker.set(t, (await getDailyBars(t, BARS_FROM, BARS_TO)) as unknown as StudyBar[]);
+            barsByTicker.set(t, (await getDailyBarsClamped(t, BARS_FROM, BARS_TO)).bars as unknown as StudyBar[]);
           } catch { /* missing series: sim skips entries it can't price */ }
         }
         const sim = runVectorSim(simEvents, barsByTicker, iwm);

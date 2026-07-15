@@ -15,9 +15,8 @@
 // counted), not a failure. Transport failures on real days THROW.
 
 import type { Handler } from '@netlify/functions';
-import { edgarFetch, dailyIndexUrl, getCikTickerMap } from './shared/vector-data';
+import { edgarFetch, dailyIndexUrl, getCikTickerMap, getDailyBarsClamped } from './shared/vector-data';
 import { parseSc13dIndex } from './shared/vector-events';
-import { getDailyBars } from './shared/data-provider';
 import { computeFeatures, type FBar } from './shared/vector-features';
 import { VECTOR_MODEL_VERSION, VALIDATION, E3 } from './shared/vector-constants';
 import {
@@ -61,7 +60,7 @@ export const handler: Handler = async (event) => {
 
   try {
     const cikMap = await getCikTickerMap();
-    const spy = (await getDailyBars('SPY', BARS_FROM, BARS_TO)) as unknown as FBar[];
+    const spy = (await getDailyBarsClamped('SPY', BARS_FROM, BARS_TO)).bars as unknown as FBar[];
 
     let day = doneThrough
       ? new Date(Date.parse(doneThrough) + 86_400_000).toISOString().slice(0, 10)
@@ -103,7 +102,7 @@ export const handler: Handler = async (event) => {
 
           let features: Record<string, unknown> = {};
           try {
-            const bars = (await getDailyBars(ticker, BARS_FROM, f.dateFiled)) as unknown as FBar[];
+            const bars = (await getDailyBarsClamped(ticker, BARS_FROM, f.dateFiled)).bars as unknown as FBar[];
             if (bars.length < 64) { cp.counters.thinBars++; continue; }
             const spyClipped = spy.filter((b) => new Date(b.t).toISOString().slice(0, 10) <= f.dateFiled);
             features = computeFeatures(bars, spyClipped) as unknown as Record<string, unknown>;
