@@ -1,6 +1,6 @@
 // VECTOR — E2 insider-cluster-in-drawdown backfill (background, checkpointed).
 //
-// POST /.netlify/functions/vector-backfill-insiders
+// POST /.netlify/functions/vector-backfill-insiders-background
 // Body: { resume?: true, tickers?: string[] }
 //
 // Reuses the existing Finnhub insider PIT fetch (token bucket, patient
@@ -229,7 +229,7 @@ export const handler: Handler = async (event) => {
     cp.heartbeatAt = new Date().toISOString();
     if (finished) cp.completedAt = new Date().toISOString();
     await writeCheckpoint(cp);
-    if (!finished) await reinvoke('vector-backfill-insiders', { resume: true });
+    if (!finished) await reinvoke('vector-backfill-insiders-background', { resume: true });
 
     return {
       statusCode: 200,

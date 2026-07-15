@@ -1,6 +1,6 @@
 // VECTOR — PIT hygiene universe snapshot builder (background, checkpointed).
 //
-// POST /.netlify/functions/vector-universe-snapshot
+// POST /.netlify/functions/vector-universe-snapshot-background
 // Body: { start?: 'YYYY-MM-DD', end?: 'YYYY-MM-DD', resume?: true }
 //
 // For each calendar month-end in [start, end], builds the hygiene list —
@@ -191,7 +191,7 @@ export const handler: Handler = async (event) => {
     cp.heartbeatAt = new Date().toISOString();
     if (finished) cp.completedAt = new Date().toISOString();
     await writeCheckpoint(cp);
-    if (!finished) await reinvoke('vector-universe-snapshot', { resume: true });
+    if (!finished) await reinvoke('vector-universe-snapshot-background', { resume: true });
 
     return {
       statusCode: 200,

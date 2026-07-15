@@ -29,9 +29,13 @@ export const handler: Handler = async (event) => {
 
   try {
     const db = getAdminDb();
-    let q = db.collection(VECTOR_COLLECTIONS.events).orderBy('date', 'desc').limit(limit * 3);
-    if (type) q = db.collection(VECTOR_COLLECTIONS.events).where('type', '==', type).orderBy('date', 'desc').limit(limit * 3);
-    const snap = await q.get();
+    // Composite-index-free: single-field orderBy only (where('type') +
+    // orderBy('date') needs a composite index Firestore doesn't have).
+    // Over-fetch and filter type in memory instead.
+    const snap = await db.collection(VECTOR_COLLECTIONS.events)
+      .orderBy('date', 'desc')
+      .limit(type ? limit * 8 : limit * 3)
+      .get();
 
     const events = snap.docs
       .map((d) => {
@@ -50,6 +54,7 @@ export const handler: Handler = async (event) => {
           },
         };
       })
+      .filter((e) => (type ? e.type === type : true))
       // Display rule: E1 only when the agreement trigger fired.
       .filter((e) => e.type !== 'E1' || e.agreement === true)
       .slice(0, limit);
