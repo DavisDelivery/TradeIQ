@@ -40,10 +40,16 @@ type QueueStatus = (typeof STATUSES)[number];
 export interface QueueRow {
   id: string;
   ticker: string;
-  side: 'buy';
+  side: 'buy' | 'sell';
   qty: number | null;
   notional: number | null;
   limitPrice: number | null;
+  /** Stop-loss on a buy: the executor places a NATIVE Robinhood stop order
+   *  at fill time so the protection lives at the broker (fires without any
+   *  app/session running). stopPrice is absolute; stopLossPct is % below
+   *  the fill (resolved to a price by the executor). */
+  stopPrice: number | null;
+  stopLossPct: number | null;
   sourceBoard: string;
   rationale: string | null;
   status: QueueStatus;
@@ -52,6 +58,8 @@ export interface QueueRow {
   executedAt?: string;
   cancelledAt?: string;
   fill?: { price: number; qty: number; filledAt: string };
+  /** the native stop order the executor placed (if any) */
+  stopOrder?: { stopPrice: number; placedAt: string } | null;
   journalId?: string;
 }
 
@@ -104,12 +112,19 @@ export const handler: Handler = async (event) => {
     if (event.httpMethod === 'POST') {
       const ticker = String(body.ticker ?? '').toUpperCase().trim();
       if (!/^[A-Z.\-]{1,8}$/.test(ticker)) return json(400, { ok: false, error: 'ticker required' });
-      if (body.side !== 'buy') return json(400, { ok: false, error: "side must be 'buy' (long-only per runbook v1)" });
+      const side = body.side === 'sell' ? 'sell' : body.side === 'buy' ? 'buy' : null;
+      if (!side) return json(400, { ok: false, error: "side must be 'buy' or 'sell'" });
       const qty = Number.isFinite(+body.qty) && +body.qty > 0 ? +body.qty : null;
       const notional = Number.isFinite(+body.notional) && +body.notional > 0 ? +body.notional : null;
       if (!qty && !notional) return json(400, { ok: false, error: 'qty or notional required' });
       const sourceBoard = String(body.sourceBoard ?? '').trim();
       if (!sourceBoard) return json(400, { ok: false, error: 'sourceBoard required' });
+
+      // Stop-loss (buys only): absolute stopPrice OR a % below fill. Clamp
+      // pct to a sane 0-90% band; ignore stops on sells.
+      const stopPrice = side === 'buy' && Number.isFinite(+body.stopPrice) && +body.stopPrice > 0 ? +body.stopPrice : null;
+      const stopLossPct = side === 'buy' && Number.isFinite(+body.stopLossPct) && +body.stopLossPct > 0
+        ? Math.min(0.9, +body.stopLossPct) : null;
 
       const now = new Date();
       const expiresHours = Number.isFinite(+body.expiresHours) && +body.expiresHours > 0
@@ -118,10 +133,12 @@ export const handler: Handler = async (event) => {
       const row: QueueRow = {
         id: `tq_${ticker}_${now.getTime()}`,
         ticker,
-        side: 'buy',
+        side,
         qty,
         notional,
         limitPrice: Number.isFinite(+body.limitPrice) && +body.limitPrice > 0 ? +body.limitPrice : null,
+        stopPrice,
+        stopLossPct,
         sourceBoard,
         rationale: body.rationale ? String(body.rationale).slice(0, 500) : null,
         status: 'queued',
@@ -129,7 +146,7 @@ export const handler: Handler = async (event) => {
         expiresAt: new Date(now.getTime() + expiresHours * 3_600_000).toISOString(),
       };
       await db.collection(COLLECTION).doc(row.id).set(row);
-      log.info('queued', { id: row.id, ticker, sourceBoard });
+      log.info('queued', { id: row.id, ticker, side, sourceBoard, hasStop: !!(stopPrice || stopLossPct) });
       return json(201, { ok: true, row });
     }
 
@@ -165,6 +182,19 @@ export const handler: Handler = async (event) => {
       }
       const filledAt = typeof fill.filledAt === 'string' ? fill.filledAt : new Date().toISOString();
 
+      // The executor reports the native stop order it placed at fill (buys
+      // with a stop). Resolve pct→price here if it only reported the pct.
+      let stopOrder: QueueRow['stopOrder'] = null;
+      const reportedStop = body.stopOrder ?? {};
+      const stopPx = Number.isFinite(+reportedStop.stopPrice) && +reportedStop.stopPrice > 0
+        ? +reportedStop.stopPrice
+        : row.side === 'buy' && row.stopLossPct != null
+          ? +(price * (1 - row.stopLossPct)).toFixed(2)
+          : row.stopPrice ?? null;
+      if (row.side === 'buy' && stopPx) {
+        stopOrder = { stopPrice: stopPx, placedAt: new Date().toISOString() };
+      }
+
       // Journal writeback: same doc shape the client's logTrade writes; the
       // app's live tradeLog subscription picks it up and fires
       // 'tradelog:change' — the Journal updates without any polling.
@@ -173,21 +203,26 @@ export const handler: Handler = async (event) => {
         id: journalId,
         ticker: row.ticker,
         source: row.sourceBoard,
+        side: row.side,
         loggedAt: filledAt,
         price,
         entry: price,
-        qty,
-        notes: `agentic fill via trade-queue ${row.id}${row.rationale ? ` — ${row.rationale}` : ''}`,
+        qty: row.side === 'sell' ? -Math.abs(qty) : qty,
+        stopPrice: stopOrder?.stopPrice ?? null,
+        notes: `agentic ${row.side} via trade-queue ${row.id}`
+          + (stopOrder ? ` · stop $${stopOrder.stopPrice}` : '')
+          + (row.rationale ? ` — ${row.rationale}` : ''),
         via: 'trade-queue',
       });
       await ref.set({
         status: 'executed',
         executedAt: new Date().toISOString(),
         fill: { price, qty, filledAt },
+        stopOrder,
         journalId,
       }, { merge: true });
-      log.info('executed', { id, ticker: row.ticker, price, qty, journalId });
-      return json(200, { ok: true, id, status: 'executed', journalId });
+      log.info('executed', { id, ticker: row.ticker, side: row.side, price, qty, stop: stopOrder?.stopPrice, journalId });
+      return json(200, { ok: true, id, status: 'executed', journalId, stopOrder });
     }
 
     return json(405, { ok: false, error: 'GET, POST, PATCH only' });

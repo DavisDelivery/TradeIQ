@@ -103,13 +103,18 @@ export function TradeQueuePanel() {
           <div key={r.id} className="px-4 py-2 flex items-center gap-3 text-[12px] font-mono flex-wrap">
             <span className={`px-1.5 py-0.5 text-[9px] uppercase tracking-wider border ${statusStyle(r.status)}`}>{r.status}</span>
             <span className="font-serif font-bold text-sm">{r.ticker}</span>
-            <span className="text-neutral-400">
-              buy {r.qty ?? '—'}{r.limitPrice ? ` @ ≤$${r.limitPrice}` : ' @ mkt'}
+            <span className={r.side === 'sell' ? 'text-rose-300' : 'text-neutral-400'}>
+              {r.side ?? 'buy'} {r.qty ?? '—'}{r.limitPrice ? ` @ ≤$${r.limitPrice}` : ' @ mkt'}
+              {(r.stopPrice || r.stopLossPct) && (
+                <span className="text-rose-400/80"> · stop {r.stopPrice ? `$${r.stopPrice}` : `${Math.round(r.stopLossPct * 100)}%`}</span>
+              )}
             </span>
             <span className="text-[10px] text-neutral-500 uppercase">{r.sourceBoard}</span>
             <span className="text-[10px] text-neutral-500">{fmtWhen(r.queuedAt)}</span>
             {r.status === 'executed' && r.fill && (
-              <span className="text-[10px] text-emerald-400">filled {r.fill.qty} @ ${r.fill.price}</span>
+              <span className="text-[10px] text-emerald-400">
+                filled {r.fill.qty} @ ${r.fill.price}{r.stopOrder ? ` · stop $${r.stopOrder.stopPrice}` : ''}
+              </span>
             )}
             {r.status === 'queued' && filling !== r.id && (
               <span className="ml-auto inline-flex gap-2">

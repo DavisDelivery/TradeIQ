@@ -79,16 +79,40 @@ describe('trade-queue lifecycle', () => {
     return JSON.parse(res.body);
   }
 
-  it('queues a valid buy; rejects sells (long-only v1) and missing size', async () => {
+  it('queues buys AND sells; carries a stop-loss on buys; rejects bad side/size', async () => {
     const q = await queueOne();
-    expect(q.ok).toBe(true);
-    expect(q.row.status).toBe('queued');
     expect(q.row.side).toBe('buy');
 
-    const sell: any = await handler(evt('POST', { ticker: 'NVDA', side: 'sell', qty: 1, sourceBoard: 'x' }, authed), {} as any, () => {});
-    expect(sell.statusCode).toBe(400);
+    const sell: any = await handler(evt('POST', { ticker: 'NVDA', side: 'sell', qty: 2, sourceBoard: 'desk' }, authed), {} as any, () => {});
+    expect(sell.statusCode).toBe(201);
+    expect(JSON.parse(sell.body).row.side).toBe('sell');
+
+    const withStop = await queueOne({ stopLossPct: 0.12 });
+    expect(withStop.row.stopLossPct).toBe(0.12);
+
+    const badSide: any = await handler(evt('POST', { ticker: 'NVDA', side: 'short', qty: 1, sourceBoard: 'x' }, authed), {} as any, () => {});
+    expect(badSide.statusCode).toBe(400);
     const noSize: any = await handler(evt('POST', { ticker: 'NVDA', side: 'buy', sourceBoard: 'x' }, authed), {} as any, () => {});
     expect(noSize.statusCode).toBe(400);
+  });
+
+  it('execute resolves the native stop price from stopLossPct and tags the journal', async () => {
+    const q = await queueOne({ stopLossPct: 0.1 });
+    const ex: any = await handler(evt('PATCH', { id: q.row.id, action: 'execute', fill: { price: 1000, qty: 3 } }, authed), {} as any, () => {});
+    const body = JSON.parse(ex.body);
+    expect(body.stopOrder.stopPrice).toBe(900); // 10% below the 1000 fill
+    const journal = [...store.entries()].find(([k]) => k.startsWith('tradeLog/'));
+    expect(journal![1].stopPrice).toBe(900);
+    expect(journal![1].side).toBe('buy');
+  });
+
+  it('a sell records negative qty in the journal (position reduction)', async () => {
+    const sellRes: any = await handler(evt('POST', { ticker: 'AMD', side: 'sell', qty: 5, sourceBoard: 'desk' }, authed), {} as any, () => {});
+    const sid = JSON.parse(sellRes.body).row.id;
+    await handler(evt('PATCH', { id: sid, action: 'execute', fill: { price: 150, qty: 5 } }, authed), {} as any, () => {});
+    const journal = [...store.entries()].find(([k]) => k.startsWith('tradeLog/'));
+    expect(journal![1].qty).toBe(-5);
+    expect(journal![1].side).toBe('sell');
   });
 
   it('cancel: queued -> cancelled; cannot cancel twice', async () => {
