@@ -23,6 +23,11 @@
 [functions."target-board"]
   timeout = 26
 
+# VECTOR evaluator fans out to Polygon + Massive + Finnhub + FRED — needs
+# more than the default 10s even with per-dependency caps.
+[functions."vector-evaluate"]
+  timeout = 26
+
 # Insider board scans up to 120 tickers via Quiver — give it room
 [functions."insider-board"]
   timeout = 26

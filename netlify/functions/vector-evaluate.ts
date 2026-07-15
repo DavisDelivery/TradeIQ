@@ -83,12 +83,25 @@ export const handler: Handler = async (event) => {
 
     const features = computeFeatures(bars, spy);
 
-    // ---- F inputs (each failure -> null, never fabricated) ----
+    // ---- F inputs, fetched IN PARALLEL with per-dependency time caps ----
+    // The serial version stacked Massive + Finnhub (patient ~50s retry
+    // path) + FRED past the function timeout and died with NO response —
+    // the UI spun on "evaluating…" forever. A dependency that can't answer
+    // inside its cap resolves null -> _noData; the verdict ships without
+    // it rather than not shipping at all.
+    const capped = <T,>(p: Promise<T>, ms: number): Promise<T | null> =>
+      Promise.race([p, new Promise<null>((r) => setTimeout(() => r(null), ms))]).catch(() => null);
+
+    const [stmtsRes, insRes, regimeRes] = await Promise.all([
+      capped(getIncomeStatementsPit(ticker, to, 48), 8000),
+      capped(getFinnhubInsiderTransactionsWithStatus(ticker, 100, {}), 8000),
+      capped(computeRegime(), 6000),
+    ]);
+
     let latestSue: number | null = null;
     let consecutivePositiveSue = 0;
-    try {
-      const stmts = await getIncomeStatementsPit(ticker, to, 48);
-      const eps = (stmts ?? [])
+    if (stmtsRes) {
+      const eps = (stmtsRes as any[])
         .filter((s: any) => s.diluted_earnings_per_share != null && s.period_end)
         .sort((a: any, b: any) => String(a.period_end).localeCompare(String(b.period_end)))
         .map((s: any) => s.diluted_earnings_per_share as number);
@@ -100,13 +113,12 @@ export const handler: Handler = async (event) => {
           else break;
         }
       }
-    } catch { /* latestSue stays null -> _noData */ }
+    }
 
     let insiderNet90d: number | null = null;
     let sellCluster = false;
-    try {
-      const ins = await getFinnhubInsiderTransactionsWithStatus(ticker, 100, {});
-      const raw = ((ins as any)?.data ?? []) as any[];
+    if (insRes) {
+      const raw = ((insRes as any)?.data ?? []) as any[];
       const txs: InsiderTx[] = raw
         .filter((r) => (r.transactionCode === 'P' || r.transactionCode === 'S') && r.transactionPrice > 0)
         .map((r) => ({
@@ -117,24 +129,23 @@ export const handler: Handler = async (event) => {
           dollars: Math.abs((r.change ?? r.share ?? 0) * (r.transactionPrice ?? 0)),
           isOfficerOrDirector: true,
         }));
-      if (raw.length || (ins as any)?.ok !== false) {
+      if (raw.length || (insRes as any)?.ok !== false) {
         insiderNet90d = Math.round(
           txs.reduce((a, t) => a + (t.code === 'P' ? t.dollars : -t.dollars), 0),
         );
         sellCluster = sellClusterActive(txs.filter((t) => t.code === 'S'), to);
       }
-    } catch { /* stays null -> _noData */ }
+    }
 
     let instDelta: number | null = null; // wired once 13F agg covers current quarters
 
-    // ---- regime ----
     let regime: 'offense' | 'neutral' | 'caution' | 'panic' | null = null;
-    try {
-      const r = await computeRegime();
+    if (regimeRes) {
+      const r = regimeRes as Awaited<ReturnType<typeof computeRegime>>;
       regime = r.regime === 'risk_on' ? 'offense'
         : r.regime === 'risk_off' ? ((r.vol?.level ?? 0) > 28 ? 'panic' : 'caution')
         : 'neutral';
-    } catch { /* stays null -> _noData */ }
+    }
 
     const f = scoreFAxis({ fscore: null, latestSue, consecutivePositiveSue, insiderNet90d, sellCluster, instDelta });
     const t = scoreTAxis({
@@ -150,9 +161,12 @@ export const handler: Handler = async (event) => {
     });
 
     // Recent events for this ticker from the library.
+    // Composite-index-free: equality-only query, sort + trim in memory.
     const evSnap = await getAdminDb().collection(VECTOR_COLLECTIONS.events)
-      .where('ticker', '==', ticker).orderBy('date', 'desc').limit(10).get();
-    const events = evSnap.docs.map((d) => {
+      .where('ticker', '==', ticker).limit(60).get();
+    const events = evSnap.docs.sort((a, b) =>
+      String((b.data() as any).date).localeCompare(String((a.data() as any).date)),
+    ).slice(0, 10).map((d) => {
       const e = d.data() as any;
       return { id: d.id, type: e.type, date: e.date, payload: e.payload, sizeBucket: e.sizeBucket, agreement: e.agreement ?? null };
     });

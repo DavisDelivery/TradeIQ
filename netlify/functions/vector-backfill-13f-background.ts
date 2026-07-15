@@ -1,6 +1,6 @@
 // VECTOR — 13F holder aggregates (background, checkpointed).
 //
-// POST /.netlify/functions/vector-backfill-13f
+// POST /.netlify/functions/vector-backfill-13f-background
 // Body: { resume?: true, quarters?: string[] }  (quarters = 'YYYY-Qn')
 //
 // Builds vector_13f_agg: per (ticker, filed-quarter) the count of distinct
@@ -173,7 +173,7 @@ export const handler: Handler = async (event) => {
     cp.heartbeatAt = new Date().toISOString();
     if (finished) cp.completedAt = new Date().toISOString();
     await writeCheckpoint(cp);
-    if (!finished) await reinvoke('vector-backfill-13f', { resume: true });
+    if (!finished) await reinvoke('vector-backfill-13f-background', { resume: true });
 
     return {
       statusCode: 200,

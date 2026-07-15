@@ -1,6 +1,6 @@
 // VECTOR — E1 earnings-surprise backfill (background, checkpointed).
 //
-// POST /.netlify/functions/vector-backfill-earnings
+// POST /.netlify/functions/vector-backfill-earnings-background
 // Body: { resume?: true, tickers?: string[] }   (tickers = debug subset)
 //
 // Universe = the union of all PIT hygiene snapshots (vector_universe_
@@ -273,7 +273,7 @@ export const handler: Handler = async (event) => {
     cp.heartbeatAt = new Date().toISOString();
     if (finished) cp.completedAt = new Date().toISOString();
     await writeCheckpoint(cp);
-    if (!finished) await reinvoke('vector-backfill-earnings', { resume: true });
+    if (!finished) await reinvoke('vector-backfill-earnings-background', { resume: true });
 
     return {
       statusCode: 200,

@@ -32,12 +32,15 @@ const CACHE_TTL = 10 * 60_000;
 async function loadRows(): Promise<{ runId: string; rows: Row[] } | null> {
   if (cache && Date.now() - cache.at < CACHE_TTL) return cache;
   const db = getAdminDb();
+  // Composite-index-free: orderBy completedAt alone (docs without the
+  // field — running/failed runs — are excluded by Firestore's orderBy
+  // semantics), then verify status in memory.
   const runs = await db.collection(VECTOR_COLLECTIONS.runs)
-    .where('status', '==', 'complete')
-    .orderBy('completedAt', 'desc').limit(1).get();
-  if (runs.empty) return null;
-  const runId = runs.docs[0].id;
-  const chunks = await runs.docs[0].ref.collection('cars').get();
+    .orderBy('completedAt', 'desc').limit(5).get();
+  const doc = runs.docs.find((d) => (d.data() as any).status === 'complete');
+  if (!doc) return null;
+  const runId = doc.id;
+  const chunks = await doc.ref.collection('cars').get();
   const rows: Row[] = [];
   for (const c of chunks.docs) rows.push(...((c.data().rows ?? []) as Row[]));
   cache = { runId, rows, at: Date.now() };

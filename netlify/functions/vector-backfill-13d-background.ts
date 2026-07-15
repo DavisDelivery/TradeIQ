@@ -1,7 +1,7 @@
 // VECTOR — E3 activist-stake backfill: initial SC 13D filings (background,
 // checkpointed).
 //
-// POST /.netlify/functions/vector-backfill-13d
+// POST /.netlify/functions/vector-backfill-13d-background
 // Body: { resume?: true, start?: 'YYYY-MM-DD', end?: 'YYYY-MM-DD' }
 //
 // Walks EDGAR daily form indexes (form.YYYYMMDD.idx) one trading day at a
@@ -152,7 +152,7 @@ export const handler: Handler = async (event) => {
     cp.heartbeatAt = new Date().toISOString();
     if (finished) cp.completedAt = new Date().toISOString();
     await writeCheckpoint(cp);
-    if (!finished) await reinvoke('vector-backfill-13d', { resume: true });
+    if (!finished) await reinvoke('vector-backfill-13d-background', { resume: true });
 
     return {
       statusCode: 200,
