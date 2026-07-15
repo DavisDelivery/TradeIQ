@@ -9,6 +9,7 @@ import { useResearch } from './hooks/useResearch.js';
 import { queryKeys } from './lib/queryKeys.js';
 import { fetchWithRetry } from './lib/validateResponse.js';
 import { FundamentalsStrip } from './components/detail/FundamentalsStrip.jsx';
+import { TradeQueuePanel } from './components/TradeQueuePanel.jsx';
 
 const SOURCE_META = {
   earnings: { label: 'Earnings', icon: Zap, color: 'text-sky-400 border-sky-500/40 bg-sky-500/5' },
@@ -144,6 +145,9 @@ export const JournalView = () => {
 
   return (
     <div className="px-3 py-4 sm:p-6 max-w-[1600px] mx-auto pb-20 sm:pb-6">
+      {/* Agentic order queue (runbook Phase 2) — fills land below as journal
+          entries, so the loop closes on this page. Hidden while empty. */}
+      <TradeQueuePanel />
       <header className="mb-4">
         <div className="flex items-baseline gap-3 mb-2">
           <BookMarked className="h-4 w-4 text-emerald-400" />

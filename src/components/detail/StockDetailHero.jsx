@@ -9,6 +9,7 @@
 
 import React from 'react';
 import { LogButton } from '../LogButton.jsx';
+import { QueueOrderButton } from '../QueueOrderButton.jsx';
 import { fmt } from '../../lib/formatters.jsx';
 import { ScoreBadge } from './ScoreBadge.jsx';
 
@@ -79,7 +80,7 @@ export function StockDetailHero({ board, ticker, rationale, detail, row, thesis 
         )}
       </div>
 
-      <div className="mt-2">
+      <div className="mt-2 flex items-center gap-2 flex-wrap">
         <LogButton
           size="sm"
           payload={{
@@ -92,6 +93,9 @@ export function StockDetailHero({ board, ticker, rationale, detail, row, thesis 
             rationale: thesis ?? row?.rationale ?? '',
           }}
         />
+        {/* Agentic-trading bridge (runbook Phase 2): queue a real buy for
+            the execution agent. Queuing IS the approval. */}
+        <QueueOrderButton ticker={ticker} sourceBoard={board} price={price} rationale={thesis ?? row?.rationale ?? ''} />
       </div>
     </div>
   );

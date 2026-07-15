@@ -1,6 +1,47 @@
-import React from 'react';
-import { AlertTriangle } from 'lucide-react';
+import React, { useState } from 'react';
+import { AlertTriangle, ShoppingCart } from 'lucide-react';
 import { StatusDot } from './components/Badges.jsx';
+import { TQ_TOKEN_KEY } from './components/QueueOrderButton.jsx';
+
+// Agentic Trading (runbook Phase 2): the shared secret that authorizes
+// trade-queue mutations. The server fails CLOSED without it (mutations
+// 501 until TRADE_QUEUE_TOKEN is configured in the Netlify env); this
+// field stores the matching token locally so the Queue Buy buttons and
+// the Journal queue panel can mutate. The execution agent uses the same
+// token via the x-trade-queue-token header.
+function AgenticTradingSettings() {
+  const [token, setToken] = useState(() => {
+    try { return localStorage.getItem(TQ_TOKEN_KEY) ?? ''; } catch { return ''; }
+  });
+  const [saved, setSaved] = useState(false);
+  const save = () => {
+    try { localStorage.setItem(TQ_TOKEN_KEY, token.trim()); } catch { /* private mode */ }
+    setSaved(true);
+    setTimeout(() => setSaved(false), 1500);
+  };
+  return (
+    <div className="border border-neutral-800 p-5">
+      <h3 className="font-serif text-lg mb-1 flex items-center gap-2"><ShoppingCart className="h-4 w-4 text-neutral-500" /> Agentic Trading</h3>
+      <p className="text-[11px] text-neutral-500 font-mono mb-3 leading-relaxed">
+        Shared secret for the trade queue. Queue mutations are token-gated and fail closed —
+        set TRADE_QUEUE_TOKEN in the Netlify env, paste the same value here, and give it to the
+        execution agent. Queuing an order IS the approval; the agent only executes queued rows.
+      </p>
+      <div className="flex items-center gap-2 max-w-md">
+        <input
+          type="password"
+          value={token}
+          onChange={(e) => setToken(e.target.value)}
+          placeholder="trade-queue token"
+          className="flex-1 h-9 px-2.5 bg-neutral-950 border border-neutral-700 text-[12px] font-mono text-neutral-200 placeholder:text-neutral-600 outline-none focus:border-neutral-500"
+        />
+        <button type="button" onClick={save} className="px-3 h-9 border border-neutral-700 text-[11px] font-mono uppercase tracking-widest text-neutral-300 hover:border-neutral-500">
+          {saved ? 'Saved ✓' : 'Save'}
+        </button>
+      </div>
+    </div>
+  );
+}
 
 export const SettingsView = () => (
   <div className="px-3 py-4 sm:p-6 max-w-[1200px] mx-auto space-y-4">
@@ -8,6 +49,8 @@ export const SettingsView = () => (
       <div className="text-[10px] uppercase tracking-[0.2em] text-neutral-500 font-mono mb-2">Configuration</div>
       <h1 className="font-serif text-3xl font-bold tracking-tight">Settings</h1>
     </div>
+
+    <AgenticTradingSettings />
 
     <div className="border border-neutral-800 p-5">
       <h3 className="font-serif text-lg mb-4">Data Sources</h3>
