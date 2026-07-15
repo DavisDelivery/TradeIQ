@@ -398,6 +398,11 @@
   to = "/.netlify/functions/vector-cohort"
   status = 200
 
+[[redirects]]
+  from = "/api/vector-status"
+  to = "/.netlify/functions/vector-status"
+  status = 200
+
 # SPA fallback
 [[redirects]]
   from = "/*"
