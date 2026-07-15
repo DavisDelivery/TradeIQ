@@ -55,19 +55,19 @@ export const handler: Handler = async (event) => {
       };
     }
 
-    let query = db
+    // Composite-index-free: where('window') + orderBy('startedAt') needs a
+    // composite index that doesn't exist (live FAILED_PRECONDITION 500,
+    // audit 2026-07-15). Over-fetch on the single-field order and filter
+    // the window in memory instead.
+    const query = db
       .collection('portfolioBacktests')
       .orderBy('startedAt', 'desc')
-      .limit(qs.window ? 10 : 20) as FirebaseFirestore.Query;
-    if (qs.window) {
-      query = db
-        .collection('portfolioBacktests')
-        .where('window', '==', qs.window)
-        .orderBy('startedAt', 'desc')
-        .limit(10);
-    }
+      .limit(qs.window ? 60 : 20) as FirebaseFirestore.Query;
     const snap = await query.get();
-    const runs = snap.docs.map((d) => d.data());
+    const runs = snap.docs
+      .map((d) => d.data())
+      .filter((r: any) => (qs.window ? r.window === qs.window : true))
+      .slice(0, qs.window ? 10 : 20);
     return {
       statusCode: 200,
       headers,

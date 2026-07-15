@@ -28,6 +28,21 @@
 [functions."vector-evaluate"]
   timeout = 26
 
+# Anthropic-backed generators + serial bar fetchers — all can exceed the
+# 10s default and die with no response (same class as the vector-evaluate
+# hang; audit 2026-07-15).
+[functions."chart-analysis"]
+  timeout = 26
+
+[functions."research"]
+  timeout = 26
+
+[functions."prophet-narrate"]
+  timeout = 26
+
+[functions."options-flow"]
+  timeout = 26
+
 # Insider board scans up to 120 tickers via Quiver — give it room
 [functions."insider-board"]
   timeout = 26
