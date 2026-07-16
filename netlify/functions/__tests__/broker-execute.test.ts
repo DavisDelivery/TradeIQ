@@ -21,6 +21,7 @@ const rh = vi.hoisted(() => ({
   getQuote: vi.fn(),
   placeEquityOrder: vi.fn(),
   placeStopLoss: vi.fn(),
+  placeStopOrder: vi.fn(),
 }));
 vi.mock('../shared/robinhood', () => rh);
 
@@ -48,6 +49,7 @@ beforeEach(() => {
   rh.getQuote.mockResolvedValue(100);
   rh.placeEquityOrder.mockResolvedValue({ id: 'ord_1', state: 'confirmed', raw: {} });
   rh.placeStopLoss.mockResolvedValue({ id: 'stop_1', state: 'confirmed', raw: {} });
+  rh.placeStopOrder.mockResolvedValue({ id: 'stopord_1', state: 'confirmed', raw: {} });
 });
 
 describe('broker-execute gating + validation', () => {
@@ -136,5 +138,39 @@ describe('placing orders', () => {
     const res = await post({ ticker: 'NVDA', side: 'buy', qty: 2, limitPrice: 90 });
     expect(JSON.parse(res.body).ok).toBe(true);
     expect(rh.placeEquityOrder).toHaveBeenCalledWith('AT', expect.objectContaining({ limitPrice: 90 }));
+  });
+});
+
+describe('order types', () => {
+  it('places a stop (stop-market) order via placeStopOrder', async () => {
+    const res = await post({ ticker: 'NVDA', side: 'sell', qty: 2, orderType: 'stop', stopPrice: 80 });
+    const body = JSON.parse(res.body);
+    expect(body.ok).toBe(true);
+    expect(body.order.orderType).toBe('stop');
+    expect(rh.placeStopOrder).toHaveBeenCalledWith('AT', expect.objectContaining({ side: 'sell', stopPrice: 80, limitPrice: undefined }));
+    expect(rh.placeEquityOrder).not.toHaveBeenCalled();
+  });
+
+  it('places a stop-limit order (stop + limit)', async () => {
+    const res = await post({ ticker: 'NVDA', side: 'buy', qty: 3, orderType: 'stop_limit', stopPrice: 110, limitPrice: 112 });
+    expect(JSON.parse(res.body).ok).toBe(true);
+    expect(rh.placeStopOrder).toHaveBeenCalledWith('AT', expect.objectContaining({ stopPrice: 110, limitPrice: 112 }));
+  });
+
+  it('rejects stop without a stopPrice, stop_limit without a limitPrice', async () => {
+    expect((await post({ ticker: 'NVDA', side: 'sell', qty: 1, orderType: 'stop' })).statusCode).toBe(400);
+    expect((await post({ ticker: 'NVDA', side: 'sell', qty: 1, orderType: 'stop_limit', stopPrice: 80 })).statusCode).toBe(400);
+  });
+
+  it('a standalone stop order carries no auto stop-loss', async () => {
+    await post({ ticker: 'NVDA', side: 'buy', qty: 1, orderType: 'stop', stopPrice: 110, stopLossPct: 0.1 });
+    expect(rh.placeStopLoss).not.toHaveBeenCalled();
+  });
+
+  it('caps a stop order off the stop price', async () => {
+    // 6 * 100 stop = 600 > 500
+    const res = await post({ ticker: 'NVDA', side: 'sell', qty: 6, orderType: 'stop', stopPrice: 100 });
+    expect(res.statusCode).toBe(400);
+    expect(JSON.parse(res.body).error).toMatch(/cap/);
   });
 });

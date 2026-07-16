@@ -466,6 +466,12 @@
   to = "/.netlify/functions/broker-execute"
   status = 200
 
+# Broker positions — live shares owned in the connected account (login-gated).
+[[redirects]]
+  from = "/api/broker-positions"
+  to = "/.netlify/functions/broker-positions"
+  status = 200
+
 # SPA fallback
 [[redirects]]
   from = "/*"

@@ -19,7 +19,7 @@ import type { Handler } from '@netlify/functions';
 import { verifyOwnerBearer } from './shared/auth';
 import {
   ensureToken, loadCreds, saveCreds, getAccount, getInstrument, getQuote,
-  placeEquityOrder, placeStopLoss,
+  placeEquityOrder, placeStopLoss, placeStopOrder,
 } from './shared/robinhood';
 import { getAdminDb } from './shared/firebase-admin';
 import { logger } from './shared/logger';
@@ -52,8 +52,22 @@ export const handler: Handler = async (event) => {
   const qty = Number.isFinite(+body.qty) && +body.qty > 0 ? +body.qty : null;
   if (!qty) return json(400, { ok: false, error: 'qty required (> 0)' });
   const limitPrice = Number.isFinite(+body.limitPrice) && +body.limitPrice > 0 ? +body.limitPrice : null;
+  const stopPrice = Number.isFinite(+body.stopPrice) && +body.stopPrice > 0 ? +body.stopPrice : null;
   const stopLossPct = side === 'buy' && Number.isFinite(+body.stopLossPct) && +body.stopLossPct > 0
     ? Math.min(0.9, +body.stopLossPct) : null;
+
+  // Order type. Back-compat: default to limit when a limitPrice is given,
+  // else market. Stop types require a stopPrice.
+  const ORDER_TYPES = ['market', 'limit', 'stop', 'stop_limit'] as const;
+  const orderType = ORDER_TYPES.includes(body.orderType)
+    ? (body.orderType as (typeof ORDER_TYPES)[number])
+    : (limitPrice ? 'limit' : 'market');
+  if ((orderType === 'stop' || orderType === 'stop_limit') && !stopPrice) {
+    return json(400, { ok: false, error: `${orderType} requires a stopPrice` });
+  }
+  if (orderType === 'stop_limit' && !limitPrice) {
+    return json(400, { ok: false, error: 'stop_limit requires a limitPrice' });
+  }
 
   try {
     // Must be connected. ensureToken throws "Robinhood not connected" / refresh
@@ -73,29 +87,42 @@ export const handler: Handler = async (event) => {
     const instr = await getInstrument(creds.accessToken, ticker);
     if (!instr.tradable) return json(400, { ok: false, error: `${ticker} is not tradable on Robinhood right now` });
 
-    // Price for the cap check + market collar.
-    const quote = limitPrice ?? (await getQuote(creds.accessToken, ticker));
+    // Live quote for the market collar + cap fallback.
+    const quote = await getQuote(creds.accessToken, ticker);
     if (!quote || !(quote > 0)) return json(502, { ok: false, error: `no live quote for ${ticker}` });
-    const notional = qty * quote;
+
+    // Cap check uses the most relevant price for the order type: the limit,
+    // then the stop trigger, then the live quote.
+    const refPrice = limitPrice ?? stopPrice ?? quote;
+    const notional = qty * refPrice;
     if (notional > PER_ORDER_CAP) {
       return json(400, { ok: false, error: `order ~$${notional.toFixed(0)} exceeds the $${PER_ORDER_CAP}/order cap` });
     }
 
-    // Place the real order.
-    const order = await placeEquityOrder(creds.accessToken, {
-      accountUrl, instrumentUrl: instr.instrumentUrl, symbol: ticker,
-      side, quantity: qty, limitPrice: limitPrice ?? undefined, collarPrice: quote,
-    });
+    // Place the real order per type.
+    const orderArgs = { accountUrl, instrumentUrl: instr.instrumentUrl, symbol: ticker };
+    const order = (orderType === 'stop' || orderType === 'stop_limit')
+      ? await placeStopOrder(creds.accessToken, {
+          ...orderArgs, side, quantity: qty,
+          stopPrice: stopPrice as number,
+          limitPrice: orderType === 'stop_limit' ? (limitPrice as number) : undefined,
+        })
+      : await placeEquityOrder(creds.accessToken, {
+          ...orderArgs, side, quantity: qty,
+          limitPrice: orderType === 'limit' ? (limitPrice as number) : undefined,
+          collarPrice: quote,
+        });
 
-    // Native stop-loss on buys (protection lives at the broker).
+    // Native stop-loss on a plain buy (protection lives at the broker).
+    // Only for immediate buys — a standalone stop order is its own protection.
     let stopOrder: { stopPrice: number; id: string } | null = null;
-    if (side === 'buy' && stopLossPct) {
-      const stopPrice = +(quote * (1 - stopLossPct)).toFixed(2);
+    if (side === 'buy' && stopLossPct && orderType !== 'stop' && orderType !== 'stop_limit') {
+      const slPrice = +(quote * (1 - stopLossPct)).toFixed(2);
       try {
         const s = await placeStopLoss(creds.accessToken, {
-          accountUrl, instrumentUrl: instr.instrumentUrl, symbol: ticker, quantity: qty, stopPrice,
+          accountUrl, instrumentUrl: instr.instrumentUrl, symbol: ticker, quantity: qty, stopPrice: slPrice,
         });
-        stopOrder = { stopPrice, id: s.id };
+        stopOrder = { stopPrice: slPrice, id: s.id };
       } catch (e: any) {
         // The buy went through; a failed stop shouldn't 500 the whole call.
         log.warn('stop_failed', { ticker, err: String(e?.message ?? e) });
@@ -111,21 +138,23 @@ export const handler: Handler = async (event) => {
       source: String(body.sourceBoard ?? 'app'),
       side,
       loggedAt: new Date().toISOString(),
-      price: quote,
-      entry: quote,
+      price: refPrice,
+      entry: refPrice,
       qty: side === 'sell' ? -Math.abs(qty) : qty,
-      stopPrice: stopOrder?.stopPrice ?? null,
-      notes: `robinhood ${side} ${qty} ${ticker} @ ~$${quote}`
+      stopPrice: stopOrder?.stopPrice ?? (orderType === 'stop' || orderType === 'stop_limit' ? stopPrice : null),
+      orderType,
+      notes: `robinhood ${orderType} ${side} ${qty} ${ticker} @ ~$${refPrice}`
+        + (orderType === 'stop' || orderType === 'stop_limit' ? ` (stop $${stopPrice})` : '')
         + (stopOrder ? ` · stop $${stopOrder.stopPrice}` : '')
         + (body.rationale ? ` — ${String(body.rationale).slice(0, 300)}` : ''),
       via: 'broker-execute',
       brokerOrderId: order.id,
     });
 
-    log.info('order_placed', { ticker, side, qty, quote, orderId: order.id, stop: stopOrder?.stopPrice, journalId });
+    log.info('order_placed', { ticker, orderType, side, qty, refPrice, orderId: order.id, stop: stopOrder?.stopPrice, journalId });
     return json(200, {
       ok: true,
-      order: { id: order.id, state: order.state, ticker, side, qty, price: quote },
+      order: { id: order.id, state: order.state, ticker, side, qty, orderType, price: refPrice },
       stopOrder,
       journalId,
     });
