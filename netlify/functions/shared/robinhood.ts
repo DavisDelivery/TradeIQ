@@ -84,6 +84,10 @@ export interface LoginResult {
   mfaType?: string;
   /** verification "challenge" id (older SMS challenge flow). */
   challengeId?: string;
+  /** Modern device-approval path: Robinhood wants the user to approve the
+   *  login in their phone app, driven through the Pathfinder workflow. */
+  deviceApproval?: boolean;
+  workflowId?: string;
   deviceToken?: string;
   creds?: StoredCreds;
   error?: string;
@@ -156,12 +160,11 @@ export async function login(
   if (data?.challenge?.id) {
     return { ok: false, mfaRequired: true, mfaType: String(data.challenge.type ?? 'sms'), challengeId: String(data.challenge.id), deviceToken };
   }
-  if (data?.verification_workflow) {
-    return {
-      ok: false,
-      error: 'Robinhood requires device approval — approve the login in your Robinhood mobile app, then retry.',
-      deviceToken,
-    };
+  if (data?.verification_workflow?.id) {
+    // Modern flow: the caller must drive the Pathfinder verification workflow
+    // (beginDeviceApproval → pollPrompt/respondChallenge → finalizeWorkflow)
+    // and then call login() again with the same deviceToken.
+    return { ok: false, deviceApproval: true, workflowId: String(data.verification_workflow.id), deviceToken };
   }
   return { ok: false, error: String(data?.detail || data?.error_description || data?.error || 'login failed'), deviceToken };
 }
@@ -180,6 +183,90 @@ export async function respondChallenge(
   const data = await res.json();
   if (data?.status === 'validated') return { ok: true };
   return { ok: false, error: String(data?.detail || 'challenge not validated') };
+}
+
+// ---------------- device-approval (Pathfinder verification workflow) ----------------
+//
+// Robinhood's current login for a new device returns a `verification_workflow`
+// instead of tokens. Approving the push on the phone is NOT enough on its own —
+// the client must create a Pathfinder "user machine", read the challenge, wait
+// for the approval to validate, then POST "continue" to finalize the workflow.
+// Only then does re-requesting the token succeed. (This is why simply
+// re-submitting the login after tapping Approve does nothing.)
+
+export interface DeviceApprovalStart {
+  machineId: string;
+  challengeType: string;    // 'prompt' | 'sms' | 'email'
+  challengeId: string | null;
+  status: string;           // 'issued' | 'validated' | ...
+}
+
+/** Step 2–3: create the verification machine and read the sheriff challenge.
+ *  Retries the inquiry read a few times since the challenge can lag the POST. */
+export async function beginDeviceApproval(
+  workflowId: string,
+  deviceToken: string,
+  http: HttpFn = defaultHttp,
+): Promise<DeviceApprovalStart> {
+  const mk = await http(`${API}/pathfinder/user_machine/`, {
+    method: 'POST',
+    headers: authHeaders(),
+    body: JSON.stringify({ device_id: deviceToken, flow: 'suv', input: { workflow_id: workflowId } }),
+  });
+  const machine = await mk.json();
+  const machineId = machine?.id;
+  if (!machineId) throw new Error('could not start Robinhood device approval');
+
+  // Read the inquiry to discover the challenge (type/id/status).
+  const inq = await readInquiry(String(machineId), http);
+  return { machineId: String(machineId), ...inq };
+}
+
+/** GET the inquiry user_view and extract the sheriff challenge. */
+export async function readInquiry(
+  machineId: string,
+  http: HttpFn = defaultHttp,
+): Promise<{ challengeType: string; challengeId: string | null; status: string }> {
+  const res = await http(`${API}/pathfinder/inquiries/${machineId}/user_view/`, {
+    method: 'GET',
+    headers: authHeaders(),
+  });
+  const data = await res.json();
+  const ch = data?.context?.sheriff_challenge ?? {};
+  return {
+    challengeType: String(ch.type ?? 'prompt'),
+    challengeId: ch.id != null ? String(ch.id) : null,
+    status: String(ch.status ?? 'issued'),
+  };
+}
+
+/** Step 4 (prompt): has the phone-app approval validated yet? */
+export async function pollPrompt(
+  challengeId: string,
+  http: HttpFn = defaultHttp,
+): Promise<{ validated: boolean }> {
+  const res = await http(`${API}/push/${challengeId}/get_prompts_status/`, {
+    method: 'GET',
+    headers: authHeaders(),
+  });
+  const data = await res.json();
+  return { validated: String(data?.challenge_status ?? '') === 'validated' };
+}
+
+/** Step 5: finalize the workflow — tell Robinhood to continue past the
+ *  now-validated challenge. Returns whether the workflow is approved. */
+export async function finalizeWorkflow(
+  machineId: string,
+  http: HttpFn = defaultHttp,
+): Promise<{ approved: boolean }> {
+  const res = await http(`${API}/pathfinder/inquiries/${machineId}/user_view/`, {
+    method: 'POST',
+    headers: authHeaders(),
+    body: JSON.stringify({ sequence: 0, user_input: { status: 'continue' } }),
+  });
+  const data = await res.json();
+  const result = data?.type_context?.result ?? data?.verification_workflow?.workflow_status;
+  return { approved: String(result ?? '') === 'workflow_status_approved' };
 }
 
 /** Refresh an access token from the stored refresh token. */

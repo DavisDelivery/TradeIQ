@@ -16,7 +16,9 @@ vi.mock('../firebase-admin', () => ({
 
 import {
   login, refresh, ensureToken, getAccount, getInstrument, placeEquityOrder, placeStopLoss,
-  saveCreds, loadCreds, clearCreds, newDeviceToken, type HttpFn, type StoredCreds,
+  saveCreds, loadCreds, clearCreds, newDeviceToken,
+  beginDeviceApproval, readInquiry, pollPrompt, finalizeWorkflow,
+  type HttpFn, type StoredCreds,
 } from '../robinhood';
 
 // A scripted http boundary: each call shifts the next queued response.
@@ -75,11 +77,64 @@ describe('robinhood login', () => {
     expect(res.ok).toBe(true);
   });
 
-  it('reports device-approval (verification_workflow) as an actionable error', async () => {
-    const http = scriptedHttp([{ body: { verification_workflow: { id: 'wf' } } }]);
+  it('flags the modern device-approval workflow with its id', async () => {
+    const http = scriptedHttp([{ body: { verification_workflow: { id: 'wf_9' } } }]);
     const res = await login('me@example.com', 'secret', { http });
     expect(res.ok).toBe(false);
-    expect(res.error).toMatch(/approve the login/i);
+    expect(res.deviceApproval).toBe(true);
+    expect(res.workflowId).toBe('wf_9');
+    expect(res.deviceToken).toBeTruthy();
+  });
+});
+
+describe('device-approval (Pathfinder workflow)', () => {
+  it('beginDeviceApproval creates the machine and reads the prompt challenge', async () => {
+    const http = scriptedHttp([
+      {
+        body: { id: 'machine_1' },
+        assert: (url, init) => {
+          expect(url).toContain('/pathfinder/user_machine/');
+          const p = JSON.parse(init.body);
+          expect(p.flow).toBe('suv');
+          expect(p.input.workflow_id).toBe('wf_9');
+          expect(p.device_id).toBe('DT');
+        },
+      },
+      {
+        body: { context: { sheriff_challenge: { type: 'prompt', id: 'ch_p', status: 'issued' } } },
+        assert: (url) => expect(url).toContain('/pathfinder/inquiries/machine_1/user_view/'),
+      },
+    ]);
+    const start = await beginDeviceApproval('wf_9', 'DT', http);
+    expect(start.machineId).toBe('machine_1');
+    expect(start.challengeType).toBe('prompt');
+    expect(start.challengeId).toBe('ch_p');
+  });
+
+  it('pollPrompt reports validated only when the phone tap lands', async () => {
+    const notYet = scriptedHttp([{ body: { challenge_status: 'issued' } }]);
+    expect((await pollPrompt('ch_p', notYet)).validated).toBe(false);
+    const done = scriptedHttp([{ body: { challenge_status: 'validated' } }]);
+    expect((await pollPrompt('ch_p', done)).validated).toBe(true);
+  });
+
+  it('finalizeWorkflow posts continue and detects approval', async () => {
+    const http = scriptedHttp([{
+      body: { type_context: { result: 'workflow_status_approved' } },
+      assert: (url, init) => {
+        expect(url).toContain('/pathfinder/inquiries/machine_1/user_view/');
+        const p = JSON.parse(init.body);
+        expect(p.user_input.status).toBe('continue');
+      },
+    }]);
+    expect((await finalizeWorkflow('machine_1', http)).approved).toBe(true);
+  });
+
+  it('readInquiry defaults to a prompt challenge when the shape is sparse', async () => {
+    const http = scriptedHttp([{ body: {} }]);
+    const inq = await readInquiry('machine_1', http);
+    expect(inq.challengeType).toBe('prompt');
+    expect(inq.challengeId).toBeNull();
   });
 });
 

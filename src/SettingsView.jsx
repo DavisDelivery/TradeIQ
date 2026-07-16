@@ -28,9 +28,11 @@ function BrokerConnect() {
   const [username, setUsername] = React.useState('');
   const [password, setPassword] = React.useState('');
   const [mfaCode, setMfaCode] = React.useState('');
-  const [pending, setPending] = React.useState(null); // { deviceToken, challengeId, mfaType }
+  const [pending, setPending] = React.useState(null); // sms/email: { deviceToken, challengeId, mfaType }
+  const [approval, setApproval] = React.useState(null); // device prompt: { deviceToken, machineId, challengeId }
   const [busy, setBusy] = React.useState(false);
   const [err, setErr] = React.useState('');
+  const credsRef = React.useRef({ username: '', password: '' });
 
   React.useEffect(() => onAuthChange((t) => setSignedIn(!!t)), []);
 
@@ -42,24 +44,70 @@ function BrokerConnect() {
 
   React.useEffect(() => { setStatus(undefined); refresh(); }, [refresh]);
 
+  const onConnected = (res) => {
+    setPassword(''); setMfaCode(''); setPending(null); setApproval(null);
+    credsRef.current = { username: '', password: '' };
+    setStatus(res);
+  };
+
   const connect = async (ev) => {
     ev.preventDefault();
+    // SMS/email code path: submit the code via the poll action.
+    if (pending) return submitCode();
     if (!username || !password) { setErr('username and password required'); return; }
+    setBusy(true); setErr('');
+    credsRef.current = { username, password };
+    try {
+      const res = await authedPost('/api/broker-auth', { action: 'connect', username, password });
+      if (res.deviceApproval) {
+        // Robinhood wants a phone-app approval — we now auto-wait for it.
+        setApproval({ deviceToken: res.deviceToken, machineId: res.machineId, challengeId: res.challengeId, mfaType: res.mfaType });
+      } else if (res.mfaRequired) {
+        setPending({ deviceToken: res.deviceToken, challengeId: res.challengeId, mfaType: res.mfaType, machineId: res.machineId });
+      } else if (res.connected) {
+        onConnected(res);
+      }
+    } catch (e) {
+      setErr(String(e.message || e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // Auto-poll while the owner taps Approve in the Robinhood app.
+  React.useEffect(() => {
+    if (!approval) return;
+    let stop = false;
+    const tick = async () => {
+      try {
+        const res = await authedPost('/api/broker-auth', {
+          action: 'poll', ...credsRef.current,
+          deviceToken: approval.deviceToken, machineId: approval.machineId,
+          challengeId: approval.challengeId, challengeType: 'prompt',
+        });
+        if (stop) return;
+        if (res.connected) { onConnected(res); return; }
+      } catch (e) {
+        if (!stop) { setErr(String(e.message || e)); setApproval(null); }
+        return;
+      }
+      if (!stop) setTimeout(tick, 3000);
+    };
+    const t = setTimeout(tick, 3000);
+    return () => { stop = true; clearTimeout(t); };
+  }, [approval]);
+
+  // Submit an SMS/email code (finalizes via the poll action).
+  const submitCode = async () => {
     setBusy(true); setErr('');
     try {
       const res = await authedPost('/api/broker-auth', {
-        action: 'connect', username, password,
-        mfaCode: mfaCode || undefined,
-        deviceToken: pending?.deviceToken,
-        challengeId: pending?.challengeId,
+        action: 'poll', ...credsRef.current,
+        deviceToken: pending.deviceToken, machineId: pending.machineId,
+        challengeId: pending.challengeId, challengeType: pending.mfaType, mfaCode,
       });
-      if (res.mfaRequired) {
-        setPending({ deviceToken: res.deviceToken, challengeId: res.challengeId, mfaType: res.mfaType });
-        setErr('');
-      } else if (res.connected) {
-        setPassword(''); setMfaCode(''); setPending(null);
-        setStatus(res);
-      }
+      if (res.connected) onConnected(res);
+      else if (res.pending) setErr('still verifying — try the code again');
     } catch (e) {
       setErr(String(e.message || e));
     } finally {
@@ -69,7 +117,7 @@ function BrokerConnect() {
 
   const disconnect = async () => {
     setBusy(true); setErr('');
-    try { await authedPost('/api/broker-auth', { action: 'disconnect' }); setStatus({ connected: false }); setPending(null); }
+    try { await authedPost('/api/broker-auth', { action: 'disconnect' }); setStatus({ connected: false }); setPending(null); setApproval(null); }
     catch (e) { setErr(String(e.message || e)); }
     finally { setBusy(false); }
   };
@@ -102,7 +150,24 @@ function BrokerConnect() {
         </div>
       )}
 
-      {signedIn && status && !status.connected && (
+      {signedIn && status && !status.connected && approval && (
+        <div className="space-y-2 max-w-sm">
+          <div className="inline-flex items-center gap-2 text-[12px] font-mono text-amber-300">
+            <span className="inline-block h-3 w-3 border-2 border-amber-400/40 border-t-amber-300 rounded-full animate-spin" />
+            Waiting for approval…
+          </div>
+          <div className="text-[11px] font-mono text-neutral-500 leading-relaxed">
+            Open your Robinhood app and tap <span className="text-neutral-300">Approve</span> on the login prompt.
+            This finishes automatically the moment you approve — no code to type.
+          </div>
+          <button type="button" onClick={() => { setApproval(null); setErr(''); }}
+            className="px-3 h-8 border border-neutral-700 text-[10px] font-mono uppercase tracking-widest text-neutral-400 hover:border-neutral-500">
+            Cancel
+          </button>
+        </div>
+      )}
+
+      {signedIn && status && !status.connected && !approval && (
         <form onSubmit={connect} className="space-y-2 max-w-sm">
           {status.stale && <div className="text-[10px] font-mono text-amber-400">session expired — reconnect</div>}
           <input value={username} onChange={(e) => setUsername(e.target.value)} placeholder="Robinhood email" autoComplete="username"
