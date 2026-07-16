@@ -364,8 +364,11 @@ export interface OrderRequest {
   symbol: string;
   side: 'buy' | 'sell';
   quantity: number;
-  /** omit for a market order */
+  /** set for a limit order */
   limitPrice?: number;
+  /** market-order price collar — Robinhood requires a `price` on market
+   *  orders (a bid/ask bound). Pass the current quote. Ignored for limits. */
+  collarPrice?: number;
 }
 
 export interface OrderResult {
@@ -392,10 +395,11 @@ export async function placeEquityOrder(
     extended_hours: false,
     ref_id: randomUUID(),
   };
-  if (isLimit) payload.price = String(req.limitPrice);
-  // Market orders on Robinhood require a collared price; the app sends
-  // last_trade_price as `price` on market buys. Callers pass limitPrice for
-  // that collar when they have a quote.
+  // Robinhood requires a `price` on both limit AND market orders (market
+  // orders use it as a collar). Use the limit for limits, the quote collar
+  // for markets.
+  const px = isLimit ? req.limitPrice : req.collarPrice;
+  if (Number.isFinite(px) && (px as number) > 0) payload.price = String(px);
 
   const res = await http(`${API}/orders/`, {
     method: 'POST',

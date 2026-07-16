@@ -460,6 +460,12 @@
   to = "/.netlify/functions/broker-auth"
   status = 200
 
+# Broker execute — places a REAL Robinhood order at a click (login-gated).
+[[redirects]]
+  from = "/api/broker-execute"
+  to = "/.netlify/functions/broker-execute"
+  status = 200
+
 # SPA fallback
 [[redirects]]
   from = "/*"
