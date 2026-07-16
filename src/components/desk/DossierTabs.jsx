@@ -28,6 +28,7 @@ import { VerdictChip } from '../VerdictChip.jsx';
 import { useSortable, SortableTh } from '../../lib/useSortable.jsx';
 import { readLog } from '../../tradeLog.js';
 import { tickerRecord } from '../../lib/baseRates.js';
+import { OrderButtons } from '../OrderButtons.jsx';
 
 const TABS = ['RATIONALE', 'FUNDAMENTALS', 'INSIDER', 'EARNINGS', 'AI BRIEF'];
 
@@ -53,6 +54,13 @@ export function DossierTabs({ ticker }) {
 
   return (
     <div data-testid="desk-dossier" className="border border-neutral-800 bg-neutral-950/40 mt-3">
+      {/* Trade this ticker straight from the dossier — places a real
+          Robinhood order (broker-execute). The server fetches the live quote
+          for pricing + the $500/order cap. */}
+      <div className="flex items-center gap-2 flex-wrap px-3 py-2 border-b border-neutral-800/80">
+        <span className="text-[10px] font-mono uppercase tracking-widest text-neutral-500">{ticker}</span>
+        <OrderButtons ticker={ticker} sourceBoard="desk" />
+      </div>
       <div className="flex items-center border-b border-neutral-800/80 overflow-x-auto scrollbar-hide">
         {TABS.map((t) => (
           <button
