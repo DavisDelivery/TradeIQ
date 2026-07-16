@@ -356,6 +356,41 @@ export async function getQuote(token: string, symbol: string, http: HttpFn = def
   return px != null ? Number(px) : null;
 }
 
+// ---------------- positions ----------------
+
+export interface Position {
+  symbol: string;
+  qty: number;
+  avgCost: number | null;
+  instrumentUrl: string;
+}
+
+/** Open equity positions (shares owned) for the connected account.
+ *  Robinhood's /positions/ returns instrument URLs, not symbols, so we
+ *  resolve each (nonzero positions only — a handful for this account). */
+export async function getPositions(token: string, http: HttpFn = defaultHttp): Promise<Position[]> {
+  const res = await http(`${API}/positions/?nonzero=true`, { method: 'GET', headers: authHeaders(token) });
+  const data = await res.json();
+  const rows = Array.isArray(data?.results) ? data.results : [];
+  const out: Position[] = [];
+  for (const r of rows) {
+    const qty = Number(r.quantity ?? r.quantity_available);
+    if (!(qty > 0) || !r.instrument) continue;
+    let symbol = '';
+    try {
+      const ir = await http(String(r.instrument), { method: 'GET', headers: authHeaders(token) });
+      symbol = String((await ir.json())?.symbol ?? '');
+    } catch { /* leave blank if the instrument lookup fails */ }
+    out.push({
+      symbol,
+      qty,
+      avgCost: r.average_buy_price != null ? Number(r.average_buy_price) : null,
+      instrumentUrl: String(r.instrument),
+    });
+  }
+  return out;
+}
+
 // ---------------- orders ----------------
 
 export interface OrderRequest {
@@ -432,6 +467,43 @@ export async function placeStopLoss(
     extended_hours: false,
     ref_id: randomUUID(),
   };
+  const res = await http(`${API}/orders/`, {
+    method: 'POST',
+    headers: authHeaders(token),
+    body: JSON.stringify(payload),
+  });
+  const data = await res.json();
+  if (!data?.id) {
+    throw new Error(String(data?.detail || data?.non_field_errors?.[0] || 'stop order rejected by Robinhood'));
+  }
+  return { id: String(data.id), state: String(data.state ?? 'confirmed'), raw: data };
+}
+
+/** Stop order — stop-market (no limitPrice) or stop-limit (with limitPrice),
+ *  buy or sell. Triggers when the market crosses stopPrice. GTC by default. */
+export async function placeStopOrder(
+  token: string,
+  req: {
+    accountUrl: string; instrumentUrl: string; symbol: string;
+    side: 'buy' | 'sell'; quantity: number; stopPrice: number; limitPrice?: number;
+  },
+  http: HttpFn = defaultHttp,
+): Promise<OrderResult> {
+  const isLimit = Number.isFinite(req.limitPrice) && (req.limitPrice as number) > 0;
+  const payload: Record<string, unknown> = {
+    account: req.accountUrl,
+    instrument: req.instrumentUrl,
+    symbol: req.symbol,
+    type: isLimit ? 'limit' : 'market',
+    time_in_force: 'gtc',
+    trigger: 'stop',
+    stop_price: String(req.stopPrice),
+    quantity: String(req.quantity),
+    side: req.side,
+    extended_hours: false,
+    ref_id: randomUUID(),
+  };
+  if (isLimit) payload.price = String(req.limitPrice);
   const res = await http(`${API}/orders/`, {
     method: 'POST',
     headers: authHeaders(token),

@@ -15,8 +15,8 @@ vi.mock('../firebase-admin', () => ({
 }));
 
 import {
-  login, refresh, ensureToken, getAccount, getInstrument, placeEquityOrder, placeStopLoss,
-  saveCreds, loadCreds, clearCreds, newDeviceToken,
+  login, refresh, ensureToken, getAccount, getInstrument, placeEquityOrder, placeStopLoss, placeStopOrder,
+  getPositions, saveCreds, loadCreds, clearCreds, newDeviceToken,
   beginDeviceApproval, readInquiry, pollPrompt, finalizeWorkflow,
   type HttpFn, type StoredCreds,
 } from '../robinhood';
@@ -230,5 +230,46 @@ describe('account + orders', () => {
     const i = await getInstrument('AT', 'NVDA', http);
     expect(i.instrumentUrl).toBe('https://api/instr/1/');
     expect(i.tradable).toBe(true);
+  });
+
+  it('placeStopOrder: stop-market (gtc, trigger=stop, no price)', async () => {
+    const http = scriptedHttp([{
+      body: { id: 'so_1', state: 'confirmed' },
+      assert: (_u, init) => {
+        const p = JSON.parse(init.body);
+        expect(p.trigger).toBe('stop'); expect(p.type).toBe('market');
+        expect(p.stop_price).toBe('80'); expect(p.time_in_force).toBe('gtc');
+        expect(p.price).toBeUndefined();
+      },
+    }]);
+    const r = await placeStopOrder('AT', { accountUrl: 'a', instrumentUrl: 'i', symbol: 'NVDA', side: 'sell', quantity: 2, stopPrice: 80 }, http);
+    expect(r.id).toBe('so_1');
+  });
+
+  it('placeStopOrder: stop-limit sets both stop_price and price (type=limit)', async () => {
+    const http = scriptedHttp([{
+      body: { id: 'so_2', state: 'confirmed' },
+      assert: (_u, init) => {
+        const p = JSON.parse(init.body);
+        expect(p.type).toBe('limit'); expect(p.stop_price).toBe('110'); expect(p.price).toBe('112');
+      },
+    }]);
+    const r = await placeStopOrder('AT', { accountUrl: 'a', instrumentUrl: 'i', symbol: 'NVDA', side: 'buy', quantity: 3, stopPrice: 110, limitPrice: 112 }, http);
+    expect(r.id).toBe('so_2');
+  });
+});
+
+describe('positions', () => {
+  it('returns nonzero positions and resolves instrument → symbol', async () => {
+    const http = scriptedHttp([
+      { body: { results: [
+        { quantity: '20.0000', average_buy_price: '71.20', instrument: 'https://api/instr/NFLX/' },
+        { quantity: '0.0000', average_buy_price: '0', instrument: 'https://api/instr/ZERO/' }, // skipped
+      ] } },
+      { body: { symbol: 'NFLX' } }, // instrument lookup for the NFLX position
+    ]);
+    const pos = await getPositions('AT', http);
+    expect(pos).toHaveLength(1);
+    expect(pos[0]).toMatchObject({ symbol: 'NFLX', qty: 20, avgCost: 71.2 });
   });
 });
