@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import {
-  Activity, TrendingUp, TrendingDown, Zap, Radio, Layers, Settings,
+  Activity, TrendingUp, TrendingDown, Zap, Layers, Settings,
   AlertTriangle, ChevronRight, CircleCheck, CircleX, Circle, Gauge,
   BarChart3, Brain, Newspaper, Globe2, Eye, Target, Clock, ArrowUpRight,
   ArrowDownRight, Minus, Shield, Cpu, LineChart as LineChartIcon, Filter, X,
@@ -34,7 +34,6 @@ import { AlertsView } from './AlertsView.jsx';
 import { EngineTestView } from './EngineTestView.jsx';
 import { EarningsPlaysView } from './EarningsView.jsx';
 import { FableView } from './FableView.jsx';
-import { VectorView } from './VectorView.jsx';
 import { OptionsFlowView } from './OptionsFlowView.jsx';
 import { SettingsView } from './SettingsView.jsx';
 import { BacktestView } from './BacktestView.jsx';
@@ -75,9 +74,10 @@ const VIEWS = [
   // FABLE — Claude's own board (reports/fable/design.md). PENDING chip
   // until the pre-committed backtest lands; then the registry decides.
   { id: 'fable', label: 'FABLE', shortLabel: 'FABLE', icon: Sparkles },
-  // VECTOR — event-driven library board (reports/vector/design.md).
-  // PENDING chip until the pre-committed validation run resolves it.
-  { id: 'vector', label: 'VECTOR', shortLabel: 'VECTOR', icon: Radio },
+  // VECTOR retired — a fixed 2016–2024 backtest library (no live scanner) of
+  // a signal its own validation found NO_EDGE (IC −0.017, −73pp vs SPY).
+  // Board + data kept in the repo; removed from the UI so it can't read as a
+  // source of live picks.
   { id: 'prophet', label: 'Prophet', shortLabel: 'Prophet', icon: Sparkles },
   { id: 'catalyst', label: 'Catalyst', shortLabel: 'Catalyst', icon: Zap },
   { id: 'insiders', label: 'Insiders', shortLabel: 'Insiders', icon: Eye },
@@ -348,7 +348,6 @@ export default function App() {
     <>
       {activeView === 'desk' && <ErrorBoundary label="Desk"><DeskView /></ErrorBoundary>}
       {activeView === 'fable' && <ErrorBoundary label="FABLE"><FableView /></ErrorBoundary>}
-      {activeView === 'vector' && <ErrorBoundary label="VECTOR"><VectorView /></ErrorBoundary>}
       {activeView === 'board' && <ErrorBoundary label="Board"><LiveTargetBoard universe={universe} /></ErrorBoundary>}
       {activeView === 'prophet' && <ErrorBoundary label="Prophet"><ProphetView /></ErrorBoundary>}
       {activeView === 'catalyst' && <ErrorBoundary label="Catalyst"><CatalystView universe={universe} onNavigate={setActiveView} /></ErrorBoundary>}

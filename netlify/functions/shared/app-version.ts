@@ -13,4 +13,4 @@
 // src/App.jsx" now means: bump it HERE (App.jsx re-exports the import).
 // MODEL_VERSION (scoring math) is separate — see shared/model-version.ts.
 
-export const APP_VERSION = '0.35.0-alpha';
+export const APP_VERSION = '0.36.0-alpha';
