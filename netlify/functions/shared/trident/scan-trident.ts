@@ -272,3 +272,151 @@ export async function runTridentScan(opts: TridentScanOpts): Promise<TridentScan
     partial,
   };
 }
+
+// ---------------------------------------------------------------------------
+// Checkpoint-resume support (russell2k chain — the #95-97 house pattern).
+// runTridentBatch processes a ticker SLICE (gate + full scoring, regime-
+// free); the chained worker accumulates rows across invocations and the
+// terminal step calls finalizeTridentRows with a fresh regime.
+// ---------------------------------------------------------------------------
+
+export interface TridentBatchResult {
+  rows: Array<Omit<TridentRow, 'percentile' | 'regimeAdjusted'> & { composite: number }>;
+  tickersConsumed: number;
+  gatePassed: number;
+  warnings: string[];
+}
+
+export async function runTridentBatch(opts: {
+  universe: TridentUniverse;
+  startIdx: number;
+  batchSize: number;
+  concurrency?: number;
+  benchBars: TridentBar[];
+  logger: Logger;
+  institutionalFor?: (ticker: string) => Promise<InstitutionalInputs | null>;
+}): Promise<TridentBatchResult> {
+  const entries = inIndex(opts.universe);
+  const slice = entries.slice(opts.startIdx, opts.startIdx + opts.batchSize);
+  const warnings: string[] = [];
+  const from = isoDaysAgo(560);
+  const to = new Date().toISOString().slice(0, 10);
+  const rows: TridentBatchResult['rows'] = [];
+  let gatePassed = 0;
+
+  await mapWithConcurrency(
+    slice.map((e) => e.ticker),
+    async (ticker) => {
+      const entry = slice.find((e) => e.ticker === ticker)!;
+      try {
+        const raw = await withTimeout(getDailyBars(ticker, from, to), 10_000);
+        if (raw === null) { warnings.push(`bars-timeout:${ticker}`); return; }
+        const bars = toTridentBars(raw);
+        if (bars.length < 220) return;
+        const bundle = await withTimeout(Promise.all([
+          getEarningsHistory(ticker, 8).catch(() => []),
+          getRecommendations(ticker).catch(() => []),
+          getFundamentals(ticker).catch(() => null),
+          getInsiderActivity(ticker, 90).catch(() => null),
+          opts.institutionalFor ? opts.institutionalFor(ticker).catch(() => null) : Promise.resolve(null),
+        ]), 25_000);
+        if (bundle === null) { warnings.push(`timeout:${ticker}`); return; }
+        const [earnings, recs, fund, insider, instExtra] = bundle;
+        const institutional: InstitutionalInputs | null = instExtra
+          ? { ...instExtra, insiderNetBuyDollars: insider ? insider.netDollars : instExtra.insiderNetBuyDollars }
+          : insider
+            ? {
+                activist: null, convictionAdds: [], clusterCount: 0,
+                shortInterestPctFloat: null, instShareOfFloatPct: null,
+                breadthDecline: null, insiderNetBuyDollars: insider.netDollars,
+              }
+            : null;
+        const score = scoreTrident({
+          ticker,
+          universe: opts.universe,
+          bars,
+          benchBars: opts.benchBars,
+          earnings: earnings.map((r) => ({ period: r.period, epsActual: r.epsActual, epsEstimate: r.epsEstimate, surprisePct: r.surprisePct })),
+          recommendations: recs.map((r) => ({ period: r.period, strongBuy: r.strongBuy, buy: r.buy, hold: r.hold, sell: r.sell, strongSell: r.strongSell })),
+          fundamentals: fund
+            ? {
+                epsGrowthTTM: fund.epsGrowthTTM,
+                grossMargin: fund.grossMargin,
+                priorGrossMarginYoY: fund.priorGrossMarginYoY,
+                operatingMargin: fund.operatingMargin,
+                priorOperatingMarginYoY: fund.priorOperatingMarginYoY,
+                roe: fund.profitability?.roe ?? null,
+                operatingCashflowTTM: fund.cashflow?.freeCashFlow ?? null,
+                grossProfitTTM: null,
+              }
+            : null,
+          institutional,
+        });
+        if (score.eligible && score.composite !== null) {
+          gatePassed += 1;
+          rows.push({
+            ticker,
+            name: entry.name,
+            sector: entry.sector,
+            price: +bars[bars.length - 1].close.toFixed(2),
+            composite: score.composite,
+            pillars: score.pillars!,
+            entry: score.entry,
+            institutionalState: score.institutionalState,
+            diagnostics: score.diagnostics,
+          });
+        }
+      } catch (err: any) {
+        warnings.push(`batch:${ticker}:${String(err?.message ?? err).slice(0, 60)}`);
+      }
+    },
+    { batchSize: opts.concurrency ?? 8 },
+  );
+
+  return { rows, tickersConsumed: slice.length, gatePassed, warnings };
+}
+
+/** Fetch fresh index regime + benchmark bars (terminal-step + chain-start helper). */
+export async function fetchTridentContext(universe: TridentUniverse): Promise<{
+  regime: TridentScanResult['regime'];
+  benchBars: TridentBar[];
+}> {
+  const from = isoDaysAgo(560);
+  const to = new Date().toISOString().slice(0, 10);
+  const [qqqBars, spyBars, iwmBars] = await Promise.all([
+    getDailyBars(QQQ, from, to).then(toTridentBars).catch(() => [] as TridentBar[]),
+    getDailyBars(SPY, from, to).then(toTridentBars).catch(() => [] as TridentBar[]),
+    getDailyBars(IWM, from, to).then(toTridentBars).catch(() => [] as TridentBar[]),
+  ]);
+  return {
+    regime: {
+      nq: computeIndexRegime('QQQ', qqqBars as RegimeBar[]),
+      spx: computeIndexRegime('SPY', spyBars as RegimeBar[]),
+      r2k: computeIndexRegime('IWM', iwmBars as RegimeBar[]),
+    },
+    benchBars: universe === 'sp500' ? spyBars : iwmBars,
+  };
+}
+
+/** Regime modulation + percentile ranking over accumulated batch rows. */
+export function finalizeTridentRows(
+  raw: TridentBatchResult['rows'],
+  regime: TridentScanResult['regime'],
+  universe: TridentUniverse,
+): TridentRow[] {
+  const activeRegime = universe === 'sp500' ? regime.spx : regime.r2k;
+  const demotion = activeRegime?.modulation.breakoutDemotion ?? 0;
+  const adjusted = raw.map((r) => {
+    let composite = r.composite;
+    let regimeAdjusted = false;
+    if (r.entry?.kind === 'BREAKOUT' && demotion > 0) {
+      composite = demotion >= 999 ? Math.min(composite, 49) : Math.max(0, composite - demotion);
+      regimeAdjusted = true;
+    }
+    return { ...r, composite: +composite.toFixed(1), regimeAdjusted };
+  });
+  const pct = percentileRanks(adjusted.map((r) => r.composite));
+  return adjusted
+    .map((r, i) => ({ ...r, percentile: pct[i] }))
+    .sort((a, b) => b.composite - a.composite);
+}
