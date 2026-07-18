@@ -417,7 +417,8 @@ export function scoreInstitutional(inst: InstitutionalInputs | null, asOfIso: st
     : 0;
   I -= (i4 / 100) * 15; // crowding cap −15
   if (inst.breadthDecline === true) I = Math.min(I, 45); // suppress "accumulating"
-  return { I: clamp(I), i1, i2, i3, i4, i5, state: 'live' };
+  const r1 = (v: number | null) => (v === null ? null : +v.toFixed(1));
+  return { I: +clamp(I).toFixed(1), i1: r1(i1), i2: r1(i2), i3: r1(i3), i4: r1(i4), i5: r1(i5), state: 'live' };
 }
 
 // ---------------------------------------------------------------------------

@@ -6,6 +6,8 @@
 
 import type { Handler } from '@netlify/functions';
 import { latestSnapshot, isSnapshotFresh, snapshotAgeMs } from './shared/snapshot-store';
+import { getAdminDb } from './shared/firebase-admin';
+import { ACTIVIST_COLLECTION } from './shared/trident/institutional';
 import { logger } from './shared/logger';
 
 export const handler: Handler = async (event) => {
@@ -13,6 +15,18 @@ export const handler: Handler = async (event) => {
   const universe = qs.universe === 'russell2k' ? 'russell2k' : 'sp500';
   const limit = Math.min(Math.max(Number(qs.limit) || 40, 1), 200);
   const log = logger.child({ fn: 'trident-board', universe });
+
+  // Observability: ?smartmoney=1 lists the stored activist events (the
+  // watcher's Firestore output) so feed health is checkable without
+  // Firestore console access.
+  if (qs.smartmoney === '1') {
+    try {
+      const snap = await getAdminDb().collection(ACTIVIST_COLLECTION).orderBy('filedAt', 'desc').limit(50).get();
+      return json(200, { ok: true, count: snap.size, events: snap.docs.map((d) => d.data()) });
+    } catch (err: any) {
+      return json(500, { ok: false, error: String(err?.message ?? err) });
+    }
+  }
 
   try {
     const snap = await latestSnapshot('trident', universe);
