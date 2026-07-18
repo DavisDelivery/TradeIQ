@@ -393,6 +393,12 @@
   to = "/.netlify/functions/earnings-edge-study"
   status = 200
 
+# TRIDENT — near-term F×T×I picker + NQ/SPX regime panel (reports/trident/design.md).
+[[redirects]]
+  from = "/api/trident-board"
+  to = "/.netlify/functions/trident-board"
+  status = 200
+
 # FABLE — Claude's own board (reports/fable/design.md).
 [[redirects]]
   from = "/api/fable-board"
