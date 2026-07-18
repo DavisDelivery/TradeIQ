@@ -132,7 +132,13 @@ export async function runTridentScan(opts: TridentScanOpts): Promise<TridentScan
     async (ticker) => {
       if (budgetLeft() < 60_000) { partial = true; return null; }
       try {
-        const bars = toTridentBars(await getDailyBars(ticker, from, to));
+        // Bounded: mapWithConcurrency awaits whole batches — ONE hung
+        // socket in 1,928 calls would stall the scan to container death
+        // (the three docless inaugural r2k runs). 10s is generous for a
+        // single Polygon aggs call.
+        const raw = await withTimeout(getDailyBars(ticker, from, to), 10_000);
+        if (raw === null) { warnings.push(`bars-timeout:${ticker}`); return null; }
+        const bars = toTridentBars(raw);
         universeChecked += 1;
         if (bars.length < 220) return null;
         const end = bars.length - 1;
