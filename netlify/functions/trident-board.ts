@@ -21,8 +21,13 @@ export const handler: Handler = async (event) => {
   // Firestore console access.
   if (qs.smartmoney === '1') {
     try {
-      const snap = await getAdminDb().collection(ACTIVIST_COLLECTION).orderBy('filedAt', 'desc').limit(50).get();
-      return json(200, { ok: true, count: snap.size, events: snap.docs.map((d) => d.data()) });
+      const db = getAdminDb();
+      const [snap, meta] = await Promise.all([
+        db.collection(ACTIVIST_COLLECTION).orderBy('filedAt', 'desc').limit(50).get(),
+        db.collection(ACTIVIST_COLLECTION).doc('_meta').get(),
+      ]);
+      const events = snap.docs.map((d) => d.data()).filter((e: any) => e.ticker);
+      return json(200, { ok: true, count: events.length, watcher: meta.exists ? meta.data() : null, events });
     } catch (err: any) {
       return json(500, { ok: false, error: String(err?.message ?? err) });
     }

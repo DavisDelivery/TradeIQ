@@ -77,26 +77,65 @@ export interface IdxFiling {
   path: string; // edgar/data/.../accession.txt
 }
 
-/** Parse a form.idx body for SC 13D rows. Format: fixed-ish columns
- *  `Form Type   Company Name   CIK   Date Filed   File Name`, whitespace
- *  aligned; rows for a filing appear once per associated entity (both the
- *  subject company and the filer produce rows with the SAME file path). */
+/** Parse a form.idx body for SC 13D rows.
+ *
+ *  form.idx is FIXED-WIDTH: `Form Type  Company Name  CIK  Date Filed
+ *  File Name` at constant column offsets, dates usually compact YYYYMMDD.
+ *  A long company name can fill its column completely, leaving a single
+ *  space before CIK — so whitespace-splitting is unsafe. Preferred path:
+ *  derive column offsets from the header line and slice. Fallback (no
+ *  header found, e.g. fixtures): tolerant whitespace regex. Rows for a
+ *  filing appear once per associated entity (subject company AND filer
+ *  share the same file path). */
 export function parseFormIdx(body: string): IdxFiling[] {
+  const lines = body.split('\n');
+  const header = lines.find((l) => /Form Type/.test(l) && /Company Name/.test(l) && /CIK/.test(l));
   const out: IdxFiling[] = [];
-  for (const line of body.split('\n')) {
+
+  const pushRow = (formType: string, name: string, cik: string, dateRaw: string, path: string) => {
+    if (!/^SC 13D(\/A)?$/.test(formType)) return;
+    if (!/^\d+$/.test(cik) || !path) return;
+    const dr = dateRaw.trim();
+    const date = dr.includes('-')
+      ? dr
+      : /^\d{8}$/.test(dr)
+        ? `${dr.slice(0, 4)}-${dr.slice(4, 6)}-${dr.slice(6, 8)}`
+        : null;
+    if (!date) return;
+    out.push({
+      formType: formType as IdxFiling['formType'],
+      companyName: name.trim(),
+      cik: cik.padStart(10, '0'),
+      dateFiled: date,
+      path,
+    });
+  };
+
+  if (header) {
+    const cName = header.indexOf('Company Name');
+    const cCik = header.indexOf('CIK');
+    const cDate = header.indexOf('Date Filed');
+    const cFile = header.indexOf('File Name');
+    if (cName > 0 && cCik > cName && cDate > cCik && cFile > cDate) {
+      for (const line of lines) {
+        if (!line.startsWith('SC 13D')) continue;
+        pushRow(
+          line.slice(0, cName).trim(),
+          line.slice(cName, cCik),
+          line.slice(cCik, cDate).trim(),
+          line.slice(cDate, cFile).trim(),
+          line.slice(cFile).trim(),
+        );
+      }
+      return out;
+    }
+  }
+
+  // Fallback: tolerant whitespace parsing (header absent/unrecognized).
+  for (const line of lines) {
     const m = line.match(/^(SC 13D(?:\/A)?)\s{2,}(.+?)\s{2,}(\d+)\s{2,}(\d{4}-?\d{2}-?\d{2})\s{2,}(\S+)\s*$/);
     if (!m) continue;
-    const dateRaw = m[4];
-    const date = dateRaw.includes('-')
-      ? dateRaw
-      : `${dateRaw.slice(0, 4)}-${dateRaw.slice(4, 6)}-${dateRaw.slice(6, 8)}`;
-    out.push({
-      formType: m[1] as IdxFiling['formType'],
-      companyName: m[2].trim(),
-      cik: m[3].padStart(10, '0'),
-      dateFiled: date,
-      path: m[5],
-    });
+    pushRow(m[1], m[2], m[3], m[4], m[5]);
   }
   return out;
 }

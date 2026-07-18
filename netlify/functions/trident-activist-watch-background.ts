@@ -60,6 +60,17 @@ export const handler: Handler = async (event) => {
       }
     }
 
+    // Health doc — background responses are discarded, so the run's
+    // outcome must land somewhere readable (?smartmoney=1 shows events;
+    // this shows whether the WATCHER itself is running and what EDGAR did).
+    await db.collection(ACTIVIST_COLLECTION).doc('_meta').set({
+      lastRunAt: new Date().toISOString(),
+      backfillDays,
+      daysProcessed,
+      stored,
+      errors: errors.slice(0, 10),
+    }, { merge: true }).catch(() => {});
+
     log.info('watch_done', { daysProcessed, stored, errors: errors.length, ms: Date.now() - started });
     return {
       statusCode: 200,
