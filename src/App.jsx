@@ -34,6 +34,7 @@ import { AlertsView } from './AlertsView.jsx';
 import { EngineTestView } from './EngineTestView.jsx';
 import { EarningsPlaysView } from './EarningsView.jsx';
 import { FableView } from './FableView.jsx';
+import { TridentView } from './TridentView.jsx';
 import { OptionsFlowView } from './OptionsFlowView.jsx';
 import { SettingsView } from './SettingsView.jsx';
 import { BacktestView } from './BacktestView.jsx';
@@ -74,6 +75,10 @@ const VIEWS = [
   // FABLE — Claude's own board (reports/fable/design.md). PENDING chip
   // until the pre-committed backtest lands; then the registry decides.
   { id: 'fable', label: 'FABLE', shortLabel: 'FABLE', icon: Sparkles },
+  // TRIDENT — near-term F×T×I picker + NQ/SPX regime panel
+  // (reports/trident/design.md). Labelled screener until the
+  // pre-committed backtest stamps a verdict. Occupies VECTOR's old slot.
+  { id: 'trident', label: 'TRIDENT', shortLabel: 'TRIDENT', icon: Crosshair },
   // VECTOR retired — a fixed 2016–2024 backtest library (no live scanner) of
   // a signal its own validation found NO_EDGE (IC −0.017, −73pp vs SPY).
   // Board + data kept in the repo; removed from the UI so it can't read as a
@@ -348,6 +353,7 @@ export default function App() {
     <>
       {activeView === 'desk' && <ErrorBoundary label="Desk"><DeskView /></ErrorBoundary>}
       {activeView === 'fable' && <ErrorBoundary label="FABLE"><FableView /></ErrorBoundary>}
+      {activeView === 'trident' && <ErrorBoundary label="TRIDENT"><TridentView /></ErrorBoundary>}
       {activeView === 'board' && <ErrorBoundary label="Board"><LiveTargetBoard universe={universe} /></ErrorBoundary>}
       {activeView === 'prophet' && <ErrorBoundary label="Prophet"><ProphetView /></ErrorBoundary>}
       {activeView === 'catalyst' && <ErrorBoundary label="Catalyst"><CatalystView universe={universe} onNavigate={setActiveView} /></ErrorBoundary>}

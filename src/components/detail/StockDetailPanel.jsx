@@ -27,6 +27,7 @@ import { useStockDetail } from '../../hooks/useStockDetail.js';
 import { StockDetailHero } from './StockDetailHero.jsx';
 import { ThesisParagraph } from './ThesisParagraph.jsx';
 import { FablePillarsSection } from './FablePillarsSection.jsx';
+import { TridentPillarsSection } from './TridentPillarsSection.jsx';
 import { AdvancedPriceChart } from './AdvancedPriceChart.jsx';
 import { RelativeStrengthChart } from './RelativeStrengthChart.jsx';
 import { FundamentalsChart } from './FundamentalsChart.jsx';
@@ -41,6 +42,7 @@ export function StockDetailPanel({ board, ticker, row }) {
   const isTarget = board === 'target';
   const isFable = board === 'fable'; // no server rationale — pillars section renders from the row
   const isVector = board === 'vector'; // event board — verdict renders in VectorView; no rationale endpoint
+  const isTrident = board === 'trident'; // pillars render from the row; no rationale endpoint
 
   // Mount all three; enabled-gating means only the active board's endpoint is
   // hit (Rules of Hooks: call unconditionally, gate via `enabled`).
@@ -57,13 +59,13 @@ export function StockDetailPanel({ board, ticker, row }) {
   // williams/lynch carry a server-generated thesis string; the target board's
   // composite thesis lives on the board row (rationale endpoint returns the
   // per-analyst breakdown, not prose).
-  const thesis = isFable || isVector
+  const thesis = isFable || isVector || isTrident
     ? null
     : isTarget
       ? (row?.rationale ?? null)
       : (rationale?.thesis ?? null);
-  const thesisLoading = !isTarget && !isFable && !isVector && rationaleQuery.isLoading;
-  const thesisError = !isTarget && !isFable && !isVector && rationaleQuery.isError;
+  const thesisLoading = !isTarget && !isFable && !isVector && !isTrident && rationaleQuery.isLoading;
+  const thesisError = !isTarget && !isFable && !isVector && !isTrident && rationaleQuery.isError;
 
   return (
     <div className="space-y-4" data-testid="stock-detail-panel" data-board={board}>
@@ -76,7 +78,10 @@ export function StockDetailPanel({ board, ticker, row }) {
         thesis={thesis}
       />
 
-      {isVector ? null : isFable ? (
+      {isVector ? null : isTrident ? (
+        // TRIDENT: F×T×I pillars + entry card + smart-money state at top.
+        <TridentPillarsSection row={row} />
+      ) : isFable ? (
         // FABLE: my pillars at the top (Chad's spec), then the full
         // investor profile. No server thesis/rationale endpoint.
         <FablePillarsSection row={row} />
@@ -93,7 +98,7 @@ export function StockDetailPanel({ board, ticker, row }) {
       <AdvancedPriceChart
         ticker={ticker}
         priceLines={
-          isFable && row?.entry
+          (isFable || isTrident) && row?.entry?.pivot != null
             ? [
                 { price: row.entry.pivot, color: '#38bdf8', title: 'entry pivot' },
                 { price: row.entry.stop, color: '#ff5577', title: 'stop' },
@@ -106,7 +111,7 @@ export function StockDetailPanel({ board, ticker, row }) {
       <FundamentalsChart ticker={ticker} />
       <CatalystsFeed ticker={ticker} />
       <RiskCallouts board={board} ticker={ticker} />
-      {!isFable && !isVector && <ScoreBreakdown board={board} ticker={ticker} />}
+      {!isFable && !isVector && !isTrident && <ScoreBreakdown board={board} ticker={ticker} />}
     </div>
   );
 }
