@@ -9,6 +9,8 @@
 
 import type { Firestore } from 'firebase-admin/firestore';
 import { getShortInterest } from '../data-provider';
+import { getCikTickerMap } from '../vector-data';
+import { liveCacheGet, liveCacheSet } from '../provider-live-cache';
 import type { InstitutionalInputs, ActivistEvent } from './scoring';
 import type { ActivistEventDoc } from './activist-watch';
 
@@ -62,4 +64,22 @@ export function makeInstitutionalFor(
       insiderNetBuyDollars: null, // filled in-scan from getInsiderActivity
     };
   };
+}
+
+const CIK_MAP_TTL_MS = 7 * 24 * 60 * 60_000;
+
+/** SEC company_tickers.json behind the shared live cache — the canonical
+ *  CIK→ticker map changes slowly, and EDGAR's WAF intermittently blocks
+ *  Netlify's shared egress. One successful fetch serves a week of watcher
+ *  runs; a cache hit means the watcher has NO hard EDGAR dependency
+ *  beyond the per-day index files (which fail soft, day by day). */
+export async function getCachedCikTickerMap(): Promise<Map<string, string>> {
+  const key = { provider: 'sec', endpoint: 'company-tickers', ticker: '_all', extra: 'v1' };
+  const hit = await liveCacheGet<Record<string, string>>(key, () => CIK_MAP_TTL_MS);
+  if (hit && Object.keys(hit).length > 1000) return new Map(Object.entries(hit));
+  const fresh = await getCikTickerMap();
+  if (fresh.size > 1000) {
+    await liveCacheSet(key, Object.fromEntries(fresh));
+  }
+  return fresh;
 }

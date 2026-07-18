@@ -8,9 +8,8 @@
 
 import type { Handler } from '@netlify/functions';
 import { getAdminDb } from './shared/firebase-admin';
-import { getCikTickerMap } from './shared/vector-data';
 import { fetchDayEvents } from './shared/trident/activist-watch';
-import { ACTIVIST_COLLECTION } from './shared/trident/institutional';
+import { ACTIVIST_COLLECTION, getCachedCikTickerMap } from './shared/trident/institutional';
 import { logger } from './shared/logger';
 
 const MAX_BACKFILL_DAYS = 120;
@@ -33,7 +32,7 @@ export const handler: Handler = async (event) => {
 
   try {
     const db = getAdminDb();
-    const cikMap = await getCikTickerMap();
+    const cikMap = await getCachedCikTickerMap();
     log.info('watch_started', { backfillDays, cikMapSize: cikMap.size });
 
     let stored = 0;
@@ -79,6 +78,17 @@ export const handler: Handler = async (event) => {
   } catch (err: any) {
     const msg = String(err?.message ?? err);
     log.error('watch_failed', { err: msg });
+    // Fatal path (e.g. the CIK-map fetch itself WAF-blocked) must still be
+    // visible from ?smartmoney=1 — write the failure to _meta.
+    try {
+      await getAdminDb().collection(ACTIVIST_COLLECTION).doc('_meta').set({
+        lastRunAt: new Date().toISOString(),
+        backfillDays,
+        daysProcessed: 0,
+        stored: 0,
+        fatal: msg.slice(0, 200),
+      }, { merge: true });
+    } catch { /* firestore down too — nothing left to do */ }
     return { statusCode: 500, body: JSON.stringify({ ok: false, error: msg }) };
   }
 };
