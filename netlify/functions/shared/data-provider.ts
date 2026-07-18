@@ -1175,6 +1175,53 @@ export async function getEarningsHistory(
 }
 
 // ---------------------------------------------------------------------------
+// Massive/Polygon short interest — /stocks/v1/short-interest (all plans).
+// Bi-weekly FINRA-derived settlement data; TRIDENT's crowding penalty
+// input (design.md §2 i4). Live-cached 7d (data cadence is 2 weeks).
+// ---------------------------------------------------------------------------
+
+export interface ShortInterestRow {
+  settlementDate: string;
+  shortInterest: number;
+  daysToCover: number | null;
+  avgDailyVolume: number | null;
+}
+
+const SHORT_INTEREST_TTL_MS = 7 * 24 * 60 * 60_000;
+const SHORT_INTEREST_EMPTY_TTL_MS = 2 * 24 * 60 * 60_000;
+const shortInterestTtl = (rows: ShortInterestRow[]): number =>
+  rows.length > 0 ? SHORT_INTEREST_TTL_MS : SHORT_INTEREST_EMPTY_TTL_MS;
+
+/** Latest short-interest settlement rows (newest first, max 3). */
+export async function getShortInterest(ticker: string): Promise<ShortInterestRow[]> {
+  const liveKey: LiveCacheKey = {
+    provider: 'massive', endpoint: 'short-interest', ticker, extra: 'v1',
+  };
+  const hit = await liveCacheGet<ShortInterestRow[]>(liveKey, shortInterestTtl);
+  if (Array.isArray(hit)) return hit;
+  try {
+    const url = `${POLYGON}/stocks/v1/short-interest?ticker=${encodeURIComponent(ticker)}&limit=3&sort=settlement_date.desc&apiKey=${polygonKey()}`;
+    const res = await fetch(url);
+    if (!res.ok) return [];
+    const data: any = await res.json();
+    const rows: ShortInterestRow[] = Array.isArray(data?.results)
+      ? data.results
+          .map((r: any) => ({
+            settlementDate: String(r.settlement_date ?? ''),
+            shortInterest: Number(r.short_interest),
+            daysToCover: r.days_to_cover != null ? Number(r.days_to_cover) : null,
+            avgDailyVolume: r.avg_daily_volume != null ? Number(r.avg_daily_volume) : null,
+          }))
+          .filter((r: ShortInterestRow) => r.settlementDate && Number.isFinite(r.shortInterest))
+      : [];
+    await liveCacheSet(liveKey, rows);
+    return rows;
+  } catch {
+    return [];
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Finnhub insider transactions — Form 4 feed
 // Quiver's /live/insiders endpoint is gated behind a higher subscription tier
 // (returns 403 "Upgrade your subscription"). Finnhub exposes the same SEC

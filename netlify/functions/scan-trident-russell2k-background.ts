@@ -37,6 +37,7 @@ import {
   finalizeTridentRows,
   type TridentBatchResult,
 } from './shared/trident/scan-trident';
+import { loadActivistMap, makeInstitutionalFor } from './shared/trident/institutional';
 import { inIndex } from './shared/universe';
 import {
   writeSnapshot,
@@ -149,6 +150,12 @@ export const handler: Handler = async (event, context) => {
   } catch {
     /* RS components go neutral */
   }
+  let institutionalFor: ((t: string) => Promise<import('./shared/trident/scoring').InstitutionalInputs | null>) | undefined;
+  try {
+    institutionalFor = makeInstitutionalFor(await loadActivistMap(db));
+  } catch (err: any) {
+    log.warn('institutional_context_unavailable', { err: String(err?.message ?? err) });
+  }
 
   let activeCursor: ScanCursor = cursor;
   try {
@@ -161,6 +168,7 @@ export const handler: Handler = async (event, context) => {
         concurrency: CONCURRENCY,
         benchBars,
         logger: log,
+        institutionalFor,
       });
       if (batch.rows.length > 0) {
         await appendPartialBatch<SlimRow>(db, runId, activeCursor.partialBatchCount, batch.rows);

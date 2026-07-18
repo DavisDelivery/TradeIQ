@@ -35,6 +35,12 @@ import type { Logger } from '../logger';
 
 export type TridentUniverse = 'sp500' | 'russell2k';
 
+export interface TridentSmartMoney {
+  activist: { filer: string; type: '13D' | '13D/A'; filedAt: string } | null;
+  daysToCover: number | null;
+  insiderNetBuyDollars: number | null;
+}
+
 export interface TridentRow {
   ticker: string;
   name: string;
@@ -45,6 +51,7 @@ export interface TridentRow {
   pillars: NonNullable<TridentScore['pillars']>;
   entry: TridentScore['entry'];
   institutionalState: TridentScore['institutionalState'];
+  smartMoney: TridentSmartMoney | null;
   regimeAdjusted: boolean;
   diagnostics: TridentScore['diagnostics'];
 }
@@ -95,6 +102,17 @@ function withTimeout<T>(p: Promise<T>, ms: number): Promise<T | null> {
     p,
     new Promise<null>((resolve) => setTimeout(() => resolve(null), ms)),
   ]);
+}
+
+function toSmartMoney(inst: InstitutionalInputs | null): import('./scan-trident').TridentSmartMoney | null {
+  if (!inst) return null;
+  return {
+    activist: inst.activist
+      ? { filer: inst.activist.filer, type: inst.activist.type, filedAt: inst.activist.acceptedAt }
+      : null,
+    daysToCover: inst.daysToCover ?? null,
+    insiderNetBuyDollars: inst.insiderNetBuyDollars,
+  };
 }
 
 export async function runTridentScan(opts: TridentScanOpts): Promise<TridentScanResult> {
@@ -170,7 +188,7 @@ export async function runTridentScan(opts: TridentScanOpts): Promise<TridentScan
 
   // ---- Stage 2: full scoring on survivors ----
   const survivorByTicker = new Map(survivors.map((s) => [s.ticker, s]));
-  const scoredRows: Array<{ base: (typeof survivors)[number]; score: TridentScore }> = [];
+  const scoredRows: Array<{ base: (typeof survivors)[number]; score: TridentScore; smartMoney: TridentSmartMoney | null }> = [];
   await mapWithConcurrency(
     survivors.map((s) => s.ticker),
     async (ticker) => {
@@ -219,7 +237,7 @@ export async function runTridentScan(opts: TridentScanOpts): Promise<TridentScan
           institutional,
         };
         const score = scoreTrident(inputs);
-        if (score.eligible && score.composite !== null) scoredRows.push({ base: s, score });
+        if (score.eligible && score.composite !== null) scoredRows.push({ base: s, score, smartMoney: toSmartMoney(institutional) });
       } catch (err: any) {
         warnings.push(`score:${s.ticker}:${String(err?.message ?? err).slice(0, 80)}`);
       }
@@ -229,14 +247,14 @@ export async function runTridentScan(opts: TridentScanOpts): Promise<TridentScan
 
   // ---- Regime modulation + percentiles ----
   const demotion = activeRegime?.modulation.breakoutDemotion ?? 0;
-  const adjusted = scoredRows.map(({ base, score }) => {
+  const adjusted = scoredRows.map(({ base, score, smartMoney }) => {
     let composite = score.composite as number;
     let regimeAdjusted = false;
     if (score.entry?.kind === 'BREAKOUT' && demotion > 0) {
       composite = demotion >= 999 ? Math.min(composite, 49) : Math.max(0, composite - demotion);
       regimeAdjusted = true;
     }
-    return { base, score, composite: +composite.toFixed(1), regimeAdjusted };
+    return { base, score, smartMoney, composite: +composite.toFixed(1), regimeAdjusted };
   });
   const pct = percentileRanks(adjusted.map((r) => r.composite));
   const rows: TridentRow[] = adjusted
@@ -250,6 +268,7 @@ export async function runTridentScan(opts: TridentScanOpts): Promise<TridentScan
       pillars: r.score.pillars!,
       entry: r.score.entry,
       institutionalState: r.score.institutionalState,
+      smartMoney: r.smartMoney,
       regimeAdjusted: r.regimeAdjusted,
       diagnostics: r.score.diagnostics,
     }))
@@ -363,6 +382,7 @@ export async function runTridentBatch(opts: {
             pillars: score.pillars!,
             entry: score.entry,
             institutionalState: score.institutionalState,
+            smartMoney: toSmartMoney(institutional),
             diagnostics: score.diagnostics,
           });
         }

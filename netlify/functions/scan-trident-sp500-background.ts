@@ -3,6 +3,8 @@
 
 import type { Handler } from '@netlify/functions';
 import { runTridentScan } from './shared/trident/scan-trident';
+import { loadActivistMap, makeInstitutionalFor } from './shared/trident/institutional';
+import { getAdminDb } from './shared/firebase-admin';
 import {
   writeSnapshot,
   assessSnapshotPublish,
@@ -18,11 +20,20 @@ export const handler: Handler = async (event) => {
   const log = logger.child({ fn: 'scan-trident-sp500-background', universe: 'sp500' });
   const started = Date.now();
   try {
+    // Smart Money context: one Firestore read for all live 13D events;
+    // short interest rides the provider cache per ticker.
+    let institutionalFor;
+    try {
+      institutionalFor = makeInstitutionalFor(await loadActivistMap(getAdminDb()));
+    } catch (err: any) {
+      log.warn('institutional_context_unavailable', { err: String(err?.message ?? err) });
+    }
     const scan = await runTridentScan({
       universe: 'sp500',
       scanBudgetMs: PER_SCAN_BUDGET_MS,
       concurrency: 8,
       logger: log,
+      institutionalFor,
     });
 
     let status: 'complete' | 'partial' = scan.partial ? 'partial' : 'complete';

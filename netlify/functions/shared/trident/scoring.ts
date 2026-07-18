@@ -69,8 +69,14 @@ export interface ConvictionAdd {
 export interface InstitutionalInputs {
   activist: ActivistEvent | null;
   convictionAdds: ConvictionAdd[];
+  /** W3 flips this — false means the 13F pipeline isn't ingested yet, so
+   *  i2/i3 are NULL (renormalized), never zero (missing data ≠ nobody
+   *  buying). */
+  convictionDataAvailable?: boolean;
   clusterCount: number;
   shortInterestPctFloat: number | null;
+  /** Crowding proxy when %float is unavailable: FINRA days-to-cover. */
+  daysToCover?: number | null;
   instShareOfFloatPct: number | null;
   breadthDecline: boolean | null;
   /** Open-market insider net buys, last 90d, dollars. */
@@ -349,8 +355,17 @@ export function scoreInstitutional(inst: InstitutionalInputs | null, asOfIso: st
   state: 'live' | 'warming';
 } {
   const C = TRIDENT_CONSTANTS;
-  if (!inst || (inst.activist === null && inst.convictionAdds.length === 0 && inst.shortInterestPctFloat === null)) {
-    // Feeds not populated — only insider may exist; report warming.
+  // Feed-connected detection: the W2 wiring always passes an object with
+  // the availability flag present; a null/legacy-shape input means the
+  // Smart Money pipes aren't wired at all → warming (renormalize F/T).
+  const feedConnected =
+    inst != null &&
+    (inst.convictionDataAvailable !== undefined ||
+      inst.activist !== null ||
+      inst.convictionAdds.length > 0 ||
+      inst.shortInterestPctFloat !== null ||
+      inst.daysToCover != null);
+  if (!inst || !feedConnected) {
     const i5 = inst?.insiderNetBuyDollars != null ? squash(inst.insiderNetBuyDollars, 2_000_000) : null;
     return { I: null, i1: null, i2: null, i3: null, i4: null, i5, state: 'warming' };
   }
@@ -363,24 +378,43 @@ export function scoreInstitutional(inst: InstitutionalInputs | null, asOfIso: st
       : age >= C.ACTIVIST_ZERO_DAYS ? 0
       : (1 - (age - C.ACTIVIST_FULL_DAYS) / (C.ACTIVIST_ZERO_DAYS - C.ACTIVIST_FULL_DAYS)) * 100;
   }
-  // i2 conviction adds, staleness-decayed, weight-scaled
-  let i2 = 0;
-  for (const add of inst.convictionAdds) {
-    const age = daysBetween(add.acceptedAt, asOfIso);
-    const fresh = age >= C.CONVICTION_ZERO_DAYS ? 0 : 1 - age / C.CONVICTION_ZERO_DAYS;
-    const convScale = Math.min(add.portfolioWeightPct / 7.5, 1.5);
-    i2 += fresh * convScale * (add.action === 'new' ? 40 : 25);
+  // i2/i3 conviction + cluster — NULL (not zero) until the 13F pipeline
+  // is ingested; renormalized below.
+  const convictionAvailable = inst.convictionDataAvailable !== false;
+  let i2: number | null = null;
+  let i3: number | null = null;
+  if (convictionAvailable) {
+    let acc = 0;
+    for (const add of inst.convictionAdds) {
+      const age = daysBetween(add.acceptedAt, asOfIso);
+      const fresh = age >= C.CONVICTION_ZERO_DAYS ? 0 : 1 - age / C.CONVICTION_ZERO_DAYS;
+      const convScale = Math.min(add.portfolioWeightPct / 7.5, 1.5);
+      acc += fresh * convScale * (add.action === 'new' ? 40 : 25);
+    }
+    i2 = clamp(acc);
+    i3 = clamp(inst.clusterCount >= 3 ? 100 : inst.clusterCount === 2 ? 70 : 0);
   }
-  i2 = clamp(i2);
-  const i3 = clamp(inst.clusterCount >= 3 ? 100 : inst.clusterCount === 2 ? 70 : 0);
-  // i4 crowding penalty 0..100 (subtracted, capped)
-  const si = inst.shortInterestPctFloat ?? 0;
+  // i4 crowding penalty 0..100 (subtracted, capped). %float when known;
+  // FINRA days-to-cover as the proxy otherwise.
+  const si = inst.shortInterestPctFloat;
   const io = inst.instShareOfFloatPct ?? 0;
-  const i4 = clamp(si > 10 && io > 60 ? 100 : si > 6 && io > 40 ? 55 : si > 10 ? 40 : 0);
+  const dtc = inst.daysToCover ?? null;
+  const i4 =
+    si !== null
+      ? clamp(si > 10 && io > 60 ? 100 : si > 6 && io > 40 ? 55 : si > 10 ? 40 : 0)
+      : dtc !== null
+        ? clamp(dtc > 8 ? 70 : dtc > 5 ? 40 : 0)
+        : 0;
   const i5 = inst.insiderNetBuyDollars != null ? squash(inst.insiderNetBuyDollars, 2_000_000) : null;
 
-  let I =
-    i1 * C.I_W.i1 + i2 * C.I_W.i2 + i3 * C.I_W.i3 + (i5 ?? 50) * C.I_W.i5;
+  // Weighted average over AVAILABLE positive sub-signals, renormalized.
+  const parts: Array<[number | null, number]> = [
+    [i1, C.I_W.i1], [i2, C.I_W.i2], [i3, C.I_W.i3], [i5, C.I_W.i5],
+  ];
+  const avail = parts.filter(([v]) => v !== null) as Array<[number, number]>;
+  let I = avail.length > 0
+    ? avail.reduce((a, [v, w]) => a + v * w, 0) / avail.reduce((a, [, w]) => a + w, 0)
+    : 0;
   I -= (i4 / 100) * 15; // crowding cap −15
   if (inst.breadthDecline === true) I = Math.min(I, 45); // suppress "accumulating"
   return { I: clamp(I), i1, i2, i3, i4, i5, state: 'live' };

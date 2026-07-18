@@ -153,6 +153,30 @@ export function TridentPillarsSection({ row }) {
         </div>
       )}
 
+      {row.smartMoney && (row.smartMoney.activist || row.smartMoney.daysToCover != null || row.smartMoney.insiderNetBuyDollars != null) && (
+        <div className="space-y-1 rounded-lg border border-neutral-800 bg-neutral-950/40 p-2" data-testid="smart-money-panel">
+          <div className="text-[10px] uppercase tracking-wide text-neutral-500">Smart money on this name</div>
+          {row.smartMoney.activist && (
+            <p className="text-[11px] text-emerald-300">
+              <span className="font-semibold">{row.smartMoney.activist.filer}</span>
+              {' '}holds an active {row.smartMoney.activist.type} stake (filed {row.smartMoney.activist.filedAt})
+            </p>
+          )}
+          {row.smartMoney.insiderNetBuyDollars != null && row.smartMoney.insiderNetBuyDollars !== 0 && (
+            <p className={`text-[11px] ${row.smartMoney.insiderNetBuyDollars > 0 ? 'text-emerald-300/90' : 'text-rose-300/90'}`}>
+              Insiders net {row.smartMoney.insiderNetBuyDollars > 0 ? 'bought' : 'sold'} $
+              {Math.abs(row.smartMoney.insiderNetBuyDollars).toLocaleString()} in 90 days
+            </p>
+          )}
+          {row.smartMoney.daysToCover != null && (
+            <p className={`text-[11px] ${row.smartMoney.daysToCover > 5 ? 'text-amber-300/90' : 'text-neutral-400'}`}>
+              Short interest: {row.smartMoney.daysToCover.toFixed(1)} days-to-cover
+              {row.smartMoney.daysToCover > 5 ? ' — crowded, penalty applied' : ''}
+            </p>
+          )}
+        </div>
+      )}
+
       {warming && (
         <p className="rounded-lg border border-sky-500/20 bg-sky-500/5 p-2 text-[11px] leading-relaxed text-sky-300/90">
           Smart Money feeds (activist 13D + fund 13F) are still backfilling — this pillar joins the
