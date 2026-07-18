@@ -86,6 +86,17 @@ function toTridentBars(bars: Array<{ t: number; o: number; h: number; l: number;
   }));
 }
 
+/** Bound a per-ticker fetch bundle so stragglers can't ride past the
+ *  container kill (the r2k inaugural-scan lesson: a ticker that starts
+ *  its paced fetches at minute 12 can hang the whole worker past 15:00
+ *  and die docless). Times out to null — the ticker is skipped. */
+function withTimeout<T>(p: Promise<T>, ms: number): Promise<T | null> {
+  return Promise.race([
+    p,
+    new Promise<null>((resolve) => setTimeout(() => resolve(null), ms)),
+  ]);
+}
+
 export async function runTridentScan(opts: TridentScanOpts): Promise<TridentScanResult> {
   const start = Date.now();
   const log = opts.logger;
@@ -158,15 +169,17 @@ export async function runTridentScan(opts: TridentScanOpts): Promise<TridentScan
     survivors.map((s) => s.ticker),
     async (ticker) => {
       const s = survivorByTicker.get(ticker)!;
-      if (budgetLeft() < 45_000) { partial = true; return; }
+      if (budgetLeft() < 60_000) { partial = true; return; }
       try {
-        const [earnings, recs, fund, insider, instExtra] = await Promise.all([
+        const bundle = await withTimeout(Promise.all([
           getEarningsHistory(s.ticker, 8).catch(() => []),
           getRecommendations(s.ticker).catch(() => []),
           getFundamentals(s.ticker).catch(() => null),
           getInsiderActivity(s.ticker, 90).catch(() => null),
           opts.institutionalFor ? opts.institutionalFor(s.ticker).catch(() => null) : Promise.resolve(null),
-        ]);
+        ]), Math.min(25_000, Math.max(5_000, budgetLeft() - 40_000)));
+        if (bundle === null) { warnings.push(`timeout:${s.ticker}`); return; }
+        const [earnings, recs, fund, insider, instExtra] = bundle;
         const institutional: InstitutionalInputs | null = instExtra
           ? { ...instExtra, insiderNetBuyDollars: insider ? insider.netDollars : instExtra.insiderNetBuyDollars }
           : insider

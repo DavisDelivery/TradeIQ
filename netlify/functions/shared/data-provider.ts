@@ -1393,12 +1393,30 @@ export interface RecommendationSnapshot {
  *
  * PIT-cacheable: keyed by (ticker, asOfDate).
  */
+const RECOMMENDATIONS_LIVE_TTL_MS = 12 * 60 * 60_000;
+const RECOMMENDATIONS_LIVE_EMPTY_TTL_MS = 6 * 60 * 60_000;
+const recommendationsTtlMs = (rows: RecommendationSnapshot[]): number =>
+  rows.length > 0 ? RECOMMENDATIONS_LIVE_TTL_MS : RECOMMENDATIONS_LIVE_EMPTY_TTL_MS;
+
 export async function getRecommendations(
   ticker: string,
   opts: { asOfDate?: string } = {},
 ): Promise<RecommendationSnapshot[]> {
+  // 2026-07-18 (TRIDENT) — live calls ride the shared provider cache:
+  // monthly-granularity data refetched per scan per ticker was the exact
+  // shape of the 07-15 incident. PIT (asOfDate) reads bypass in both
+  // directions; failure-shaped results are never written (M8).
+  const liveKey: LiveCacheKey | null = opts.asOfDate
+    ? null
+    : { provider: 'finnhub', endpoint: 'stock/recommendation', ticker, extra: 'v1' };
+  if (liveKey) {
+    const hit = await liveCacheGet<RecommendationSnapshot[]>(liveKey, recommendationsTtlMs);
+    if (Array.isArray(hit)) return hit;
+  }
+
   // ---- Live path (always tried first; cheap and authoritative) ----
   let live: RecommendationSnapshot[] = [];
+  let liveFetchOk = false;
   try {
     const url = `${FINNHUB}/stock/recommendation?symbol=${encodeURIComponent(ticker)}&token=${finnhubKey()}`;
     const res = await fetch(url);
@@ -1410,6 +1428,7 @@ export async function getRecommendations(
         [],
       );
       if (Array.isArray(parsed)) {
+        liveFetchOk = true;
         live = parsed.map((r) => ({
           symbol: r.symbol ?? ticker,
           period: r.period,
@@ -1425,8 +1444,12 @@ export async function getRecommendations(
     /* swallow; fall through to filter / fallback */
   }
 
-  // No asOfDate → return live response as-is (newest first).
-  if (!opts.asOfDate) return live;
+  // No asOfDate → return live response as-is (newest first). Cache only
+  // success-shaped responses (M8: a 429/parse-fallback [] must not stick).
+  if (!opts.asOfDate) {
+    if (liveKey && liveFetchOk) await liveCacheSet(liveKey, live);
+    return live;
+  }
 
   // With asOfDate → filter live response by `period <= asOfDate`. The
   // live response covers a rolling window, so this serves the recent
