@@ -1,0 +1,23 @@
+{
+  "_comment_": "Phase 4t W2 composite backtest config — S&P 500 / monthly. Window matches Prophet + Williams/Lynch (2018-01-31 -> 2024-12-31) per brief PART IX recommendation, so the composite verdict is directly comparable. Monthly rebalance is the standard horizon for a multi-factor model with fundamentals + insider + political layers (weekly would overfit on news + insider signal; quarterly under-samples the political/insider edge windows). topN=20 portfolio; minComposite filter at 50 (above-neutral); the engine still emits per-candidate mlTraining rows for ALL scored sp500 names, so W3 attribution + the decile/tail analysis run off the full ~84-rebalance × ~500-ticker dataset.",
+  "universe": "sp500",
+  "startDate": "2018-01-31",
+  "endDate": "2024-12-31",
+  "rebalanceFrequency": "monthly",
+  "board": "target",
+  "portfolio": {
+    "topN": 20,
+    "weighting": "equal",
+    "maxPositionPct": 0.08,
+    "maxSectorPct": 0.40,
+    "cashSleeve": 0.05,
+    "minComposite": 50
+  },
+  "costs": {
+    "slippageBps": { "sp500": 5 },
+    "commission": 0
+  },
+  "initialCapital": 100000,
+  "scoringConcurrency": 5,
+  "discreteSignalOnly": false
+}

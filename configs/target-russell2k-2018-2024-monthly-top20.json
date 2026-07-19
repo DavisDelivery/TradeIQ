@@ -1,0 +1,23 @@
+{
+  "_comment_": "Phase 4t W2 composite backtest config — Russell 2000 / monthly. SAME window as the sp500 run (2018-01-31 -> 2024-12-31) for direct large-cap vs small-cap comparability. Monthly cadence keeps the run tractable: ~2000 tickers x 84 rebalances at sp500 weekly would be ~6x the load. The Phase 4u cursor fix makes the russell2k cursor doc safe regardless of run length; the long wall-clock comes from the 168k per-rebalance scoring calls (PIT cache amortises across rebalances after the first). minComposite 50 mirrors the sp500 config. The W3 verdict MUST surface the fundamentals + EPS-actual restatement caveat with extra emphasis for russell2k — small-cap restatements are more frequent + material.",
+  "universe": "russell2k",
+  "startDate": "2018-01-31",
+  "endDate": "2024-12-31",
+  "rebalanceFrequency": "monthly",
+  "board": "target",
+  "portfolio": {
+    "topN": 20,
+    "weighting": "equal",
+    "maxPositionPct": 0.08,
+    "maxSectorPct": 0.40,
+    "cashSleeve": 0.05,
+    "minComposite": 50
+  },
+  "costs": {
+    "slippageBps": { "russell2k": 12 },
+    "commission": 0
+  },
+  "initialCapital": 100000,
+  "scoringConcurrency": 4,
+  "discreteSignalOnly": false
+}
