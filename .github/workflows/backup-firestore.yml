@@ -39,22 +39,39 @@ jobs:
           GOOGLE_APPLICATION_CREDENTIALS: /tmp/firebase-key.json
         run: npx tsx scripts/export-firestore.ts
 
+      # Primary backup — an off-repo copy that needs NO credential, so the
+      # weekly backup always succeeds even if the mirror PAT is expired.
+      # 90 days = the free-plan max retention (a rolling ~13-week window).
+      - name: Upload backup artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: firestore-backup-${{ github.run_id }}
+          path: backups/
+          retention-days: 90
+          if-no-files-found: error
+
+      # Best-effort permanent mirror to the dedicated backup repo. This needs
+      # BACKUP_REPO_PAT (a fine-grained PAT or deploy token with write access
+      # to DavisDelivery/TradeIQ-backups). If it's missing/expired the steps
+      # below log the problem but DO NOT fail the run — the artifact above is
+      # the guaranteed backup. Refresh the secret to resume the mirror.
       - name: Checkout backup repo
+        id: mirror_checkout
+        continue-on-error: true
         uses: actions/checkout@v4
         with:
           repository: DavisDelivery/TradeIQ-backups
           path: backup-repo
           token: ${{ secrets.BACKUP_REPO_PAT }}
 
-      - name: Copy backup file into backup repo
-        run: |
-          mkdir -p backup-repo/firestore
-          cp backups/* backup-repo/firestore/
-          ls -la backup-repo/firestore/
-
-      - name: Commit + push
+      - name: Copy + commit + push to backup repo
+        if: steps.mirror_checkout.outcome == 'success'
+        continue-on-error: true
         working-directory: backup-repo
         run: |
+          mkdir -p firestore
+          cp ../backups/* firestore/
+          ls -la firestore/
           git config user.name "tradeiq-backup-bot"
           # Must be a noreply address — pushing as a private account email
           # is rejected by GitHub push privacy protection (GH007).
@@ -66,6 +83,12 @@ jobs:
           fi
           git commit -m "Backup $(date -u +%F)"
           git push
+
+      - name: Note if the mirror was skipped
+        if: steps.mirror_checkout.outcome != 'success'
+        run: |
+          echo "::warning::Backup-repo mirror skipped — BACKUP_REPO_PAT is missing or invalid." \
+            "The artifact backup succeeded; refresh the secret to resume the permanent mirror."
 
       - name: Wipe service-account file
         if: always()
