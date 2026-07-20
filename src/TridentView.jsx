@@ -7,6 +7,7 @@ import { MasterDetail } from './layout/MasterDetail.jsx';
 import { StockDetailPanel } from './components/detail/StockDetailPanel.jsx';
 import { AdvancedPriceChart } from './components/detail/AdvancedPriceChart.jsx';
 import { TRIDENT_LEGEND } from './components/detail/TridentPillarsSection.jsx';
+import { useLiveRows, useLiveQuotes } from './hooks/useLiveQuotes.js';
 
 const UNIVERSES = [
   { id: 'sp500', label: 'S&P 500' },
@@ -39,7 +40,7 @@ const STRETCH_COPY = {
   overbought: 'overbought — usually trend STRENGTH, not a sell signal; shown as context only',
 };
 
-function RegimeCard({ title, symbol, r }) {
+function RegimeCard({ title, symbol, r, quote }) {
   const [open, setOpen] = useState(false);
   if (!r) {
     return (
@@ -60,7 +61,15 @@ function RegimeCard({ title, symbol, r }) {
           <span className="text-[11px] text-neutral-400">RSI14 {r.stretch?.rsi14?.toFixed(0)}</span>
           <span className="text-[11px] text-neutral-500">· {r.stretch?.label}</span>
         </div>
-        <span className="text-xs text-neutral-500">${r.lastClose} {open ? '▾' : '▸'}</span>
+        <span className="text-xs text-neutral-500">
+          <span className="text-neutral-300">${(quote?.price ?? r.lastClose)?.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+          {quote?.changePct != null && (
+            <span className={quote.changePct >= 0 ? 'text-emerald-400' : 'text-rose-400'}>
+              {' '}{quote.changePct >= 0 ? '+' : ''}{quote.changePct.toFixed(2)}%
+            </span>
+          )}
+          {' '}{open ? '▾' : '▸'}
+        </span>
       </button>
       {open && (
         <div className="mt-2 space-y-2 border-t border-neutral-800 pt-2 text-[11px] leading-relaxed">
@@ -116,7 +125,12 @@ function TridentCard({ row, rank, onOpen }) {
             )}
           </div>
           <div className="mt-0.5 text-[11px] text-neutral-500">
-            {row.sector} · ${row.price?.toFixed(2)}
+            {row.sector} · <span className="text-neutral-300">${row.price?.toFixed(2)}</span>
+            {row.priceChangePct != null && (
+              <span className={`ml-1.5 ${row.priceChangePct >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                {row.priceChangePct >= 0 ? '+' : ''}{row.priceChangePct.toFixed(2)}%
+              </span>
+            )}
             {row.regimeAdjusted && <span className="ml-2 text-amber-400">regime-adjusted</span>}
           </div>
         </div>
@@ -197,6 +211,11 @@ export function TridentView() {
 
   const rows = data?.rows ?? [];
   const regime = data?.regime;
+  // Live prices + intraday %-change overlaid on the (older) snapshot — same
+  // shared quotes poll every other board uses. Rows fall back to the scored
+  // price when a live quote is missing; the index ETFs feed the regime cards.
+  const liveRows = useLiveRows(rows);
+  const { quotesByTicker: idxQuotes } = useLiveQuotes(['QQQ', 'SPY', 'IWM']);
 
   const list = (
       <div className="space-y-3">
@@ -230,9 +249,9 @@ export function TridentView() {
 
         {/* Regime panel — Chad's NQ/SPX overbought-oversold + S/R ask */}
         <div className="grid grid-cols-1 gap-2 sm:grid-cols-3" data-testid="trident-regime-panel">
-          <RegimeCard title="NQ (QQQ)" symbol="QQQ" r={regime?.nq} />
-          <RegimeCard title="SPX (SPY)" symbol="SPY" r={regime?.spx} />
-          <RegimeCard title="R2K (IWM)" symbol="IWM" r={regime?.r2k} />
+          <RegimeCard title="NQ (QQQ)" symbol="QQQ" r={regime?.nq} quote={idxQuotes.QQQ} />
+          <RegimeCard title="SPX (SPY)" symbol="SPY" r={regime?.spx} quote={idxQuotes.SPY} />
+          <RegimeCard title="R2K (IWM)" symbol="IWM" r={regime?.r2k} quote={idxQuotes.IWM} />
         </div>
 
         {showLegend && <TridentLegend />}
@@ -253,7 +272,7 @@ export function TridentView() {
           </p>
         )}
         <div className="space-y-2">
-          {rows.map((row, i) => (
+          {liveRows.map((row, i) => (
             <TridentCard key={row.ticker} row={row} rank={i + 1} onOpen={setSelected} />
           ))}
         </div>
