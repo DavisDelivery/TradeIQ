@@ -51,6 +51,11 @@ html.theme-light .bg-neutral-900\/20 { background-color:rgba(244,245,247,0.85) !
 html.theme-light .bg-neutral-800\/50 { background-color:rgba(228,231,236,0.85) !important; }
 html.theme-light .bg-neutral-800\/40 { background-color:rgba(228,231,236,0.85) !important; }
 html.theme-light .bg-neutral-600 { background-color:rgba(200,205,213,1.00) !important; }
+/* Active/selected toggle chips use bg-neutral-700 (a dark fill). Without a
+   light-theme remap they render as black boxes on the light UI — give them a
+   legible mid-grey "selected" fill instead (text-neutral-100 already flips
+   dark above). Fixes chart toolbar chips + the S&P/Russell toggle. */
+html.theme-light .bg-neutral-700 { background-color:rgba(203,209,217,1.00) !important; }
 html.theme-light .bg-neutral-950\/50 { background-color:rgba(255,255,255,0.85) !important; }
 html.theme-light .bg-neutral-800\/80 { background-color:rgba(228,231,236,0.85) !important; }
 html.theme-light .bg-neutral-800\/30 { background-color:rgba(228,231,236,0.85) !important; }
