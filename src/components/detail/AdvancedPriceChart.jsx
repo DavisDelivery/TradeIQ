@@ -245,12 +245,15 @@ export function AdvancedPriceChart({ ticker, priceLines = [] }) {
     }
     if (ind.vwap) overlay(vwapSeries(bars), { color: VWAP_COLOR, lineWidth: 2 });
 
-    // Strategy price lines (FABLE entry pivot / stop)
+    // Strategy price lines (entry pivot / stop). The on-line title tags them
+    // ("entry pivot", "stop"); the exact price is in the footnote below. We
+    // keep the axis price label OFF so a level near the last price doesn't
+    // collide with the live price tag on the right scale.
     for (const pl of priceLines) {
       if (pl?.price == null || !Number.isFinite(Number(pl.price))) continue;
       priceSeries.createPriceLine({
         price: Number(pl.price), color: pl.color ?? '#38bdf8', lineWidth: 1, lineStyle: 2,
-        axisLabelVisible: true, title: pl.title ?? '',
+        axisLabelVisible: false, title: pl.title ?? '',
       });
     }
 
