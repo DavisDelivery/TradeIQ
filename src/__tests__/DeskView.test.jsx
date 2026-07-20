@@ -106,7 +106,9 @@ describe('DeskView — desktop', () => {
     expect(screen.getByTestId('desk-view')).toBeInTheDocument();
     expect(screen.getByTestId('desk-tape')).toBeInTheDocument();
     expect(screen.getByTestId('desk-watchlist')).toBeInTheDocument();
-    expect(screen.getByTestId('desk-focus')).toBeInTheDocument();
+    // No ticker is auto-focused on load — the focus region shows its empty
+    // state until the user opens one from the watchlist.
+    expect(screen.getByTestId('desk-focus-empty')).toBeInTheDocument();
     expect(screen.getByTestId('desk-positions')).toBeInTheDocument();
     expect(screen.getByTestId('desk-baserates')).toBeInTheDocument();
     expect(screen.getByTestId('desk-earnings-radar')).toBeInTheDocument();

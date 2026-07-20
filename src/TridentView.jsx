@@ -5,6 +5,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { MasterDetail } from './layout/MasterDetail.jsx';
 import { StockDetailPanel } from './components/detail/StockDetailPanel.jsx';
+import { AdvancedPriceChart } from './components/detail/AdvancedPriceChart.jsx';
 import { TRIDENT_LEGEND } from './components/detail/TridentPillarsSection.jsx';
 
 const UNIVERSES = [
@@ -38,7 +39,7 @@ const STRETCH_COPY = {
   overbought: 'overbought — usually trend STRENGTH, not a sell signal; shown as context only',
 };
 
-function RegimeCard({ title, r }) {
+function RegimeCard({ title, symbol, r }) {
   const [open, setOpen] = useState(false);
   if (!r) {
     return (
@@ -63,6 +64,7 @@ function RegimeCard({ title, r }) {
       </button>
       {open && (
         <div className="mt-2 space-y-2 border-t border-neutral-800 pt-2 text-[11px] leading-relaxed">
+          {symbol && <AdvancedPriceChart ticker={symbol} />}
           <p className="text-neutral-400">{STRETCH_COPY[r.stretch?.label] ?? r.stretch?.label}</p>
           <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-neutral-400">
             <span>RSI(2): <span className="text-neutral-200">{r.stretch?.rsi2?.toFixed(0)}</span></span>
@@ -228,9 +230,9 @@ export function TridentView() {
 
         {/* Regime panel — Chad's NQ/SPX overbought-oversold + S/R ask */}
         <div className="grid grid-cols-1 gap-2 sm:grid-cols-3" data-testid="trident-regime-panel">
-          <RegimeCard title="NQ (QQQ)" r={regime?.nq} />
-          <RegimeCard title="SPX (SPY)" r={regime?.spx} />
-          <RegimeCard title="R2K (IWM)" r={regime?.r2k} />
+          <RegimeCard title="NQ (QQQ)" symbol="QQQ" r={regime?.nq} />
+          <RegimeCard title="SPX (SPY)" symbol="SPY" r={regime?.spx} />
+          <RegimeCard title="R2K (IWM)" symbol="IWM" r={regime?.r2k} />
         </div>
 
         {showLegend && <TridentLegend />}

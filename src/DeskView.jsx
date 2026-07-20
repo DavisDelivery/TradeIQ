@@ -47,7 +47,9 @@ export function DeskView() {
   const [openTickers, setOpenTickers] = useState(
     () => [...new Set(readLog().filter((t) => !isClosed(t)).map((t) => t.ticker))],
   );
-  const [focusTicker, setFocusTicker] = useState(() => watchTickers[0] ?? null);
+  // Start with NO ticker focused — the app shouldn't auto-open a watchlist
+  // stock on load. The user picks one from the watchlist to open the dossier.
+  const [focusTicker, setFocusTicker] = useState(null);
 
   useEffect(() => {
     const onWatch = () => {
