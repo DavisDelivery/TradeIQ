@@ -581,8 +581,10 @@ const ProphetMiniChart = ({ loading, error, data, entry, stop, targets }) => {
         </div>
       </div>
 
-      {/* PRICE PANE */}
-      <div className="h-[160px] w-full">
+      {/* PRICE PANE — text-neutral-100 drives the price line's currentColor
+          (white on dark, dark on light via the theme layer) so the actual
+          price is always the dominant, high-contrast line. */}
+      <div className="h-[160px] w-full text-neutral-100">
         <ResponsiveContainer width="100%" height="100%">
           <ComposedChart data={bars} margin={{ top: 6, right: 8, left: 0, bottom: 0 }}>
             <CartesianGrid stroke="#262626" strokeDasharray="2 4" vertical={false} />
@@ -607,10 +609,11 @@ const ProphetMiniChart = ({ loading, error, data, entry, stop, targets }) => {
               labelFormatter={fmtDate}
               formatter={(v, name) => v != null ? [typeof v === 'number' ? v.toFixed(2) : v, name] : ['—', name]}
             />
-            <Line type="monotone" dataKey="c" stroke="#e5e5e5" strokeWidth={1.5} dot={false} name="Price" />
+            {/* SMAs first, then the price ON TOP so it's never hidden. */}
             <Line type="monotone" dataKey="sma20" stroke="#10b981" strokeWidth={1} dot={false} name="SMA20" connectNulls />
             <Line type="monotone" dataKey="sma50" stroke="#f59e0b" strokeWidth={1} dot={false} name="SMA50" connectNulls />
             <Line type="monotone" dataKey="sma200" stroke="#737373" strokeWidth={1} dot={false} strokeDasharray="3 3" name="SMA200" connectNulls />
+            <Line type="monotone" dataKey="c" stroke="currentColor" strokeWidth={2} dot={false} name="Price" isAnimationActive={false} />
             {entry && <ReferenceLine y={entry} stroke="#38bdf8" strokeDasharray="4 4" label={{ value: `Entry ${entry}`, fill: '#38bdf8', fontSize: 9, position: 'insideTopRight' }} />}
             {stop && <ReferenceLine y={stop} stroke="#f43f5e" strokeDasharray="4 4" label={{ value: `Stop ${stop}`, fill: '#f43f5e', fontSize: 9, position: 'insideTopRight' }} />}
             {targets?.[0] && <ReferenceLine y={targets[0]} stroke="#10b981" strokeDasharray="4 4" label={{ value: `T1 ${targets[0]}`, fill: '#10b981', fontSize: 9, position: 'insideTopRight' }} />}
