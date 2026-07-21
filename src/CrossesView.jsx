@@ -2,6 +2,7 @@ import React, { useState, useMemo } from 'react';
 import { TrendingUp, TrendingDown, Sparkles } from 'lucide-react';
 import { useCrosses } from './hooks/useCrosses.js';
 import { useSortable, SortableTh } from './lib/useSortable.jsx';
+import { useLiveRows } from './hooks/useLiveQuotes.js';
 
 // CROSSES — every SMA50/SMA200 golden + death cross across the S&P 500,
 // detected nightly on completed closes (scan-crosses-sp500.ts). Default
@@ -60,7 +61,10 @@ export const CrossesView = () => {
   const { data, error, isLoading } = useCrosses(type, days);
   const { sortKey, sortDir, sortBy, sortRows } = useSortable('date', 'desc');
 
-  const rows = useMemo(() => sortRows(data?.rows ?? []), [data, sortRows]);
+  const sorted = useMemo(() => sortRows(data?.rows ?? []), [data, sortRows]);
+  // Overlay the live quote into `lastClose` so "Last" is a current price, not
+  // the nightly-scan snapshot. "% Since" is recomputed off the live last below.
+  const rows = useLiveRows(sorted, { priceKey: 'lastClose', pctKey: null });
   const freshCount = useMemo(
     () => (data?.rows ?? []).filter((r) => r.barsAgo <= NEW_CROSS_MAX_BARS_AGO).length,
     [data],
@@ -192,9 +196,16 @@ export const CrossesView = () => {
                     <td className="px-4 py-2.5 text-[11px] text-neutral-400 whitespace-nowrap">{r.sector ?? '—'}</td>
                     <td className="px-4 py-2.5 font-mono text-[12px] text-neutral-300">${r.closeAtCross?.toFixed(2) ?? '—'}</td>
                     <td className="px-4 py-2.5 font-mono text-[12px] text-neutral-200">${r.lastClose?.toFixed(2) ?? '—'}</td>
-                    <td className={`px-4 py-2.5 font-mono text-[12px] font-semibold ${r.pctSinceCross > 0 ? 'text-emerald-400' : r.pctSinceCross < 0 ? 'text-rose-400' : 'text-neutral-400'}`}>
-                      {r.pctSinceCross > 0 ? '+' : ''}{r.pctSinceCross?.toFixed(1)}%
-                    </td>
+                    {(() => {
+                      // Live "% since cross" — recomputed off the live last so
+                      // it stays consistent with the overlaid price.
+                      const pct = r.closeAtCross ? ((r.lastClose - r.closeAtCross) / r.closeAtCross) * 100 : r.pctSinceCross;
+                      return (
+                        <td className={`px-4 py-2.5 font-mono text-[12px] font-semibold ${pct > 0 ? 'text-emerald-400' : pct < 0 ? 'text-rose-400' : 'text-neutral-400'}`}>
+                          {pct > 0 ? '+' : ''}{pct?.toFixed(1)}%
+                        </td>
+                      );
+                    })()}
                   </tr>
                 );
               })}

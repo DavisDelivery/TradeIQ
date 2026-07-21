@@ -14,4 +14,4 @@
 // MODEL_VERSION (scoring math) is separate — see shared/model-version.ts.
 
 
-export const APP_VERSION = '0.40.2-alpha';
+export const APP_VERSION = '0.41.0-alpha';
