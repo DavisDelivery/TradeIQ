@@ -77,9 +77,18 @@ export const handler: Handler = async (event) => {
     };
   } catch (err: any) {
     const msg = String(err?.message ?? err);
-    log.error('watch_failed', { err: msg });
-    // Fatal path (e.g. the CIK-map fetch itself WAF-blocked) must still be
-    // visible from ?smartmoney=1 — write the failure to _meta.
+    // SEC EDGAR persistently WAF-blocks datacenter egress IPs (403) even with
+    // a compliant User-Agent + backoff ladder — the CIK-map fetch is the
+    // usual casualty. That's an external-infra condition, not a bug in our
+    // code, so record it as DEGRADED (warn, no Sentry page / no 5xx) instead
+    // of a hard error. A genuinely unexpected failure still pages.
+    const edgarBlocked = /\b403\b|forbidden|\bwaf\b|rate.?threshold|sec\.gov|edgar/i.test(msg);
+    if (edgarBlocked) {
+      log.warn('watch_degraded_edgar_blocked', { err: msg });
+    } else {
+      log.error('watch_failed', { err: msg });
+    }
+    // Fatal path must still be visible from ?smartmoney=1 — write to _meta.
     try {
       await getAdminDb().collection(ACTIVIST_COLLECTION).doc('_meta').set({
         lastRunAt: new Date().toISOString(),
@@ -87,8 +96,11 @@ export const handler: Handler = async (event) => {
         daysProcessed: 0,
         stored: 0,
         fatal: msg.slice(0, 200),
+        degraded: edgarBlocked,
       }, { merge: true });
     } catch { /* firestore down too — nothing left to do */ }
-    return { statusCode: 500, body: JSON.stringify({ ok: false, error: msg }) };
+    // 200 on the known EDGAR block so Netlify doesn't flag a function failure
+    // and the scheduler keeps retrying quietly; 500 only for real faults.
+    return { statusCode: edgarBlocked ? 200 : 500, body: JSON.stringify({ ok: !edgarBlocked ? false : true, degraded: edgarBlocked, error: msg }) };
   }
 };
