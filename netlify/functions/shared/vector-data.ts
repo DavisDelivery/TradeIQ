@@ -93,7 +93,10 @@ export async function getTickerRefPage(
 // EDGAR — UA + 8 req/s cap (SEC fair-access policy)
 // ---------------------------------------------------------------------
 
-const EDGAR_UA = 'TradeIQ research davisdelivery@users.noreply.github.com';
+// SEC's WAF BLOCKS a `users.noreply.github.com` contact address in the UA
+// (403 regardless of other headers); a real deliverable email returns 200.
+// Verified: noreply → 403, chad@davisdelivery.com → 200. Use the real email.
+const EDGAR_UA = 'TradeIQ Alpha chad@davisdelivery.com';
 // SEC's Akamai WAF fingerprints requests that lack a browser-like header set
 // and 403s them regardless of IP (verified: UA+gzip alone → 403; adding
 // accept + accept-language → 200). Send the full set on every EDGAR call.
