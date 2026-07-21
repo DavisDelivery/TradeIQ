@@ -3,6 +3,8 @@ import { TrendingUp, TrendingDown, Sparkles } from 'lucide-react';
 import { useCrosses } from './hooks/useCrosses.js';
 import { useSortable, SortableTh } from './lib/useSortable.jsx';
 import { useLiveRows } from './hooks/useLiveQuotes.js';
+import { MasterDetail } from './layout/MasterDetail.jsx';
+import { StockDetailPanel } from './components/detail/StockDetailPanel.jsx';
 
 // CROSSES — every SMA50/SMA200 golden + death cross across the S&P 500,
 // detected nightly on completed closes (scan-crosses-sp500.ts). Default
@@ -58,6 +60,7 @@ const TypePill = ({ type }) =>
 export const CrossesView = () => {
   const [type, setType] = useState('all');
   const [days, setDays] = useState(365);
+  const [selected, setSelected] = useState(null); // ticker → full detail panel
   const { data, error, isLoading } = useCrosses(type, days);
   const { sortKey, sortDir, sortBy, sortRows } = useSortable('date', 'desc');
 
@@ -72,7 +75,7 @@ export const CrossesView = () => {
 
   const th = { sortKey, sortDir, sortBy };
 
-  return (
+  const list = (
     <div className="px-3 py-4 sm:p-6 max-w-[1600px] mx-auto">
       <div className="mb-5 flex flex-wrap items-start justify-between gap-3">
         <div>
@@ -189,7 +192,11 @@ export const CrossesView = () => {
                       )}
                     </td>
                     <td className="px-4 py-2.5">
-                      <span className="font-serif font-bold text-base">{r.ticker}</span>
+                      <button type="button" onClick={() => setSelected(r)}
+                        className="font-serif font-bold text-base text-left hover:text-emerald-300 transition-colors"
+                        title="Open full detail — chart, AI brief, fundamentals">
+                        {r.ticker}
+                      </button>
                       {r.name && <span className="hidden sm:inline ml-2 text-[11px] text-neutral-500 truncate">{r.name}</span>}
                     </td>
                     <td className="px-4 py-2.5"><TypePill type={r.type} /></td>
@@ -220,5 +227,15 @@ export const CrossesView = () => {
         </div>
       )}
     </div>
+  );
+
+  return (
+    <MasterDetail
+      selected={selected}
+      onClose={() => setSelected(null)}
+      list={list}
+      detail={selected ? <StockDetailPanel board="crosses" ticker={selected.ticker} row={selected} /> : null}
+      closeLabel="Close detail"
+    />
   );
 };
