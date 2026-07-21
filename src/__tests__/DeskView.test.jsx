@@ -33,8 +33,8 @@ vi.mock('../hooks/useTargetBoard.js', () => ({ useTargetBoard: (...a) => mockUse
 vi.mock('../components/desk/BrokerPanel.jsx', () => ({ BrokerPanel: () => null }));
 vi.mock('../hooks/useProphet.js', () => ({ useProphet: (...a) => mockUseProphet(...a) }));
 // The focus workspace's heavy children are covered by their own suites.
-vi.mock('../components/PriceChart.jsx', () => ({
-  PriceChart: ({ ticker }) => <div data-testid="price-chart">{ticker}</div>,
+vi.mock('../components/detail/AdvancedPriceChart.jsx', () => ({
+  AdvancedPriceChart: ({ ticker }) => <div data-testid="price-chart">{ticker}</div>,
 }));
 vi.mock('../components/desk/DossierTabs.jsx', () => ({
   DossierTabs: ({ ticker }) => <div data-testid="dossier">{ticker}</div>,

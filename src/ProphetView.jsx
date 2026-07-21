@@ -1,14 +1,11 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import {
   Sparkles, TrendingUp, TrendingDown, Minus, Brain, Zap, AlertCircle,
   RefreshCw, Layers, Activity, Volume2, Gauge, Scale, Briefcase, Target,
   ChevronDown, ChevronRight, LineChart as LineChartIcon,
 } from 'lucide-react';
-import {
-  ComposedChart, Line, Bar, XAxis, YAxis, ResponsiveContainer,
-  ReferenceLine, Tooltip, CartesianGrid,
-} from 'recharts';
 import { LogButton } from './components/LogButton.jsx';
+import { AdvancedPriceChart } from './components/detail/AdvancedPriceChart.jsx';
 import { FreshnessPill } from './components/FreshnessPill.jsx';
 import { VerdictChip } from './components/VerdictChip.jsx';
 import { SieveCoverageStrip } from './components/SieveCoverageStrip.jsx';
@@ -347,33 +344,12 @@ const ProphetRow = ({ pick, expanded, onToggle }) => {
 };
 
 const ProphetDetail = ({ pick }) => {
-  const [chart, setChart] = useState(null);
-  const [chartLoading, setChartLoading] = useState(true);
-  const [chartErr, setChartErr] = useState(null);
-
   // W1+W3: on-demand narration for picks that arrived without a thesis.
   // The mutation patches the prophet query in TanStack cache on success, so
   // the next render path naturally picks up `pick.narrative` from the new
   // cached data. We do NOT track text in local state — single source of truth.
   const narrate = useGenerateNarrative();
   const narrativeStatus = narrate.isPending ? 'loading' : narrate.isError ? 'error' : 'idle';
-
-  useEffect(() => {
-    let cancel = false;
-    setChartLoading(true);
-    setChart(null);
-    setChartErr(null);
-    fetch(`/api/chart-analysis?ticker=${pick.ticker}&lookback=120&skipAi=1`)
-      .then((r) => r.json())
-      .then((d) => {
-        if (cancel) return;
-        if (d.ok && Array.isArray(d.bars)) setChart(d);
-        else setChartErr(d.error || 'no data');
-      })
-      .catch((e) => { if (!cancel) setChartErr(String(e.message || e)); })
-      .finally(() => { if (!cancel) setChartLoading(false); });
-    return () => { cancel = true; };
-  }, [pick.ticker]);
 
   return (
   <div className="border-t border-neutral-800 p-3 sm:p-4 bg-black/40 space-y-3">
@@ -387,14 +363,17 @@ const ProphetDetail = ({ pick }) => {
       </div>
     )}
 
-    {/* Chart — price + SMAs, RSI, MACD */}
-    <ProphetMiniChart
-      loading={chartLoading}
-      error={chartErr}
-      data={chart}
-      entry={pick.entry}
-      stop={pick.stop}
-      targets={pick.targets}
+    {/* Chart — the shared finviz-grade chart, with the trade plan drawn as
+        dashed levels (entry / stop / T1 / T2 / invalidation). */}
+    <AdvancedPriceChart
+      ticker={pick.ticker}
+      priceLines={[
+        pick.entry && { price: pick.entry, color: '#38bdf8', title: 'entry' },
+        pick.stop && { price: pick.stop, color: '#f43f5e', title: 'stop' },
+        pick.targets?.[0] && { price: pick.targets[0], color: '#10b981', title: 'T1' },
+        pick.targets?.[1] && { price: pick.targets[1], color: '#10b981', title: 'T2' },
+        pick.invalidation && { price: pick.invalidation, color: '#737373', title: 'invalidation' },
+      ].filter(Boolean)}
     />
 
     {/* AI narrative — three states (W1):
@@ -498,179 +477,3 @@ const TradeStat = ({ label, value, color }) => (
   </div>
 );
 
-// ---------------------------------------------------------------------------
-// Mini chart — price w/ SMA20/50/200 + RSI pane + MACD histogram pane
-// Entry / stop / target reference lines overlay the price pane
-// ---------------------------------------------------------------------------
-const ProphetMiniChart = ({ loading, error, data, entry, stop, targets }) => {
-  if (loading) {
-    return (
-      <div className="border border-neutral-800 bg-neutral-950/60 h-[280px] flex items-center justify-center">
-        <div className="flex items-center gap-2 text-[11px] text-neutral-500 font-mono">
-          <RefreshCw className="h-3 w-3 animate-spin" />
-          <span>loading chart…</span>
-        </div>
-      </div>
-    );
-  }
-  if (error || !data?.bars?.length) {
-    return (
-      <div className="border border-neutral-800 bg-neutral-950/60 p-3 text-[11px] text-neutral-500 font-mono">
-        chart unavailable{error ? `: ${error}` : ''}
-      </div>
-    );
-  }
-
-  // Downsample labels — we only show ~6 date ticks even on 120 bars
-  const bars = data.bars;
-  if (!bars.length) {
-    return (
-      <div className="border border-neutral-800 bg-neutral-950/60 p-3 text-[11px] text-neutral-500 font-mono">
-        chart unavailable: no bars
-      </div>
-    );
-  }
-  const last = bars[bars.length - 1];
-
-  // Compute y-domain for price pane (tight around SMAs + entry/stop/targets).
-  // Guard against empty prices — if all bars have null c, we'd Math.min(...[]) → Infinity
-  // which blows up the chart domain math.
-  const prices = [];
-  bars.forEach((b) => {
-    if (b.c != null && Number.isFinite(b.c)) prices.push(b.c);
-    if (b.sma200 != null && Number.isFinite(b.sma200)) prices.push(b.sma200);
-  });
-  if (entry && Number.isFinite(entry)) prices.push(entry);
-  if (stop && Number.isFinite(stop)) prices.push(stop);
-  if (targets?.length) targets.forEach((t) => { if (Number.isFinite(t)) prices.push(t); });
-
-  if (prices.length === 0) {
-    return (
-      <div className="border border-neutral-800 bg-neutral-950/60 p-3 text-[11px] text-neutral-500 font-mono">
-        chart unavailable: no valid price data
-      </div>
-    );
-  }
-
-  const pMin = Math.min(...prices);
-  const pMax = Math.max(...prices);
-  const pad = Math.max((pMax - pMin) * 0.05, 0.01);  // guard zero-range
-  const priceDomain = [Math.floor((pMin - pad) * 100) / 100, Math.ceil((pMax + pad) * 100) / 100];
-
-  const fmtDate = (d) => {
-    const dt = new Date(d);
-    return `${dt.getMonth() + 1}/${dt.getDate()}`;
-  };
-
-  const tickInterval = Math.max(1, Math.floor(bars.length / 6));
-
-  // RSI pane — color based on value
-  const rsiNow = last.rsi;
-
-  return (
-    <div className="border border-neutral-800 bg-neutral-950/60 overflow-hidden">
-      <div className="flex items-center justify-between px-3 pt-2 pb-1 border-b border-neutral-800">
-        <div className="flex items-center gap-2">
-          <LineChartIcon className="h-3 w-3 text-sky-400" />
-          <span className="text-[10px] font-mono uppercase tracking-widest text-neutral-400">{data.ticker} · {data.lookbackDays}d</span>
-        </div>
-        <div className="flex items-center gap-3 text-[10px] font-mono">
-          <span className="text-emerald-400/80">SMA20 ${data.indicators?.latest?.sma20?.toFixed(2) ?? '—'}</span>
-          <span className="text-amber-400/80">SMA50 ${data.indicators?.latest?.sma50?.toFixed(2) ?? '—'}</span>
-          <span className="text-neutral-400">SMA200 ${data.indicators?.latest?.sma200?.toFixed(2) ?? '—'}</span>
-        </div>
-      </div>
-
-      {/* PRICE PANE — text-neutral-100 drives the price line's currentColor
-          (white on dark, dark on light via the theme layer) so the actual
-          price is always the dominant, high-contrast line. */}
-      <div className="h-[160px] w-full text-neutral-100">
-        <ResponsiveContainer width="100%" height="100%">
-          <ComposedChart data={bars} margin={{ top: 6, right: 8, left: 0, bottom: 0 }}>
-            <CartesianGrid stroke="#262626" strokeDasharray="2 4" vertical={false} />
-            <XAxis
-              dataKey="date"
-              tickFormatter={fmtDate}
-              tick={{ fill: '#737373', fontSize: 9, fontFamily: 'monospace' }}
-              interval={tickInterval}
-              axisLine={{ stroke: '#404040' }}
-              tickLine={false}
-            />
-            <YAxis
-              domain={priceDomain}
-              tick={{ fill: '#737373', fontSize: 9, fontFamily: 'monospace' }}
-              axisLine={{ stroke: '#404040' }}
-              tickLine={false}
-              width={50}
-              tickFormatter={(v) => `$${v.toFixed(0)}`}
-            />
-            <Tooltip
-              contentStyle={{ background: '#0a0a0a', border: '1px solid #404040', fontSize: 11 }}
-              labelFormatter={fmtDate}
-              formatter={(v, name) => v != null ? [typeof v === 'number' ? v.toFixed(2) : v, name] : ['—', name]}
-            />
-            {/* SMAs first, then the price ON TOP so it's never hidden. */}
-            <Line type="monotone" dataKey="sma20" stroke="#10b981" strokeWidth={1} dot={false} name="SMA20" connectNulls />
-            <Line type="monotone" dataKey="sma50" stroke="#f59e0b" strokeWidth={1} dot={false} name="SMA50" connectNulls />
-            <Line type="monotone" dataKey="sma200" stroke="#737373" strokeWidth={1} dot={false} strokeDasharray="3 3" name="SMA200" connectNulls />
-            <Line type="monotone" dataKey="c" stroke="currentColor" strokeWidth={2} dot={false} name="Price" isAnimationActive={false} />
-            {entry && <ReferenceLine y={entry} stroke="#38bdf8" strokeDasharray="4 4" label={{ value: `Entry ${entry}`, fill: '#38bdf8', fontSize: 9, position: 'insideTopRight' }} />}
-            {stop && <ReferenceLine y={stop} stroke="#f43f5e" strokeDasharray="4 4" label={{ value: `Stop ${stop}`, fill: '#f43f5e', fontSize: 9, position: 'insideTopRight' }} />}
-            {targets?.[0] && <ReferenceLine y={targets[0]} stroke="#10b981" strokeDasharray="4 4" label={{ value: `T1 ${targets[0]}`, fill: '#10b981', fontSize: 9, position: 'insideTopRight' }} />}
-            {targets?.[1] && <ReferenceLine y={targets[1]} stroke="#10b981" strokeDasharray="2 4" strokeOpacity={0.5} />}
-          </ComposedChart>
-        </ResponsiveContainer>
-      </div>
-
-      {/* RSI PANE */}
-      <div className="h-[56px] w-full border-t border-neutral-800">
-        <div className="flex items-center justify-between px-3 pt-1">
-          <span className="text-[9px] font-mono uppercase tracking-widest text-neutral-500">RSI 14</span>
-          <span className={`text-[10px] font-mono ${rsiNow > 70 ? 'text-rose-400' : rsiNow < 30 ? 'text-emerald-400' : 'text-neutral-300'}`}>
-            {rsiNow?.toFixed(1) ?? '—'}
-          </span>
-        </div>
-        <ResponsiveContainer width="100%" height={36}>
-          <ComposedChart data={bars} margin={{ top: 0, right: 8, left: 0, bottom: 0 }}>
-            <YAxis domain={[0, 100]} hide />
-            <XAxis dataKey="date" hide />
-            <ReferenceLine y={70} stroke="#f43f5e" strokeDasharray="2 3" strokeOpacity={0.5} />
-            <ReferenceLine y={30} stroke="#10b981" strokeDasharray="2 3" strokeOpacity={0.5} />
-            <ReferenceLine y={50} stroke="#404040" strokeDasharray="1 3" strokeOpacity={0.4} />
-            <Line type="monotone" dataKey="rsi" stroke="#a855f7" strokeWidth={1.2} dot={false} connectNulls />
-          </ComposedChart>
-        </ResponsiveContainer>
-      </div>
-
-      {/* MACD PANE */}
-      <div className="h-[56px] w-full border-t border-neutral-800">
-        <div className="flex items-center justify-between px-3 pt-1">
-          <span className="text-[9px] font-mono uppercase tracking-widest text-neutral-500">MACD HIST</span>
-          <span className={`text-[10px] font-mono ${last.macdHist > 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-            {last.macdHist?.toFixed(3) ?? '—'}
-          </span>
-        </div>
-        <ResponsiveContainer width="100%" height={36}>
-          <ComposedChart data={bars} margin={{ top: 0, right: 8, left: 0, bottom: 0 }}>
-            <YAxis hide />
-            <XAxis dataKey="date" hide />
-            <ReferenceLine y={0} stroke="#404040" strokeOpacity={0.5} />
-            <Bar
-              dataKey="macdHist"
-              shape={(props) => {
-                const { x, y, width, height, payload } = props;
-                // Payload can be null or missing macdHist on sparse data — guard
-                if (!payload || payload.macdHist == null || !Number.isFinite(payload.macdHist)) {
-                  return <rect x={x} y={y} width={width} height={0} fill="transparent" />;
-                }
-                const positive = payload.macdHist >= 0;
-                const fill = positive ? '#10b98180' : '#f43f5e80';
-                return <rect x={x} y={y} width={width} height={height} fill={fill} />;
-              }}
-            />
-          </ComposedChart>
-        </ResponsiveContainer>
-      </div>
-    </div>
-  );
-};

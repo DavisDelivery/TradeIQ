@@ -28,7 +28,7 @@ import { useProphet } from './hooks/useProphet.js';
 import { readWatchlist } from './watchlist.js';
 import { readLog } from './tradeLog.js';
 import { isClosed } from './lib/baseRates.js';
-import { PriceChart } from './components/PriceChart.jsx';
+import { AdvancedPriceChart } from './components/detail/AdvancedPriceChart.jsx';
 import { TapeStrip } from './components/desk/TapeStrip.jsx';
 import { WatchlistPanel } from './components/desk/WatchlistPanel.jsx';
 import { buildSignalMap } from './components/desk/SignalCell.jsx';
@@ -112,7 +112,7 @@ export function DeskView() {
           </span>
         )}
       </div>
-      <PriceChart ticker={focusTicker} />
+      <AdvancedPriceChart ticker={focusTicker} />
       <DossierTabs ticker={focusTicker} />
     </div>
   ) : (
