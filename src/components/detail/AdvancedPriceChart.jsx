@@ -175,7 +175,27 @@ export function AdvancedPriceChart({ ticker, priceLines = [] }) {
     return next;
   });
 
-  const query = usePriceHistory(ticker, range);
+  // Long MAs need warmup bars the visible window doesn't contain (a 200-day
+  // SMA can't be drawn on a 6M/~126-bar view). Fetch a longer series that
+  // covers the longest enabled overlay, compute indicators over ALL of it,
+  // then window the display back down to the selected range. This is why
+  // MA150/MA200 were "missing" on short ranges.
+  const RANGE_BARS = { '1M': 21, '3M': 63, '6M': 126, '1Y': 252, '5Y': 1260 };
+  const RANGE_ORDER = ['1M', '3M', '6M', '1Y', '5Y'];
+  const maxPeriod = Math.max(
+    ind.sma200 ? 200 : 0, ind.sma150 ? 150 : 0, ind.sma50 ? 50 : 0, ind.sma20 ? 20 : 0,
+    ind.ema21 ? 21 : 0, ind.ema9 ? 9 : 0, ind.bb ? 20 : 0, 0,
+  );
+  const displayBars = RANGE_BARS[range] ?? 126;
+  const needBars = displayBars + maxPeriod;
+  const fetchRange = useMemo(() => {
+    let fr = range;
+    for (const r of RANGE_ORDER) { if (RANGE_BARS[r] >= needBars) { fr = r; break; } fr = '5Y'; }
+    // never fetch a shorter window than the one being displayed
+    return RANGE_ORDER.indexOf(fr) < RANGE_ORDER.indexOf(range) ? range : fr;
+  }, [range, needBars]);
+
+  const query = usePriceHistory(ticker, fetchRange);
   const bars = useMemo(() => {
     const raw = query.data?.bars ?? [];
     return raw
@@ -319,14 +339,20 @@ export function AdvancedPriceChart({ ticker, priceLines = [] }) {
       });
     };
     chart.subscribeCrosshairMove(onMove);
-    chart.timeScale().fitContent();
+    // Window to the selected range: indicators were computed over the longer
+    // warmup series, but the user only sees the range they picked.
+    if (bars.length > displayBars) {
+      chart.timeScale().setVisibleLogicalRange({ from: bars.length - displayBars, to: bars.length });
+    } else {
+      chart.timeScale().fitContent();
+    }
 
     return () => {
       chart.unsubscribeCrosshairMove(onMove);
       chart.remove();
       chartRef.current = null;
     };
-  }, [bars, type, logScale, ind, priceLines]);
+  }, [bars, type, logScale, ind, priceLines, displayBars]);
 
   const last = bars[bars.length - 1];
   const shown = legend ?? (last
