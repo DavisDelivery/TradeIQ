@@ -4,6 +4,7 @@ import { useSortable, SortableTh } from './lib/useSortable.jsx';
 import { FreshnessPill } from './components/FreshnessPill.jsx';
 import { MOCK_EARNINGS } from './lib/mockData.js';
 import { useEarnings } from './hooks/useEarnings.js';
+import { useLiveRows } from './hooks/useLiveQuotes.js';
 import { readLog, logTrade } from './tradeLog.js';
 import { FundamentalsStrip } from './components/detail/FundamentalsStrip.jsx';
 
@@ -75,7 +76,10 @@ export const EarningsPlaysView = () => {
     if (filter === 'post') return e.postPrint;
     return e.bias === filter;
   });
-  const sorted = useMemo(() => sortRows(filtered), [filtered, sortKey, sortDir, sortRows]);
+  const sortedRaw = useMemo(() => sortRows(filtered), [filtered, sortKey, sortDir, sortRows]);
+  // Live-quote overlay so the price used for sizing / logging is current, not
+  // the snapshot's. No snapshot prices anywhere.
+  const sorted = useLiveRows(sortedRaw);
 
   return (
     <div className="p-4 sm:p-6 max-w-[1400px] mx-auto">
