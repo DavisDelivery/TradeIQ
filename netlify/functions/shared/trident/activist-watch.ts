@@ -70,7 +70,9 @@ export function matchActivist(filerName: string): string | null {
 // ---------------------------------------------------------------------------
 
 export interface IdxFiling {
-  formType: 'SC 13D' | 'SC 13D/A';
+  // EDGAR's daily form.idx labels these 'SCHEDULE 13D' / 'SCHEDULE 13D/A'
+  // (NOT the short 'SC 13D' — that mismatch silently dropped every row).
+  formType: 'SCHEDULE 13D' | 'SCHEDULE 13D/A';
   companyName: string; // the FILING entity column of form.idx (filer OR subject depending on row)
   cik: string; // 10-padded
   dateFiled: string; // YYYY-MM-DD
@@ -93,7 +95,7 @@ export function parseFormIdx(body: string): IdxFiling[] {
   const out: IdxFiling[] = [];
 
   const pushRow = (formType: string, name: string, cik: string, dateRaw: string, path: string) => {
-    if (!/^SC 13D(\/A)?$/.test(formType)) return;
+    if (!/^SCHEDULE 13D(\/A)?$/.test(formType)) return;
     if (!/^\d+$/.test(cik) || !path) return;
     const dr = dateRaw.trim();
     const date = dr.includes('-')
@@ -118,7 +120,7 @@ export function parseFormIdx(body: string): IdxFiling[] {
     const cFile = header.indexOf('File Name');
     if (cName > 0 && cCik > cName && cDate > cCik && cFile > cDate) {
       for (const line of lines) {
-        if (!line.startsWith('SC 13D')) continue;
+        if (!line.startsWith('SCHEDULE 13D')) continue;
         pushRow(
           line.slice(0, cName).trim(),
           line.slice(cName, cCik),
@@ -133,7 +135,7 @@ export function parseFormIdx(body: string): IdxFiling[] {
 
   // Fallback: tolerant whitespace parsing (header absent/unrecognized).
   for (const line of lines) {
-    const m = line.match(/^(SC 13D(?:\/A)?)\s{2,}(.+?)\s{2,}(\d+)\s{2,}(\d{4}-?\d{2}-?\d{2})\s{2,}(\S+)\s*$/);
+    const m = line.match(/^(SCHEDULE 13D(?:\/A)?)\s{2,}(.+?)\s{2,}(\d+)\s{2,}(\d{4}-?\d{2}-?\d{2})\s{2,}(\S+)\s*$/);
     if (!m) continue;
     pushRow(m[1], m[2], m[3], m[4], m[5]);
   }
@@ -162,14 +164,20 @@ export function assembleEvents(
   cikToTicker: Map<string, string>,
   nowIso: string,
 ): ActivistEventDoc[] {
-  const byPath = new Map<string, IdxFiling[]>();
+  // Group by ACCESSION, not full path: EDGAR lists a 13D's filer and subject
+  // as separate rows under different `edgar/data/{cik}/` dirs but the SAME
+  // accession file — grouping by path split them apart, so the whitelisted
+  // filer never met its subject and nothing was ever stored.
+  const accessionOf = (p: string) => p.split('/').pop()!.replace(/\.txt$/, '');
+  const byAccession = new Map<string, IdxFiling[]>();
   for (const f of filings) {
-    const arr = byPath.get(f.path) ?? [];
+    const acc = accessionOf(f.path);
+    const arr = byAccession.get(acc) ?? [];
     arr.push(f);
-    byPath.set(f.path, arr);
+    byAccession.set(acc, arr);
   }
   const out: ActivistEventDoc[] = [];
-  for (const [path, rows] of byPath) {
+  for (const [accession, rows] of byAccession) {
     const filerRow = rows.find((r) => matchActivist(r.companyName));
     if (!filerRow) continue;
     const filerKey = matchActivist(filerRow.companyName)!;
@@ -177,14 +185,13 @@ export function assembleEvents(
       if (r === filerRow) continue;
       const ticker = cikToTicker.get(r.cik);
       if (!ticker) continue;
-      const accession = path.split('/').pop()!.replace(/\.txt$/, '');
       out.push({
         accession,
         ticker,
         subjectCik: r.cik,
         filer: filerKey,
         filerRawName: filerRow.companyName,
-        type: filerRow.formType === 'SC 13D' ? '13D' : '13D/A',
+        type: filerRow.formType === 'SCHEDULE 13D' ? '13D' : '13D/A',
         filedAt: r.dateFiled,
         discoveredAt: nowIso,
       });

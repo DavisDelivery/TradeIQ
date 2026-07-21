@@ -9,6 +9,8 @@ import { FreshnessPill } from './components/FreshnessPill.jsx';
 import { useCatalyst } from './hooks/useCatalyst.js';
 import { useLiveRows } from './hooks/useLiveQuotes.js';
 import { FundamentalsStrip } from './components/detail/FundamentalsStrip.jsx';
+import { MasterDetail } from './layout/MasterDetail.jsx';
+import { StockDetailPanel } from './components/detail/StockDetailPanel.jsx';
 
 const FILTER_OPTIONS = [
   { id: 'all', label: 'Any catalyst', desc: 'Any signal active' },
@@ -29,6 +31,7 @@ export const CatalystView = ({ universe = 'sp500', onNavigate }) => {
   const [filter, setFilter] = useState('all');
   const [minConviction, setMinConviction] = useState('medium');
   const [expandedTicker, setExpandedTicker] = useState(null);
+  const [selected, setSelected] = useState(null); // ticker → full detail panel
   const { data, error, isLoading: loading, isFetching, forceRescan } =
     useCatalyst(universe, filter, minConviction);
   const isRescanning = isFetching && !loading;
@@ -36,7 +39,7 @@ export const CatalystView = ({ universe = 'sp500', onNavigate }) => {
   // catalyst snapshot is hours old.
   const livePicks = useLiveRows(data?.picks);
 
-  return (
+  const list = (
     <div className="px-3 py-4 sm:p-6 max-w-[1400px] mx-auto pb-20 sm:pb-6">
       <header className="mb-5 sm:mb-6">
         <div className="flex items-baseline gap-3 mb-2">
@@ -100,12 +103,23 @@ export const CatalystView = ({ universe = 'sp500', onNavigate }) => {
                 pick={p}
                 expanded={expandedTicker === p.ticker}
                 onToggle={() => setExpandedTicker(expandedTicker === p.ticker ? null : p.ticker)}
+                onOpen={setSelected}
               />
             ))
           )}
         </div>
       )}
     </div>
+  );
+
+  return (
+    <MasterDetail
+      selected={selected}
+      onClose={() => setSelected(null)}
+      list={list}
+      detail={selected ? <StockDetailPanel board="catalyst" ticker={selected.ticker} row={selected} /> : null}
+      closeLabel="Close detail"
+    />
   );
 };
 
@@ -132,7 +146,7 @@ const FilterRow = ({ label, options, value, onChange }) => (
   </div>
 );
 
-const CatalystRow = ({ pick, expanded, onToggle }) => {
+const CatalystRow = ({ pick, expanded, onToggle, onOpen }) => {
   const dirColor =
     pick.direction === 'long' ? 'text-emerald-400' :
     pick.direction === 'short' ? 'text-rose-400' : 'text-neutral-400';
@@ -175,12 +189,12 @@ const CatalystRow = ({ pick, expanded, onToggle }) => {
           <FundamentalsStrip ticker={pick.ticker} showExpandIcon={false} />
         </div>
       </div>
-      {expanded && <CatalystDetail pick={pick} />}
+      {expanded && <CatalystDetail pick={pick} onOpen={onOpen} />}
     </div>
   );
 };
 
-const CatalystDetail = ({ pick }) => {
+const CatalystDetail = ({ pick, onOpen }) => {
   const comp = pick.components || {};
   return (
     <div className="border-t border-neutral-800 p-3 sm:p-4 bg-black/40 space-y-3">
@@ -210,6 +224,12 @@ const CatalystDetail = ({ pick }) => {
           />
         </div>
       </div>
+      <button
+        onClick={() => onOpen?.(pick)}
+        className="mt-1 w-full rounded-lg border border-sky-500/40 bg-sky-500/10 px-3 py-2 text-xs font-medium text-sky-300 hover:bg-sky-500/20 transition-colors"
+      >
+        Full detail — chart · AI thesis · financials · company info →
+      </button>
     </div>
   );
 };

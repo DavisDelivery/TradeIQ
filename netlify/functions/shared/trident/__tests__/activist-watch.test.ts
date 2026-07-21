@@ -9,39 +9,54 @@ import {
 } from '../activist-watch';
 import { scoreInstitutional } from '../scoring';
 
-const IDX_BODY = `Form Type   Company Name                                    CIK         Date Filed  File Name
---------------------------------------------------------------------------------------------------
-10-K        SOME OTHER CORP                                 1000001     2026-07-17  edgar/data/1000001/0001000001-26-000001.txt
-SC 13D      ACME THERAPEUTICS INC                           1234567     2026-07-17  edgar/data/7654321/0000765432-26-000123.txt
-SC 13D      STARBOARD VALUE LP                              7654321     2026-07-17  edgar/data/7654321/0000765432-26-000123.txt
-SC 13D/A    WIDGET INDUSTRIES CORP                          2345678     2026-07-17  edgar/data/8888888/0000888888-26-000456.txt
-SC 13D/A    ELLIOTT INVESTMENT MANAGEMENT L.P.              8888888     2026-07-17  edgar/data/8888888/0000888888-26-000456.txt
-SC 13D      RANDOM FILER NOBODY KNOWS LLC                   3456789     2026-07-17  edgar/data/9999999/0000999999-26-000789.txt
-SC 13D      TARGETCO INC                                    4567890     2026-07-17  edgar/data/9999999/0000999999-26-000789.txt
-`;
+// Real EDGAR form.idx uses the long label 'SCHEDULE 13D' / 'SCHEDULE 13D/A'
+// and lists a filing's FILER and SUBJECT as separate rows under their OWN
+// edgar/data/{cik}/ dir but the SAME accession file. Build aligned rows so
+// the fixed-width parser + accession grouping are exercised against reality.
+const HDR = 'Form Type          Company Name                                                  CIK         Date Filed  File Name';
+const cName = HDR.indexOf('Company Name');
+const cCik = HDR.indexOf('CIK');
+const cDate = HDR.indexOf('Date Filed');
+const cFile = HDR.indexOf('File Name');
+const mkRow = (ft: string, name: string, cik: string, date: string, path: string) =>
+  ft.padEnd(cName) + name.padEnd(cCik - cName) + String(cik).padEnd(cDate - cCik) + date.padEnd(cFile - cDate) + path;
+
+const IDX_BODY = [
+  HDR,
+  '-'.repeat(140),
+  mkRow('10-K', 'SOME OTHER CORP', '1000001', '2026-07-17', 'edgar/data/1000001/0001000001-26-000001.txt'),
+  // Starboard (filer) + ACME (subject): different dirs, SAME accession.
+  mkRow('SCHEDULE 13D', 'ACME THERAPEUTICS INC', '1234567', '2026-07-17', 'edgar/data/1234567/0000765432-26-000123.txt'),
+  mkRow('SCHEDULE 13D', 'STARBOARD VALUE LP', '7654321', '2026-07-17', 'edgar/data/7654321/0000765432-26-000123.txt'),
+  // Elliott (filer) + WIDGET (subject), 13D/A.
+  mkRow('SCHEDULE 13D/A', 'WIDGET INDUSTRIES CORP', '2345678', '2026-07-17', 'edgar/data/2345678/0000888888-26-000456.txt'),
+  mkRow('SCHEDULE 13D/A', 'ELLIOTT INVESTMENT MANAGEMENT L.P.', '8888888', '2026-07-17', 'edgar/data/8888888/0000888888-26-000456.txt'),
+  // Non-whitelisted filer — dropped.
+  mkRow('SCHEDULE 13D', 'RANDOM FILER NOBODY KNOWS LLC', '3456789', '2026-07-17', 'edgar/data/3456789/0000999999-26-000789.txt'),
+  mkRow('SCHEDULE 13D', 'TARGETCO INC', '4567890', '2026-07-17', 'edgar/data/4567890/0000999999-26-000789.txt'),
+  '',
+].join('\n');
 
 describe('parseFormIdx', () => {
-  it('extracts only SC 13D / SC 13D/A rows with normalized fields', () => {
+  it('extracts only SCHEDULE 13D / SCHEDULE 13D/A rows with normalized fields', () => {
     const rows = parseFormIdx(IDX_BODY);
     expect(rows).toHaveLength(6);
-    expect(rows.every((r) => r.formType === 'SC 13D' || r.formType === 'SC 13D/A')).toBe(true);
+    expect(rows.every((r) => r.formType === 'SCHEDULE 13D' || r.formType === 'SCHEDULE 13D/A')).toBe(true);
     expect(rows[0].cik).toBe('0001234567');
     expect(rows[0].dateFiled).toBe('2026-07-17');
   });
 
   it('handles compact YYYYMMDD dates', () => {
-    const rows = parseFormIdx('SC 13D      X CORP        123     20260717    edgar/data/1/acc.txt\n');
+    const rows = parseFormIdx('SCHEDULE 13D      X CORP        123     20260717    edgar/data/1/acc.txt\n');
     expect(rows[0].dateFiled).toBe('2026-07-17');
   });
 
   it('fixed-width mode: a name filling its column (1 space before CIK) still parses', () => {
-    // Header defines offsets; the long-name row leaves a single space
-    // before the CIK column — the old whitespace regex missed these.
-    const header = 'Form Type   Company Name                                                  CIK         Date Filed  File Name';
-    const cName = header.indexOf('Company Name');
-    const cCik = header.indexOf('CIK');
-    const longName = 'EXTREMELY LONG COMPANY NAME THAT FILLS THE ENTIRE COLUMN X'.padEnd(cCik - cName - 1, 'Y') + ' ';
-    const row = 'SC 13D'.padEnd(cName) + longName + '1234567'.padEnd(12) + '20260717'.padEnd(12) + 'edgar/data/1234567/0001-26-000001.txt';
+    const header = 'Form Type          Company Name                                                  CIK         Date Filed  File Name';
+    const cn = header.indexOf('Company Name');
+    const cc = header.indexOf('CIK');
+    const longName = 'EXTREMELY LONG COMPANY NAME THAT FILLS THE ENTIRE COLUMN X'.padEnd(cc - cn - 1, 'Y') + ' ';
+    const row = 'SCHEDULE 13D'.padEnd(cn) + longName + '1234567'.padEnd(12) + '20260717'.padEnd(12) + 'edgar/data/1234567/0001-26-000001.txt';
     const rows = parseFormIdx([header, '-'.repeat(110), row].join('\n'));
     expect(rows).toHaveLength(1);
     expect(rows[0].cik).toBe('0001234567');

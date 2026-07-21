@@ -9,6 +9,8 @@ import { useInsider } from './hooks/useInsider.js';
 import { useLiveRows } from './hooks/useLiveQuotes.js';
 import { useBreakpoint } from './hooks/useBreakpoint.js';
 import { FundamentalsStrip } from './components/detail/FundamentalsStrip.jsx';
+import { MasterDetail } from './layout/MasterDetail.jsx';
+import { StockDetailPanel } from './components/detail/StockDetailPanel.jsx';
 
 const WINDOW_OPTIONS = [
   { id: 30, label: '30d' },
@@ -69,6 +71,7 @@ export const InsiderBoardView = ({ universe = 'all' }) => {
     return 'buyers'; // Phase 4l W3: default to net buyers
   });
   const [expandedTicker, setExpandedTicker] = useState(null);
+  const [selected, setSelected] = useState(null); // ticker → full detail panel
   const { isDesktop } = useBreakpoint();
 
   // Default sort is netDollars desc (buyers view). Switching views below
@@ -116,7 +119,7 @@ export const InsiderBoardView = ({ universe = 'all' }) => {
   const cellPadX = 'px-3';
   const tickerCellSize = isDesktop ? 'text-[12px]' : 'text-[13px]';
 
-  return (
+  const list = (
     <div className={isDesktop ? 'px-6 py-5' : 'p-4 sm:p-6 max-w-[1400px] mx-auto'}>
       {/* Header */}
       <div className="mb-6 flex items-start justify-between gap-3 flex-wrap">
@@ -249,7 +252,16 @@ export const InsiderBoardView = ({ universe = 'all' }) => {
                       <td className={`${cellPadX} ${cellPadY} text-neutral-500`}>
                         {isOpen ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
                       </td>
-                      <td className={`${cellPadX} ${cellPadY} font-serif text-neutral-100 font-bold ${tickerCellSize}`}>{r.ticker}</td>
+                      <td className={`${cellPadX} ${cellPadY} font-serif font-bold ${tickerCellSize}`}>
+                        <button
+                          type="button"
+                          onClick={(e) => { e.stopPropagation(); setSelected(r); }}
+                          className="text-neutral-100 hover:text-emerald-300 transition-colors text-left"
+                          title="Open full detail — chart, AI brief, fundamentals"
+                        >
+                          {r.ticker}
+                        </button>
+                      </td>
                       <td className={`${cellPadX} ${cellPadY} text-right tabular-nums text-neutral-300`}>{fmtPrice(r.price)}</td>
                       <td className={`${cellPadX} ${cellPadY} text-right tabular-nums text-emerald-400`}>{fmtUsd(r.buyDollars)}</td>
                       <td className={`${cellPadX} ${cellPadY} text-right tabular-nums text-sky-400/80`}>{fmtUsd(r.awardDollars)}</td>
@@ -305,6 +317,16 @@ export const InsiderBoardView = ({ universe = 'all' }) => {
         not exposed by this data source.
       </div>
     </div>
+  );
+
+  return (
+    <MasterDetail
+      selected={selected}
+      onClose={() => setSelected(null)}
+      list={list}
+      detail={selected ? <StockDetailPanel board="insider" ticker={selected.ticker} row={selected} /> : null}
+      closeLabel="Close detail"
+    />
   );
 };
 
