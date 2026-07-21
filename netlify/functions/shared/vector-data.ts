@@ -94,6 +94,15 @@ export async function getTickerRefPage(
 // ---------------------------------------------------------------------
 
 const EDGAR_UA = 'TradeIQ research davisdelivery@users.noreply.github.com';
+// SEC's Akamai WAF fingerprints requests that lack a browser-like header set
+// and 403s them regardless of IP (verified: UA+gzip alone → 403; adding
+// accept + accept-language → 200). Send the full set on every EDGAR call.
+const EDGAR_HEADERS: Record<string, string> = {
+  'user-agent': EDGAR_UA,
+  accept: 'application/json, text/plain, text/html, */*',
+  'accept-language': 'en-US,en;q=0.9',
+  'accept-encoding': 'gzip, deflate',
+};
 let edgarWindow: number[] = [];
 
 async function edgarThrottle(): Promise<void> {
@@ -111,7 +120,7 @@ async function edgarThrottle(): Promise<void> {
 
 export async function edgarFetch(url: string): Promise<Response> {
   await edgarThrottle();
-  const res = await fetch(url, { headers: { 'user-agent': EDGAR_UA, 'accept-encoding': 'gzip' } });
+  const res = await fetch(url, { headers: EDGAR_HEADERS });
   if (res.status === 429 || res.status === 403) {
     // SEC's WAF serves "Request Rate Threshold Exceeded" 403s that flag the
     // EGRESS IP (shared on Netlify) for ~10 minutes — a 5s retry was far too
@@ -123,7 +132,7 @@ export async function edgarFetch(url: string): Promise<Response> {
       log.warn('edgar_throttled', { url, status: res.status, waitMs });
       await new Promise((r) => setTimeout(r, waitMs));
       await edgarThrottle();
-      const retry = await fetch(url, { headers: { 'user-agent': EDGAR_UA, 'accept-encoding': 'gzip' } });
+      const retry = await fetch(url, { headers: EDGAR_HEADERS });
       if (retry.ok) return retry;
       if (retry.status !== 429 && retry.status !== 403) {
         throw new Error(`edgar ${url}: HTTP ${retry.status} after backoff`);
