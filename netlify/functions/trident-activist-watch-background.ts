@@ -68,6 +68,10 @@ export const handler: Handler = async (event) => {
       daysProcessed,
       stored,
       errors: errors.slice(0, 10),
+      // Clear any stale fatal/degraded from a prior failed run — this run
+      // reached the success path, so the doc must not still read "fatal".
+      fatal: null,
+      degraded: false,
     }, { merge: true }).catch(() => {});
 
     log.info('watch_done', { daysProcessed, stored, errors: errors.length, ms: Date.now() - started });
