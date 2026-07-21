@@ -54,7 +54,7 @@ async function getTickerToCikMap(): Promise<Map<string, string>> {
   const p = (async () => {
     try {
       const res = await fetch(SEC_TICKERS_URL, {
-        headers: { 'User-Agent': EDGAR_UA, Accept: 'application/json' },
+        headers: { 'User-Agent': EDGAR_UA, 'Accept-Language': 'en-US,en;q=0.9', 'Accept-Encoding': 'gzip, deflate', Accept: 'application/json' },
       });
       if (!res.ok) {
         console.warn(`[edgar] ticker map fetch failed: ${res.status}`);
@@ -181,7 +181,7 @@ async function fetchRole(name: string, ticker: string): Promise<string | null> {
   const searchUrl = `${EFTS_BASE}?q=${q}&forms=4&ciks=${issuerCik}&dateRange=custom&startdt=${startdt}&enddt=${enddt}`;
 
   const sres = await fetch(searchUrl, {
-    headers: { 'User-Agent': EDGAR_UA, Accept: 'application/json' },
+    headers: { 'User-Agent': EDGAR_UA, 'Accept-Language': 'en-US,en;q=0.9', 'Accept-Encoding': 'gzip, deflate', Accept: 'application/json' },
   });
   if (!sres.ok) return null;
   const sjson = (await sres.json()) as { hits?: { hits?: Array<{ _id: string; _source: any }> } };
@@ -222,7 +222,7 @@ async function extractRoleFromHit(
 
   const xmlUrl = `${EDGAR_ARCHIVE_BASE}/edgar/data/${reporterCik}/${adshNoDashes}/${primaryDoc}`;
   const res = await fetch(xmlUrl, {
-    headers: { 'User-Agent': EDGAR_UA, Accept: 'application/xml,text/xml,*/*' },
+    headers: { 'User-Agent': EDGAR_UA, 'Accept-Language': 'en-US,en;q=0.9', 'Accept-Encoding': 'gzip, deflate', Accept: 'application/xml,text/xml,*/*' },
   });
   if (!res.ok) return null;
   const xml = await res.text();
