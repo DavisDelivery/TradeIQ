@@ -35,6 +35,7 @@ import { KeyMetricsPanel } from './KeyMetricsPanel.jsx';
 import { CatalystsFeed } from './CatalystsFeed.jsx';
 import { RiskCallouts } from './RiskCallouts.jsx';
 import { ScoreBreakdown } from './ScoreBreakdown.jsx';
+import { ResearchPanel } from '../ResearchPanel.jsx';
 
 export function StockDetailPanel({ board, ticker, row }) {
   const isWilliams = board === 'williams';
@@ -43,6 +44,10 @@ export function StockDetailPanel({ board, ticker, row }) {
   const isFable = board === 'fable'; // no server rationale — pillars section renders from the row
   const isVector = board === 'vector'; // event board — verdict renders in VectorView; no rationale endpoint
   const isTrident = board === 'trident'; // pillars render from the row; no rationale endpoint
+  // Generic ticker (e.g. opened from Crosses / a bare table): no board score
+  // or rationale exists, so show the universal, ticker-based sections plus an
+  // on-demand AI brief, and skip the board-only score/risk panels.
+  const isGeneric = !isWilliams && !isLynch && !isTarget && !isFable && !isVector && !isTrident;
 
   // Mount all three; enabled-gating means only the active board's endpoint is
   // hit (Rules of Hooks: call unconditionally, gate via `enabled`).
@@ -78,7 +83,10 @@ export function StockDetailPanel({ board, ticker, row }) {
         thesis={thesis}
       />
 
-      {isVector ? null : isTrident ? (
+      {isVector ? null : isGeneric ? (
+        // Generic ticker: on-demand AI brief in place of a board thesis.
+        <ResearchPanel ticker={ticker} board={board || 'generic'} />
+      ) : isTrident ? (
         // TRIDENT: F×T×I pillars + entry card + smart-money state at top.
         <TridentPillarsSection row={row} />
       ) : isFable ? (
@@ -110,8 +118,8 @@ export function StockDetailPanel({ board, ticker, row }) {
       <RelativeStrengthChart ticker={ticker} />
       <FundamentalsChart ticker={ticker} />
       <CatalystsFeed ticker={ticker} />
-      <RiskCallouts board={board} ticker={ticker} />
-      {!isFable && !isVector && !isTrident && <ScoreBreakdown board={board} ticker={ticker} />}
+      {!isGeneric && <RiskCallouts board={board} ticker={ticker} />}
+      {!isFable && !isVector && !isTrident && !isGeneric && <ScoreBreakdown board={board} ticker={ticker} />}
     </div>
   );
 }
