@@ -13,6 +13,7 @@ import { VerdictChip } from './components/VerdictChip.jsx';
 import { MasterDetail } from './layout/MasterDetail.jsx';
 import { StockDetailPanel } from './components/detail/StockDetailPanel.jsx';
 import { FABLE_LEGEND, FABLE_ENTRY_LEGEND } from './components/detail/FablePillarsSection.jsx';
+import { useLiveRows } from './hooks/useLiveQuotes.js';
 
 const PILLARS = Object.entries(FABLE_LEGEND).map(([key, m]) => [key, m.label, m.short]);
 
@@ -53,7 +54,12 @@ function FableCard({ row, rank, onOpen }) {
             <span className="truncate text-xs text-neutral-500">{row.name}</span>
           </div>
           <div className="mt-0.5 text-[11px] text-neutral-500">
-            {row.sector} · ${row.price?.toFixed(2)}
+            {row.sector} · <span className="text-neutral-300">${row.price?.toFixed(2)}</span>
+            {row.priceChangePct != null && (
+              <span className={`ml-1.5 ${row.priceChangePct >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                {row.priceChangePct >= 0 ? '+' : ''}{row.priceChangePct.toFixed(2)}%
+              </span>
+            )}
             {d.insiderBuyers90d > 0 && (
               <span className="ml-2 text-emerald-400">
                 {d.insiderBuyers90d} insider buyer{d.insiderBuyers90d > 1 ? 's' : ''} 90d
@@ -161,7 +167,10 @@ export function FableView() {
     load();
   }, []);
 
-  const picks = useMemo(() => data?.picks ?? [], [data]);
+  const rawPicks = useMemo(() => data?.picks ?? [], [data]);
+  // Overlay live price + intraday %-change (shared quotes poll) so the board
+  // shows a current quote, not just the frozen snapshot price.
+  const picks = useLiveRows(rawPicks);
   const regime = data?.regime ?? null;
 
   const list = (
