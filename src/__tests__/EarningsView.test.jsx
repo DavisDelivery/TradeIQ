@@ -17,6 +17,13 @@ vi.mock('../hooks/useEarnings.js', () => ({
   useEarnings: (...args) => mockUseEarnings(...args),
 }));
 
+// Live-quote overlay is a react-query hook; pass rows through unchanged so
+// the test doesn't need a QueryClientProvider.
+vi.mock('../hooks/useLiveQuotes.js', () => ({
+  useLiveRows: (rows) => rows,
+  useLiveQuotes: () => ({ quotesByTicker: {} }),
+}));
+
 vi.mock('../components/FreshnessPill.jsx', () => ({
   FreshnessPill: () => <div data-testid="freshness-pill" />,
 }));
