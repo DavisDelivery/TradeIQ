@@ -14,7 +14,7 @@ import { VerdictChip } from './components/VerdictChip.jsx';
 import { LogButton } from './components/LogButton.jsx';
 import { AnalystContributions } from './components/AnalystContributions.jsx';
 import { CompanyInfo } from './components/CompanyInfo.jsx';
-import { PriceChart } from './components/PriceChart.jsx';
+import { AdvancedPriceChart } from './components/detail/AdvancedPriceChart.jsx';
 import { FundamentalsStrip } from './components/detail/FundamentalsStrip.jsx';
 import { useStockDetailsFanout, FANOUT_METRIC_FIELDS } from './hooks/useStockDetailsFanout.js';
 import { fmtMcap, fmtNum1, fmtNum2, fmtPct1 } from './lib/formatters.jsx';
@@ -572,7 +572,7 @@ const TargetDetailBody = ({ target }) => {
   return (
     <>
       <CompanyInfo ticker={target.ticker} />
-      <PriceChart ticker={target.ticker} />
+      <AdvancedPriceChart ticker={target.ticker} />
 
       <div className="border-l-2 border-emerald-500/40 pl-4 py-2">
         <div className="flex items-center gap-2 mb-2">
