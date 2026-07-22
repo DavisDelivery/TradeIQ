@@ -91,10 +91,15 @@ export async function getTickerRefPage(
 
 /**
  * Typeahead symbol search over Polygon's reference universe. Polygon's
- * `search` param matches BOTH ticker and company name (server-side), so
- * "app" → AAPL, "morgan" → MS/JPM-style names. Common stocks only (type=CS)
- * keeps the results tradeable; ETFs are folded in because users search them
- * too (SPY/QQQ). Non-OK => THROW (nothing cached). Returns at most `limit`.
+ * `search` param matches BOTH ticker and company name — but it returns
+ * matches sorted alphabetically BY TICKER, not by relevance, so "morgan"
+ * buries Morgan Stanley (MS) under a wall of "JPMorgan BetaBuilders …" ETFs
+ * (BB* tickers) that MS never even reaches at a small limit. So we fetch a
+ * WIDE page (100) and re-rank locally by intent:
+ *   exact ticker  >  ticker prefix  >  common stock over ETF  >  name prefix
+ *   >  name contains, with shorter tickers breaking ties (the primary listing
+ *   is usually the shortest symbol). Then return the top `limit`.
+ * Non-OK => THROW (nothing cached).
  */
 export async function searchTickers(
   query: string,
@@ -104,11 +109,30 @@ export async function searchTickers(
   if (!q) return [];
   const url =
     `${POLYGON}/v3/reference/tickers?search=${encodeURIComponent(q)}` +
-    `&active=true&market=stocks&limit=${Math.min(Math.max(limit, 1), 50)}&apiKey=${polygonKey()}`;
+    `&active=true&market=stocks&limit=100&apiKey=${polygonKey()}`;
   const res = await fetch(url);
   if (!res.ok) throw new Error(`polygon search "${q}": HTTP ${res.status}`);
-  const data = (await res.json()) as { results?: { ticker: string; name?: string }[] };
-  return (data.results ?? []).map((r) => ({ ticker: r.ticker, name: r.name ?? null }));
+  const data = (await res.json()) as { results?: { ticker: string; name?: string; type?: string }[] };
+  const rows = data.results ?? [];
+  const qu = q.toUpperCase();
+  const score = (r: { ticker: string; name?: string; type?: string }) => {
+    const t = r.ticker.toUpperCase();
+    const n = (r.name ?? '').toUpperCase();
+    const isCS = r.type === 'CS'; // common stock (vs ETF/ETN/…)
+    let s = 0;
+    if (t === qu) s += 1000;
+    else if (t.startsWith(qu)) s += 500;
+    if (isCS) s += 200; // a company usually beats an ETF for the same query
+    if (n.startsWith(qu)) s += 120;
+    else if (n.includes(qu)) s += 40;
+    s -= r.ticker.length; // shorter symbol = likelier the primary listing
+    return s;
+  };
+  return rows
+    .map((r) => ({ r, s: score(r) }))
+    .sort((a, b) => b.s - a.s || a.r.ticker.localeCompare(b.r.ticker))
+    .slice(0, Math.min(Math.max(limit, 1), 50))
+    .map(({ r }) => ({ ticker: r.ticker, name: r.name ?? null }));
 }
 
 // ---------------------------------------------------------------------
