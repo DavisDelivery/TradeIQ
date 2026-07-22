@@ -26,16 +26,19 @@ import {
 import { AlertTriangle } from 'lucide-react';
 import { useStockDetail } from '../../hooks/useStockDetail.js';
 
+// `field` is the row key Recharts reads via dataKey — it MUST match the
+// QuarterlyFundamental field name, which is not always the tab id (fcf →
+// freeCashFlow, leverage → debtToEquity). A mismatch silently plots nothing.
 const TABS = [
-  { id: 'revenue',  label: 'Revenue',  kind: 'bar',     accessor: (q) => q.revenue,      unit: 'usd',  color: '#14e89a' },
-  { id: 'eps',      label: 'EPS',      kind: 'bar',     accessor: (q) => q.eps,          unit: 'eps',  color: '#1e5b92' },
+  { id: 'revenue',  label: 'Revenue',  kind: 'bar',     field: 'revenue',      accessor: (q) => q.revenue,      unit: 'usd',  color: '#14e89a' },
+  { id: 'eps',      label: 'EPS',      kind: 'bar',     field: 'eps',          accessor: (q) => q.eps,          unit: 'eps',  color: '#1e5b92' },
   { id: 'margins',  label: 'Margins',  kind: 'lines',   accessors: [
     { key: 'grossMargin', label: 'Gross', color: '#14e89a', accessor: (q) => q.grossMargin },
     { key: 'opMargin',    label: 'Op',    color: '#1e5b92', accessor: (q) => q.opMargin },
     { key: 'netMargin',   label: 'Net',   color: '#a78bfa', accessor: (q) => q.netMargin },
   ], unit: 'pct' },
-  { id: 'fcf',      label: 'FCF',      kind: 'bar',     accessor: (q) => q.freeCashFlow, unit: 'usd',  color: '#14e89a' },
-  { id: 'leverage', label: 'D/E',      kind: 'line',    accessor: (q) => q.debtToEquity, unit: 'ratio', color: '#ff5577' },
+  { id: 'fcf',      label: 'FCF',      kind: 'bar',     field: 'freeCashFlow', accessor: (q) => q.freeCashFlow, unit: 'usd',  color: '#14e89a' },
+  { id: 'leverage', label: 'D/E',      kind: 'line',    field: 'debtToEquity', accessor: (q) => q.debtToEquity, unit: 'ratio', color: '#ff5577' },
 ];
 
 const RANGES = [
@@ -253,35 +256,38 @@ export function FundamentalsChart({ ticker }) {
   );
 }
 
-function FundamentalsBody({ tab, rows }) {
+// NB: ResponsiveContainer measures its DIRECT child and injects width/height
+// via cloneElement. This body is that child, so it must forward those dims to
+// the real Recharts chart — otherwise the chart renders at 0×0 (blank). That
+// was the "fundamentals window isn't working" bug: the chart had data but no
+// size. `...dims` captures the injected width/height and spreads them on.
+function FundamentalsBody({ tab, rows, ...dims }) {
   const yTickFmt = tickFmt(tab.unit);
   if (tab.kind === 'bar') {
     return (
-      <ComposedChart data={rows} margin={{ top: 6, right: 8, left: 0, bottom: 0 }}>
+      <ComposedChart {...dims} data={rows} margin={{ top: 6, right: 8, left: 0, bottom: 0 }}>
         <CartesianGrid strokeDasharray="2 2" stroke="#1f1f23" />
         <XAxis dataKey="period" stroke="#525252" fontSize={9} minTickGap={20} />
         <YAxis stroke="#525252" fontSize={10} width={56} orientation="right" tickFormatter={yTickFmt} />
         <Tooltip content={<CustomTooltip unit={tab.unit} />} cursor={{ fill: '#ffffff08' }} />
-        <Bar dataKey={tab.id} name={tab.label} fill={tab.color} isAnimationActive={false}>
-          {/* compute key inline to keep React happy */}
-        </Bar>
+        <Bar dataKey={tab.field} name={tab.label} fill={tab.color} isAnimationActive={false} />
       </ComposedChart>
     );
   }
   if (tab.kind === 'line') {
     return (
-      <LineChart data={rows} margin={{ top: 6, right: 8, left: 0, bottom: 0 }}>
+      <LineChart {...dims} data={rows} margin={{ top: 6, right: 8, left: 0, bottom: 0 }}>
         <CartesianGrid strokeDasharray="2 2" stroke="#1f1f23" />
         <XAxis dataKey="period" stroke="#525252" fontSize={9} minTickGap={20} />
         <YAxis stroke="#525252" fontSize={10} width={56} orientation="right" tickFormatter={yTickFmt} />
         <Tooltip content={<CustomTooltip unit={tab.unit} />} cursor={{ stroke: '#1e5b92' }} />
-        <Line type="monotone" dataKey={tab.id} name={tab.label} stroke={tab.color} strokeWidth={1.5} dot={false} isAnimationActive={false} />
+        <Line type="monotone" dataKey={tab.field} name={tab.label} stroke={tab.color} strokeWidth={1.5} dot={false} isAnimationActive={false} />
       </LineChart>
     );
   }
   // 'lines' (margins overlay)
   return (
-    <LineChart data={rows} margin={{ top: 6, right: 8, left: 0, bottom: 0 }}>
+    <LineChart {...dims} data={rows} margin={{ top: 6, right: 8, left: 0, bottom: 0 }}>
       <CartesianGrid strokeDasharray="2 2" stroke="#1f1f23" />
       <XAxis dataKey="period" stroke="#525252" fontSize={9} minTickGap={20} />
       <YAxis stroke="#525252" fontSize={10} width={56} orientation="right" tickFormatter={yTickFmt} domain={['auto', 'auto']} />
