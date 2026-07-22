@@ -89,6 +89,28 @@ export async function getTickerRefPage(
   return { rows, nextCursorUrl: data.next_url ?? null };
 }
 
+/**
+ * Typeahead symbol search over Polygon's reference universe. Polygon's
+ * `search` param matches BOTH ticker and company name (server-side), so
+ * "app" → AAPL, "morgan" → MS/JPM-style names. Common stocks only (type=CS)
+ * keeps the results tradeable; ETFs are folded in because users search them
+ * too (SPY/QQQ). Non-OK => THROW (nothing cached). Returns at most `limit`.
+ */
+export async function searchTickers(
+  query: string,
+  limit = 12,
+): Promise<{ ticker: string; name: string | null }[]> {
+  const q = query.trim();
+  if (!q) return [];
+  const url =
+    `${POLYGON}/v3/reference/tickers?search=${encodeURIComponent(q)}` +
+    `&active=true&market=stocks&limit=${Math.min(Math.max(limit, 1), 50)}&apiKey=${polygonKey()}`;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`polygon search "${q}": HTTP ${res.status}`);
+  const data = (await res.json()) as { results?: { ticker: string; name?: string }[] };
+  return (data.results ?? []).map((r) => ({ ticker: r.ticker, name: r.name ?? null }));
+}
+
 // ---------------------------------------------------------------------
 // EDGAR — UA + 8 req/s cap (SEC fair-access policy)
 // ---------------------------------------------------------------------

@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
+import { createPortal } from 'react-dom';
 import {
   Activity, TrendingUp, TrendingDown, Zap, Layers, Settings,
   AlertTriangle, ChevronRight, CircleCheck, CircleX, Circle, Gauge,
@@ -41,6 +42,8 @@ import { BacktestView } from './BacktestView.jsx';
 import { ResearchPanel } from './components/ResearchPanel.jsx';
 import { Logo, StatusDot, ConvictionBadge, DirectionPill } from './components/Badges.jsx';
 import { ThemeToggle } from './components/ThemeToggle.jsx';
+import { TickerSearch } from './components/TickerSearch.jsx';
+import { StockDetailPanel } from './components/detail/StockDetailPanel.jsx';
 import { fmt, safeTimestamp, tierColor, tierGlow, directionIcon, analystIcon, analystLabel } from './lib/formatters.jsx';
 import { MOCK_REGIME, MOCK_TARGETS, MOCK_ANALYSTS, MOCK_ALERTS, MOCK_EQUITY_CURVE } from './lib/mockData.js';
 import { useRegime } from './hooks/useRegime.js';
@@ -177,6 +180,10 @@ const TopBar = ({ activeView, setActiveView, regime, universeStats }) => {
   // the horizontal scroll-snap tab strip that hid most of the 20 views
   // off-screen. Desktop (sm+) keeps the inline nav row unchanged.
   const [drawerOpen, setDrawerOpen] = React.useState(false);
+  // Global ticker/company search → full profile. The selected ticker opens a
+  // StockDetailPanel over the whole app (generic board: chart, AI thesis,
+  // fundamentals, info), independent of the active view.
+  const [searchTicker, setSearchTicker] = React.useState(null);
   // code-review-2026-06 m6 — ticking ET clock (30s interval) instead of a
   // render-time snapshot that never updated.
   const etTime = useEtClock();
@@ -208,10 +215,9 @@ const TopBar = ({ activeView, setActiveView, regime, universeStats }) => {
             <span className="text-[13px] font-medium truncate">{activeMeta.label}</span>
           </div>
         )}
-        {/* Mobile: theme toggle on the right of the header row */}
-        <ThemeToggle className="sm:hidden ml-auto flex-shrink-0" />
-        {/* Desktop: theme toggle before the inline nav */}
-        <ThemeToggle className="hidden sm:inline-flex flex-shrink-0" />
+        {/* Ticker/company search — replaces the theme toggle here; the toggle
+            moved into the drawer. Selecting a result opens the full profile. */}
+        <TickerSearch onSelect={setSearchTicker} className="ml-auto" />
         {/* Desktop: inline nav (tabs fit on one row) */}
         <nav className="hidden sm:block flex-1 min-w-0 overflow-x-auto scrollbar-hide">
           <div className="flex items-center justify-end gap-1 whitespace-nowrap">
@@ -253,6 +259,37 @@ const TopBar = ({ activeView, setActiveView, regime, universeStats }) => {
         setActiveView={setActiveView}
         appVersion={APP_VERSION}
       />
+
+      {/* Global search → full profile modal (portaled to body so the header's
+          backdrop-blur doesn't clip it). */}
+      {searchTicker && createPortal(
+        <div
+          className="fixed inset-0 z-[60] flex items-start justify-center p-3 sm:p-8 bg-black/70 backdrop-blur-sm overflow-y-auto"
+          onClick={() => setSearchTicker(null)}
+          data-testid="global-detail-modal"
+        >
+          <div
+            className="relative w-full max-w-5xl my-4 bg-[#0a0b0d] border border-neutral-800"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="sticky top-0 z-10 bg-[#0a0b0d]/95 backdrop-blur-xl border-b border-neutral-800 px-4 sm:px-6 py-3 flex items-center justify-between gap-4">
+              <div className="font-serif text-lg font-bold text-neutral-100">{searchTicker}</div>
+              <button
+                type="button"
+                onClick={() => setSearchTicker(null)}
+                aria-label="Close detail"
+                className="text-neutral-400 hover:text-neutral-100 p-1"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <div className="p-4 sm:p-6">
+              <StockDetailPanel board="search" ticker={searchTicker} />
+            </div>
+          </div>
+        </div>,
+        document.body,
+      )}
 
       {/* Ticker-tape regime strip */}
       <div className="h-8 border-t border-neutral-800/60 bg-[#090a0c] text-[11px] font-mono overflow-x-auto scrollbar-hide">
