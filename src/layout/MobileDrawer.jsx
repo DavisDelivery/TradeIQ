@@ -13,6 +13,7 @@ import React, { useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
 import { Logo } from '../components/Badges.jsx';
+import { ThemeToggle } from '../components/ThemeToggle.jsx';
 
 export function MobileDrawer({ open, onClose, views, activeView, setActiveView, appVersion }) {
   const panelRef = useRef(null);
@@ -109,7 +110,13 @@ export function MobileDrawer({ open, onClose, views, activeView, setActiveView, 
             );
           })}
         </nav>
-        <div className="px-4 py-3 border-t border-neutral-800/60 text-[10px] font-mono uppercase tracking-[0.18em] text-neutral-600 flex-shrink-0">
+        {/* Appearance — the light/dark toggle lives here now (moved out of the
+            header to make room for the ticker search). */}
+        <div className="px-4 py-3 border-t border-neutral-800/60 flex items-center justify-between flex-shrink-0">
+          <span className="text-[12px] font-medium text-neutral-300">Appearance</span>
+          <ThemeToggle />
+        </div>
+        <div className="px-4 pb-3 text-[10px] font-mono uppercase tracking-[0.18em] text-neutral-600 flex-shrink-0">
           v{appVersion}
         </div>
       </div>

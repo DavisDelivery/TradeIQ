@@ -146,6 +146,12 @@
   to = "/.netlify/functions/ticker-info"
   status = 200
 
+# Global header typeahead — query → [{ticker, name}] via Polygon reference.
+[[redirects]]
+  from = "/api/symbol-search"
+  to = "/.netlify/functions/symbol-search"
+  status = 200
+
 # Phase 4q — on-demand per-ticker rationale endpoint. Live-recomputes
 # the ten-analyst score for one ticker and returns per-analyst score /
 # direction / weight / rationale / signals. The detail panel's analyst
