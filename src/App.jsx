@@ -55,6 +55,7 @@ import { DesktopShell } from './layout/DesktopShell.jsx';
 import { RegimeStrip } from './layout/RegimeStrip.jsx';
 import { MobileDrawer } from './layout/MobileDrawer.jsx';
 import { CrossesView } from './CrossesView.jsx';
+import { SentimentView } from './SentimentView.jsx';
 
 
 // FIX-1 — APP_VERSION now lives in the shared module so /api/health and
@@ -114,6 +115,9 @@ const VIEWS = [
   { id: 'board', label: 'Target Board', shortLabel: 'Board', icon: Target, section: 'unvalidated' },
   { id: 'williams', label: 'Williams', shortLabel: 'Williams', icon: Activity, section: 'unvalidated' },
   { id: 'lynch', label: 'Lynch', shortLabel: 'Lynch', icon: Shield, section: 'unvalidated' },
+  // SENTIMENT — Most Bullish/Bearish news screener (Finnhub headlines, finance
+  // lexicon). Coincident + noisy, so it lives here in the Unvalidated section.
+  { id: 'sentiment', label: 'Sentiment', shortLabel: 'Sentiment', icon: Newspaper, section: 'unvalidated' },
 ];
 
 // ======================================================================
@@ -399,6 +403,7 @@ export default function App() {
       {activeView === 'lynch' && <ErrorBoundary label="Lynch"><LynchView universe={universe} /></ErrorBoundary>}
       {activeView === 'earnings' && <ErrorBoundary label="Earnings"><EarningsPlaysView universe={universe} /></ErrorBoundary>}
       {activeView === 'crosses' && <ErrorBoundary label="Crosses"><CrossesView /></ErrorBoundary>}
+      {activeView === 'sentiment' && <ErrorBoundary label="Sentiment"><SentimentView /></ErrorBoundary>}
       {activeView === 'history' && <ErrorBoundary label="History"><HistoryView /></ErrorBoundary>}
       {activeView === 'options' && <ErrorBoundary label="Options"><OptionsFlowView universe={universe} /></ErrorBoundary>}
       {activeView === 'engine' && <ErrorBoundary label="Engine"><EngineTestView /></ErrorBoundary>}

@@ -35,6 +35,10 @@ export const queryKeys = {
   // window's rows within staleTime (code-review-2026-06 M2).
   insider: (universe, windowDays) =>
     ['tradeiq', 'insider', universe, windowDays ?? 90],
+  // Sentiment is server-sorted (bullish|bearish); each sort is a distinct
+  // payload, so it must be a distinct cache entry.
+  sentiment: (universe, sort) =>
+    ['tradeiq', 'sentiment', universe ?? 'sp500', sort ?? 'bullish'],
   williams: (universe) => ['tradeiq', 'williams', universe],
   // Crosses is server-filtered by type + window, so the key carries both
   // (same lesson as catalyst M1 / insider M2 — a key that omits a queryFn
