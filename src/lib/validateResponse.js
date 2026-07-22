@@ -67,6 +67,13 @@ export const SHAPES = {
     cached: false,
     generatedAt: null,
   },
+  sentimentBoard: {
+    rows: [],
+    universeChecked: 0,
+    sort: 'bullish',
+    cached: false,
+    generatedAt: null,
+  },
   optionsFlow: {
     candidates: [],
     proxyNote: null,

@@ -36,6 +36,9 @@ const RESCAN_WORKERS: Record<string, Record<string, string>> = {
   lynch: {
     russell2k: 'scan-lynch-russell2k-background',
   },
+  sentiment: {
+    sp500: 'scan-sentiment-sp500-background',
+  },
 };
 
 /** The bg worker function name for a (board, universe), or null if none. */

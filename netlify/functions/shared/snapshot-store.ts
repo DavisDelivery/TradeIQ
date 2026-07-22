@@ -37,7 +37,8 @@ export type BoardName =
   | 'earnings'
   | 'fable'
   | 'crosses'
-  | 'trident';
+  | 'trident'
+  | 'sentiment';
 
 export type UniverseKey =
   | 'sp500'
@@ -136,6 +137,10 @@ export const FRESHNESS_BUDGETS_MS: Record<BoardName, number> = {
   // daily boards so weekends serve Friday's snapshot un-flagged.
   crosses: 26 * 60 * 60_000,
   trident: 26 * 60 * 60_000,
+  // sentiment scans several times through the trading day; 12h keeps the
+  // last good headline-sentiment snapshot served off-hours/weekends without
+  // flipping to a slow live fallback.
+  sentiment: 12 * 60 * 60_000,
 };
 
 // ====================================================================
