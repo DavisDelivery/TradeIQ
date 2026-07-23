@@ -6,7 +6,7 @@ import {
   BarChart3, Brain, Newspaper, Globe2, Eye, Target, Clock, ArrowUpRight,
   ArrowDownRight, Minus, Shield, Cpu, LineChart as LineChartIcon, Filter, X,
   Inbox, Bell, ExternalLink, Info, BookMarked, Sparkles, Landmark, FlaskConical,
-  Monitor, Menu, Crosshair
+  Monitor, Menu, Crosshair, Trophy
 } from 'lucide-react';
 import {
   AreaChart, Area, LineChart, Line, BarChart, Bar, RadarChart,
@@ -56,6 +56,7 @@ import { RegimeStrip } from './layout/RegimeStrip.jsx';
 import { MobileDrawer } from './layout/MobileDrawer.jsx';
 import { CrossesView } from './CrossesView.jsx';
 import { SentimentView } from './SentimentView.jsx';
+import { ForwardTestView } from './ForwardTestView.jsx';
 
 
 // FIX-1 — APP_VERSION now lives in the shared module so /api/health and
@@ -94,6 +95,9 @@ const VIEWS = [
   // CROSSES — SMA50/200 golden + death cross feed, detected nightly on
   // completed closes (scan-crosses-sp500.ts → /api/crosses).
   { id: 'crosses', label: 'Crosses', shortLabel: 'Crosses', icon: Crosshair },
+  // FORWARD TEST — the boards' live track record (top-20 cohort log, 1y
+  // horizons vs SPY). The league that decides which boards earn trust.
+  { id: 'forward', label: 'Forward Test', shortLabel: 'Forward', icon: Trophy },
   { id: 'history', label: 'History', shortLabel: 'History', icon: Clock },
   { id: 'options', label: 'Options Flow', shortLabel: 'Options', icon: Cpu },
   { id: 'engine', label: 'Engine Test', shortLabel: 'Engine', icon: Activity },
@@ -404,6 +408,7 @@ export default function App() {
       {activeView === 'earnings' && <ErrorBoundary label="Earnings"><EarningsPlaysView universe={universe} /></ErrorBoundary>}
       {activeView === 'crosses' && <ErrorBoundary label="Crosses"><CrossesView /></ErrorBoundary>}
       {activeView === 'sentiment' && <ErrorBoundary label="Sentiment"><SentimentView /></ErrorBoundary>}
+      {activeView === 'forward' && <ErrorBoundary label="Forward Test"><ForwardTestView /></ErrorBoundary>}
       {activeView === 'history' && <ErrorBoundary label="History"><HistoryView /></ErrorBoundary>}
       {activeView === 'options' && <ErrorBoundary label="Options"><OptionsFlowView universe={universe} /></ErrorBoundary>}
       {activeView === 'engine' && <ErrorBoundary label="Engine"><EngineTestView /></ErrorBoundary>}
