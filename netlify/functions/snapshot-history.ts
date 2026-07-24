@@ -26,6 +26,12 @@ const VALID_BOARDS: BoardName[] = [
   'williams',
   'lynch',
   'earnings',
+  // Boards added after the original picker (audit 2026-07-24): all four
+  // write snapshots via the same store, so history/replay just works.
+  'fable',
+  'crosses',
+  'trident',
+  'sentiment',
 ];
 
 const VALID_UNIVERSES: UniverseKey[] = [

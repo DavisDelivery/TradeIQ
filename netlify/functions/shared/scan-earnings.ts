@@ -116,13 +116,38 @@ export async function resolveEarningsScanUniverse(opts: {
     entries = cal.entries.filter((e) => universeTickers.has(e.ticker));
   }
 
-  // Fallback for plans that gate the calendar range endpoint.
-  if (entries.length === 0) {
-    log?.info('earnings_calendar_fallback_to_watchlist_probe');
+  // Fallback for plans that gate the calendar range endpoint. The gate does
+  // NOT always manifest as an empty response: observed live (2026-07-24, peak
+  // Q2 season), the range call returned ~400 entries but ALL dated ≥ Aug 10 —
+  // a fixed wall in front of the near-term season — so the old
+  // `entries.length === 0` trigger never fired and the board sat empty for
+  // weeks while genuinely reporting names went untracked. Trigger the
+  // per-symbol probe whenever the NEAR-TERM window is missing, and MERGE its
+  // results into the range entries instead of replacing them.
+  const nearCutoff = new Date(Date.now() + 10 * 86400000).toISOString().slice(0, 10);
+  const hasNearTerm = entries.some((e) => e.date <= nearCutoff);
+  if (entries.length === 0 || !hasNearTerm) {
+    log?.info('earnings_calendar_fallback_to_watchlist_probe', {
+      rangeEntries: entries.length,
+      hasNearTerm,
+    });
     const probed = await Promise.all(
       CORE_WATCHLIST.map((t) => getUpcomingEarnings(t, lookAhead).catch(() => null)),
     );
-    entries = probed.filter((e): e is NonNullable<typeof e> => e !== null);
+    const have = new Set(entries.map((e) => `${e.ticker}|${e.date}`));
+    const added = probed.filter(
+      (e): e is NonNullable<typeof e> => e !== null && !have.has(`${e.ticker}|${e.date}`),
+    );
+    entries = [...added, ...entries];
+    if (!hasNearTerm && added.length > 0) {
+      warnings.push(
+        `calendar range gated near-term (no entries within 10d); supplemented ${added.length} via watchlist probe`,
+      );
+    } else if (!hasNearTerm && added.length === 0) {
+      warnings.push(
+        'near-term earnings calendar unavailable on this data plan (range gated; watchlist probe empty)',
+      );
+    }
   }
 
   return {
