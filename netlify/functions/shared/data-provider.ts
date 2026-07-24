@@ -17,6 +17,7 @@ import {
 } from './schemas';
 import { snapshotBeforeDate } from './snapshot-store';
 import { fetchWithRateLimit, getFinnhubBucket } from './rate-limiter';
+import { getAnnouncementDates, pickAnnouncementForPeriod } from './earnings-announce-dates';
 import { liveCacheGet, liveCacheSet, type LiveCacheKey } from './provider-live-cache';
 import {
   fetchRatiosWithStatus,
@@ -1154,6 +1155,28 @@ export async function getEarningsHistory(
     if ((opts.withAnnounceDates || opts.asOfDate) && internal.length > 0) {
       const calendar = await fetchAnnouncementCalendar(ticker, internal.map((r) => r.period)).catch(() => []);
       assignAnnounceDates(internal, calendar);
+
+      // SEC 8-K Item 2.02 fallback. The vendor calendar does not serve
+      // HISTORICAL entries on this entitlement, so the join above resolved
+      // nothing for 379 of 380 names — which silently disabled both
+      // volatility branches of the earnings model (see
+      // shared/earnings-announce-dates.ts for the measurement). Item 2.02 is
+      // the earnings release itself, so its filing date IS the announcement
+      // date — a real event, not a proxy. Only rows the vendor left
+      // unresolved are touched; the vendor stays authoritative when present.
+      const unresolved = internal.filter((r) => r.announceDate === null);
+      if (unresolved.length > 0) {
+        const announcements = await getAnnouncementDates(ticker).catch(() => [] as string[]);
+        if (announcements.length > 0) {
+          for (const row of unresolved) {
+            row.announceDate = pickAnnouncementForPeriod(
+              row.period,
+              announcements,
+              MAX_ANNOUNCE_LAG_DAYS,
+            );
+          }
+        }
+      }
     }
 
     let rows: EarningsSurprise[] = internal.map(({ yq: _yq, ...row }) => row);

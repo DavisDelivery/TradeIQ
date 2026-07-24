@@ -14,6 +14,19 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
+// This file tests the earnings-history LIVE CACHE. getEarningsHistory also
+// falls back to SEC 8-K Item 2.02 for announcement dates the vendor calendar
+// can't resolve; that path has its own cache namespace and its own suite
+// (earnings-announce-dates.test.ts). Stub it to empty here so these
+// assertions measure cache behavior only — an unstubbed SEC lookup would add
+// entries to the shared fake store and make store-size assertions ambiguous.
+// The one test below that exercises the fallback overrides this per-test.
+const announceMock = vi.hoisted(() => ({ getAnnouncementDates: vi.fn(async () => [] as string[]) }));
+vi.mock('../earnings-announce-dates', async (importOriginal) => {
+  const orig = await importOriginal<any>();
+  return { ...orig, getAnnouncementDates: announceMock.getAnnouncementDates };
+});
+
 import { getEarningsHistory } from '../data-provider';
 import { _resetFinnhubBucketForTests } from '../rate-limiter';
 import {
@@ -183,6 +196,24 @@ describe('getEarningsHistory live cache', () => {
     __clearLiveCacheL1ForTesting();
     await getEarningsHistory('NVDA', 8, { withAnnounceDates: true });
     expect(calls.stock).toBe(2); // refetched, no poisoned join-less entry
+  });
+
+  it('fills announceDate from SEC 8-K item 2.02 when the vendor calendar resolves nothing', async () => {
+    // The production condition: the entitlement serves no HISTORICAL calendar
+    // entries, so the vendor join yields null for every row and avgPriorMove
+    // (and with it both volatility strategies) dies downstream. The SEC
+    // fallback supplies the real announcement dates.
+    const calls = mockFinnhub({ surprises: SURPRISES, calendar: { earningsCalendar: [] } });
+    announceMock.getAnnouncementDates.mockResolvedValueOnce(['2026-04-29', '2026-01-28']);
+
+    const rows = await getEarningsHistory('NVDA', 8, { withAnnounceDates: true });
+    expect(calls.stock).toBe(1);
+    // Each fiscal period end maps to the first announcement that follows it.
+    const byPeriod = Object.fromEntries(rows.map((r) => [r.period, r.announceDate]));
+    expect(byPeriod['2026-03-31']).toBe('2026-04-29');
+    expect(byPeriod['2025-12-31']).toBe('2026-01-28');
+    // Resolved (not degraded) results are now safe to persist.
+    expect(fakeDb.__store.size).toBeGreaterThan(0);
   });
 
   it('degrades to a plain fetch when Firestore is down (read AND write failures)', async () => {
