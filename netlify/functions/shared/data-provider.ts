@@ -978,6 +978,22 @@ export interface EarningsSurprise {
 const MAX_ANNOUNCE_LAG_DAYS = 120;
 
 /**
+ * Cache epoch for earnings history. BUMP THIS whenever announcement-date
+ * resolution or the stored row shape changes.
+ *
+ * Why it exists (2026-07-24): the announce-date fixes shipped correctly and
+ * were still invisible in production for hours. The live-cache key was
+ * (ticker, limit, join) with no version, and the `joinDegraded` write guard
+ * only withholds entries whose announceDates are ALL null. MSFT's pre-fix
+ * entry held a NON-null but WRONG date (the vendor's upcoming report,
+ * back-attached to a closed quarter), so it looked healthy, was persisted,
+ * and kept being served for its full 26h TTL — masking the fix. A logic
+ * change that alters cached VALUES must change the cache KEY, or the old
+ * wrong answers outlive the deploy.
+ */
+export const EARNINGS_HISTORY_CACHE_VERSION = 'v2-secannounce';
+
+/**
  * One Finnhub earnings-calendar call covering every surprise period, used
  * to join announcement dates onto /stock/earnings rows. Paced through the
  * shared token bucket + 429-aware retry because it adds one Finnhub call
@@ -1124,7 +1140,7 @@ export async function getEarningsHistory(
         provider: 'finnhub',
         endpoint: 'stock/earnings',
         ticker,
-        extra: `limit=${limit}:join=${opts.withAnnounceDates ? 1 : 0}`,
+        extra: `limit=${limit}:join=${opts.withAnnounceDates ? 1 : 0}:${EARNINGS_HISTORY_CACHE_VERSION}`,
       };
   if (liveKey) {
     const hit = await liveCacheGet<EarningsSurprise[]>(liveKey, earningsHistoryTtlMs);

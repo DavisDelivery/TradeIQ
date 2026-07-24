@@ -27,7 +27,7 @@ vi.mock('../earnings-announce-dates', async (importOriginal) => {
   return { ...orig, getAnnouncementDates: announceMock.getAnnouncementDates };
 });
 
-import { getEarningsHistory } from '../data-provider';
+import { getEarningsHistory, EARNINGS_HISTORY_CACHE_VERSION } from '../data-provider';
 import { _resetFinnhubBucketForTests } from '../rate-limiter';
 import {
   __setLiveCacheDbForTesting,
@@ -119,7 +119,7 @@ const KEY: LiveCacheKey = {
   provider: 'finnhub',
   endpoint: 'stock/earnings',
   ticker: 'NVDA',
-  extra: 'limit=8:join=0',
+  extra: `limit=8:join=0:${EARNINGS_HISTORY_CACHE_VERSION}`,
 };
 
 describe('getEarningsHistory live cache', () => {
