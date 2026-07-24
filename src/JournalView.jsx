@@ -26,6 +26,9 @@ const SOURCE_META = {
   chart: { label: 'Chart', icon: TrendingUp, color: 'text-neutral-400 border-neutral-700 bg-neutral-900/40' },
   // DESK-1 W4 — manual entries logged from the Journal form.
   manual: { label: 'Manual', icon: BookMarked, color: 'text-neutral-300 border-neutral-600 bg-neutral-900/40' },
+  // "I just made this trade" button (detail panel) — live price + timestamp
+  // captured at tap. These are EXECUTIONS, not watch-list ideas.
+  trade: { label: 'My Trades', icon: Zap, color: 'text-emerald-300 border-emerald-500/40 bg-emerald-500/10' },
 };
 
 const WINDOWS = [
@@ -236,9 +239,21 @@ export const JournalView = () => {
                           {source.label}
                         </span>
                         <span className="font-serif font-bold text-lg text-neutral-100">{t.ticker}</span>
+                        {t.side && (
+                          <span className={`px-1.5 py-0.5 text-[9px] font-mono uppercase tracking-wider border ${
+                            t.side === 'buy'
+                              ? 'text-emerald-300 border-emerald-500/40 bg-emerald-500/10'
+                              : 'text-rose-300 border-rose-500/40 bg-rose-500/10'
+                          }`}>
+                            {t.side}{t.shares ? ` ${t.shares} sh` : ''}
+                          </span>
+                        )}
                         {t.strategy && <span className="text-[11px] text-neutral-400">{t.strategy}</span>}
                         <span className="text-[10px] font-mono text-neutral-500">
-                          logged {new Date(t.loggedAt).toLocaleDateString()} @ ${t.loggedPrice?.toFixed(2) ?? '—'}
+                          {t.source === 'trade' ? 'executed' : 'logged'}{' '}
+                          {new Date(t.loggedAt).toLocaleDateString()}{' '}
+                          {t.source === 'trade' ? new Date(t.loggedAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : ''}{' '}
+                          @ ${t.loggedPrice?.toFixed(2) ?? '—'}
                         </span>
                       </div>
                       <span className="text-[10px] font-mono text-neutral-600">

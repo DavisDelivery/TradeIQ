@@ -36,6 +36,7 @@ import { CatalystsFeed } from './CatalystsFeed.jsx';
 import { RiskCallouts } from './RiskCallouts.jsx';
 import { ScoreBreakdown } from './ScoreBreakdown.jsx';
 import { ResearchPanel } from '../ResearchPanel.jsx';
+import { TradeTakenButton } from '../TradeTakenButton.jsx';
 
 export function StockDetailPanel({ board, ticker, row }) {
   const isWilliams = board === 'williams';
@@ -82,6 +83,9 @@ export function StockDetailPanel({ board, ticker, row }) {
         row={row}
         thesis={thesis}
       />
+
+      {/* One-tap execution log — captures live price + timestamp at tap. */}
+      <TradeTakenButton ticker={ticker} />
 
       {isVector ? null : isGeneric ? (
         // Generic ticker: on-demand AI brief in place of a board thesis.
