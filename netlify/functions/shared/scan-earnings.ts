@@ -116,24 +116,54 @@ export async function resolveEarningsScanUniverse(opts: {
     entries = cal.entries.filter((e) => universeTickers.has(e.ticker));
   }
 
-  // Fallback for plans that gate the calendar range endpoint.
+  // NEAR-TERM GAP REPAIR — the bulk calendar range under-reports the front of
+  // the calendar on this plan, and it does NOT announce the gap: it returns a
+  // healthy-looking ~400 entries whose earliest date is weeks out.
   //
-  // REVERTED 2026-07-24 (same day): a near-term-gap trigger was briefly added
-  // here on the theory that a non-empty range response with no entries inside
-  // ~10 days meant a plan gate. Measurement disproved it — `days=30` returns
-  // 104 qualifying setups with the earliest report on 2026-08-10, i.e. the
-  // calendar is COMPLETE and the market is simply in an earnings lull. A lull
-  // is a normal, recurring state, and the gap condition is indistinguishable
-  // from a real gate using this data alone. Firing 33 per-symbol probes on
-  // every run during every lull cost a Finnhub 429 storm — `getUpcomingEarnings`
-  // uses an unthrottled fetch — which tripped the publish guard and killed a
-  // run outright. Trigger ONLY on a genuinely empty response, as before.
-  if (entries.length === 0) {
-    log?.info('earnings_calendar_fallback_to_watchlist_probe');
+  // Measured 2026-07-24 (the day this was settled after one wrong turn in each
+  // direction). The bulk range's earliest entry was 2026-08-10, yet the
+  // PER-SYMBOL calendar returned, for the same moment:
+  //     MSFT 2026-07-29 (5d)   META 2026-07-29 (5d)
+  //     AMZN 2026-07-30 (6d)   AAPL 2026-07-30 (6d)
+  // All four were ABSENT from the published snapshot entirely. So the gap is
+  // real and the per-symbol path can see through it. (NVDA returned 2026-08-26
+  // from the same probe — the probe reports genuinely-distant dates as distant,
+  // so it isn't simply inventing near-term entries.)
+  //
+  // Two guards learned the hard way:
+  //  1. NEVER probe when the range call itself failed. A run that probed into
+  //     an active 429 storm died in 4s and the publish guard (correctly)
+  //     refused to publish. If the calendar call is already rate-limited, more
+  //     calls cannot help.
+  //  2. The probe is paced through the Finnhub bucket (fixed in
+  //     getUpcomingEarnings) rather than 33 bare concurrent fetches.
+  //
+  // Coverage is honestly partial: the probe walks CORE_WATCHLIST (mega-caps),
+  // not the full universe, so a warning records that near-term coverage is
+  // watchlist-only whenever the gap is detected.
+  const nearCutoff = new Date(Date.now() + 10 * 86400000).toISOString().slice(0, 10);
+  const hasNearTerm = entries.some((e) => e.date <= nearCutoff);
+  if (!calendarCallFailed && (entries.length === 0 || !hasNearTerm)) {
+    log?.info('earnings_calendar_near_term_probe', {
+      rangeEntries: entries.length,
+      hasNearTerm,
+    });
     const probed = await Promise.all(
       CORE_WATCHLIST.map((t) => getUpcomingEarnings(t, lookAhead).catch(() => null)),
     );
-    entries = probed.filter((e): e is NonNullable<typeof e> => e !== null);
+    const have = new Set(entries.map((e) => `${e.ticker}|${e.date}`));
+    const added = probed.filter(
+      (e): e is NonNullable<typeof e> => e !== null && !have.has(`${e.ticker}|${e.date}`),
+    );
+    entries = [...added, ...entries];
+    const addedNear = added.filter((e) => e.date <= nearCutoff).length;
+    if (entries.length > 0 && !hasNearTerm) {
+      warnings.push(
+        addedNear > 0
+          ? `bulk calendar under-reported the near term; recovered ${addedNear} report(s) within 10d via per-symbol probe (coverage: core watchlist only)`
+          : 'no earnings within 10d in either the bulk calendar or the per-symbol probe (genuine lull, or gap beyond watchlist coverage)',
+      );
+    }
   }
 
   return {
