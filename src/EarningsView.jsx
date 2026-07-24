@@ -169,8 +169,36 @@ export const EarningsPlaysView = () => {
       )}
 
       {sorted.length === 0 && data && !loading && (
-        <div className="border border-neutral-800 p-6 text-center text-neutral-500 text-sm">
-          No qualifying earnings plays in this window.
+        <div className="border border-neutral-800 p-6 text-center text-sm">
+          <div className="text-neutral-400">No qualifying earnings plays in the next {windowDays} days.</div>
+          {/* An earnings LULL is normal — the calendar is complete, the market
+              just isn't reporting yet. Say so, and offer the jump, instead of
+              rendering a bare empty box that reads as a broken board. */}
+          {data.nextReportDate ? (
+            <>
+              <div className="text-neutral-500 text-[12px] mt-2">
+                The calendar is up to date — the next reports start{' '}
+                <span className="text-neutral-300">
+                  {new Date(`${data.nextReportDate}T12:00:00Z`).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
+                </span>
+                . {data.setupsInWidestWindow} setup{data.setupsInWidestWindow === 1 ? '' : 's'} within{' '}
+                {data.widestWindowDays} days.
+              </div>
+              {data.widestWindowDays && windowDays !== data.widestWindowDays && (
+                <button
+                  type="button"
+                  onClick={() => setWindowDays(data.widestWindowDays)}
+                  className="mt-3 px-3 h-8 text-[11px] font-mono uppercase tracking-widest border border-emerald-500/40 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20 transition-colors"
+                >
+                  Show the {data.widestWindowDays}-day window →
+                </button>
+              )}
+            </>
+          ) : (
+            <div className="text-neutral-500 text-[12px] mt-2">
+              Nothing scheduled in the scanned universe right now.
+            </div>
+          )}
         </div>
       )}
 

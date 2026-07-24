@@ -1,7 +1,12 @@
-// Pins the near-term calendar-gate fallback (audit 2026-07-24): Finnhub's
-// bulk range call can return a NON-EMPTY response whose entries all sit
-// weeks out (near-term season gated by plan) — the probe must fire on
-// "no near-term entries", not only on "empty response", and MERGE.
+// Pins the earnings calendar-resolution contract.
+//
+// History (2026-07-24): a near-term-gap trigger was briefly added here on the
+// theory that a non-empty range response with nothing inside ~10 days meant a
+// plan gate. Measurement disproved it — the calendar was complete and the
+// market was in an earnings LULL (nothing for 17 days, 104 setups at 30).
+// Probing on that condition fired 33 unthrottled Finnhub calls every run and
+// caused a 429 that tripped the publish guard. These tests pin the reverted
+// contract so the mistake can't be re-introduced silently.
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
@@ -23,16 +28,17 @@ import { resolveEarningsScanUniverse } from '../scan-earnings';
 import { UNIVERSE, CORE_WATCHLIST } from '../universe';
 
 const daysOut = (n: number) => new Date(Date.now() + n * 86400000).toISOString().slice(0, 10);
-// Use real universe tickers so the range entries survive the UNIVERSE filter.
 const U = UNIVERSE.slice(0, 3).map((u) => u.ticker);
 
 beforeEach(() => vi.clearAllMocks());
 
-describe('resolveEarningsScanUniverse — near-term gate fallback', () => {
-  it('does NOT probe when the range already has near-term entries', async () => {
+describe('resolveEarningsScanUniverse', () => {
+  it('does NOT probe during an earnings lull — a far-dated calendar is still a VALID calendar', async () => {
+    // The exact live shape that caused the misdiagnosis: a healthy response
+    // whose earliest report is ~17 days out. Probing here is wasted quota.
     h.range.mockResolvedValue({
       ok: true, httpStatus: 200, rateLimitExhausted: false,
-      entries: [{ ticker: U[0], date: daysOut(3) }, { ticker: U[1], date: daysOut(20) }],
+      entries: [{ ticker: U[0], date: daysOut(17) }, { ticker: U[1], date: daysOut(20) }],
     });
     const r = await resolveEarningsScanUniverse({ windowDays: 30 });
     expect(h.probe).not.toHaveBeenCalled();
@@ -40,39 +46,34 @@ describe('resolveEarningsScanUniverse — near-term gate fallback', () => {
     expect(r.calendarFailed).toBe(false);
   });
 
-  it('probes and MERGES when all range entries sit beyond the near-term window', async () => {
+  it('does not probe when near-term entries exist', async () => {
     h.range.mockResolvedValue({
       ok: true, httpStatus: 200, rateLimitExhausted: false,
-      entries: [{ ticker: U[0], date: daysOut(20) }, { ticker: U[1], date: daysOut(25) }],
+      entries: [{ ticker: U[0], date: daysOut(2) }],
     });
-    h.probe.mockImplementation(async (t: string) =>
-      t === CORE_WATCHLIST[0] ? { ticker: t, date: daysOut(2) } : null,
-    );
     const r = await resolveEarningsScanUniverse({ windowDays: 30 });
-    expect(h.probe).toHaveBeenCalled();
-    // Probe result merged IN FRONT of (not replacing) the far-out entries.
-    expect(r.entries.map((e) => e.ticker)).toContain(CORE_WATCHLIST[0]);
-    expect(r.entries.length).toBe(3);
-    expect(r.warnings.some((w) => /supplemented 1 via watchlist probe/.test(w))).toBe(true);
+    expect(h.probe).not.toHaveBeenCalled();
+    expect(r.entries).toHaveLength(1);
   });
 
-  it('flags the plan gate when the probe also finds nothing near-term', async () => {
-    h.range.mockResolvedValue({
-      ok: true, httpStatus: 200, rateLimitExhausted: false,
-      entries: [{ ticker: U[0], date: daysOut(20) }],
-    });
-    h.probe.mockResolvedValue(null);
-    const r = await resolveEarningsScanUniverse({ windowDays: 30 });
-    expect(r.entries).toHaveLength(1); // far-out entries kept
-    expect(r.warnings.some((w) => /near-term earnings calendar unavailable/.test(w))).toBe(true);
-  });
-
-  it('still probes on a fully empty range response (original behavior)', async () => {
+  it('probes ONLY on a genuinely empty range response', async () => {
     h.range.mockResolvedValue({ ok: true, httpStatus: 200, rateLimitExhausted: false, entries: [] });
     h.probe.mockImplementation(async (t: string) =>
       t === CORE_WATCHLIST[1] ? { ticker: t, date: daysOut(5) } : null,
     );
     const r = await resolveEarningsScanUniverse({ windowDays: 30 });
+    expect(h.probe).toHaveBeenCalled();
     expect(r.entries.map((e) => e.ticker)).toEqual([CORE_WATCHLIST[1]]);
+  });
+
+  it('reports calendarFailed when the range call errors and the probe finds nothing (publish guard input)', async () => {
+    h.range.mockResolvedValue({
+      ok: false, httpStatus: 429, rateLimitExhausted: true, entries: [],
+    });
+    h.probe.mockResolvedValue(null);
+    const r = await resolveEarningsScanUniverse({ windowDays: 30 });
+    expect(r.calendarFailed).toBe(true);
+    expect(r.entries).toHaveLength(0);
+    expect(r.warnings.some((w) => /calendar_range_failed/.test(w))).toBe(true);
   });
 });
