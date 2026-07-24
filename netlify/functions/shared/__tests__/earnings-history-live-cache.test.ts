@@ -198,6 +198,37 @@ describe('getEarningsHistory live cache', () => {
     expect(calls.stock).toBe(2); // refetched, no poisoned join-less entry
   });
 
+  it('never back-attaches the vendor’s UPCOMING report to a closed quarter', async () => {
+    // The measured MSFT failure (2026-07-24): the entitlement's calendar
+    // carried ONLY the upcoming report, and its 120-day lag from the
+    // 2026-03-31 quarter sat exactly at tolerance — so a report five days in
+    // the FUTURE was recorded as that quarter's announcement. A quarter with
+    // actuals was, by definition, already announced.
+    const future = new Date(Date.now() + 5 * 86400000).toISOString().slice(0, 10);
+    mockFinnhub({
+      surprises: SURPRISES,
+      calendar: { earningsCalendar: [{ date: future, symbol: 'NVDA' }] },
+    });
+    announceMock.getAnnouncementDates.mockResolvedValueOnce([]); // SEC silent → guard alone must hold
+
+    const rows = await getEarningsHistory('NVDA', 8, { withAnnounceDates: true });
+    expect(rows.every((r) => r.announceDate !== future)).toBe(true);
+  });
+
+  it('SEC item 2.02 OVERRIDES a vendor date, not merely fills gaps', async () => {
+    // Vendor supplies a plausible-but-wrong past date; SEC is the filing of
+    // record and must win.
+    mockFinnhub({
+      surprises: SURPRISES,
+      calendar: { earningsCalendar: [{ date: '2026-05-20', symbol: 'NVDA' }] },
+    });
+    announceMock.getAnnouncementDates.mockResolvedValueOnce(['2026-04-29']);
+
+    const rows = await getEarningsHistory('NVDA', 8, { withAnnounceDates: true });
+    const q1 = rows.find((r) => r.period === '2026-03-31');
+    expect(q1?.announceDate).toBe('2026-04-29');
+  });
+
   it('fills announceDate from SEC 8-K item 2.02 when the vendor calendar resolves nothing', async () => {
     // The production condition: the entitlement serves no HISTORICAL calendar
     // entries, so the vendor join yields null for every row and avgPriorMove
