@@ -38,6 +38,10 @@ import type { EarningsBoardResponse, EarningsSetup } from './shared/types';
 
 const FALLBACK_SCAN_BUDGET_MS = 22_000;
 
+/** Widest user-selectable window — used to describe what an empty
+ *  near-term window is hiding (the earnings-lull case). */
+const WIDEST_WINDOW = Math.max(...(ALLOWED_WINDOWS as readonly number[]));
+
 // Per-window fallback cache (keeps the v0.7.18 fix pattern intact).
 const fallbackCache = new Map<number, { data: EarningsBoardResponse; at: number }>();
 const FALLBACK_CACHE_TTL_MS = 5 * 60 * 1000;
@@ -61,6 +65,24 @@ export const handler: Handler = async (event) => {
         log.info('snapshot_hit', { ageMs, modelVersion: snap.modelVersion });
         const allSetups = snap.results as EarningsSetup[];
         const filtered = filterSetupsToWindow(allSetups, windowDays);
+        // Empty-window context (audit 2026-07-24). An earnings LULL is a normal
+        // market state — late July 2026 has nothing inside 14 days and 104
+        // qualifying setups at 30. Without this the board renders a bare "no
+        // setups" and reads as broken. Report what the wider window holds so
+        // the UI can say "next reports start Aug 10" and offer the jump.
+        const lookahead =
+          filtered.length === 0
+            ? (() => {
+                const wider = filterSetupsToWindow(allSetups, WIDEST_WINDOW);
+                if (wider.length === 0) return {};
+                const next = wider.reduce((a, b) => (a.reportDate <= b.reportDate ? a : b));
+                return {
+                  nextReportDate: next.reportDate,
+                  setupsInWidestWindow: wider.length,
+                  widestWindowDays: WIDEST_WINDOW,
+                };
+              })()
+            : {};
         const response: EarningsBoardResponse & {
           source: string;
           ageMs: number;
@@ -74,6 +96,7 @@ export const handler: Handler = async (event) => {
           source: 'snapshot',
           ageMs,
           modelVersion: snap.modelVersion,
+          ...lookahead,
         };
         return json(200, response);
       }
