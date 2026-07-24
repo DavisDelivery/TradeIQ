@@ -1014,8 +1014,18 @@ async function fetchAnnouncementCalendar(
 }
 
 /** True when `calDate` is a plausible announcement for `period`. */
-function isPlausibleAnnouncement(period: string, calDate: string): boolean {
+function isPlausibleAnnouncement(period: string, calDate: string, maxDate?: string): boolean {
   if (calDate <= period) return false;
+  // An announcement cannot be in the FUTURE for a quarter we already hold
+  // actuals for. Without this guard the vendor calendar — which on this
+  // entitlement often carries ONLY the upcoming report — attached that
+  // upcoming date to a past quarter whenever it landed inside the lag
+  // window. Measured on MSFT (2026-07-24): period 2026-03-31 was assigned
+  // announceDate 2026-07-29, a report five days in the FUTURE, because the
+  // lag was exactly 120 days — precisely the tolerance. It then blocked the
+  // SEC fallback (the row wasn't null) and left priceReactionPct null.
+  // Real answer per SEC 8-K item 2.02: 2026-04-29.
+  if (maxDate && calDate > maxDate) return false;
   const lagMs = Date.parse(`${calDate}T00:00:00Z`) - Date.parse(`${period}T00:00:00Z`);
   return lagMs <= MAX_ANNOUNCE_LAG_DAYS * 86400000;
 }
@@ -1033,6 +1043,7 @@ function isPlausibleAnnouncement(period: string, calDate: string): boolean {
 function assignAnnounceDates(
   rows: Array<{ period: string; yq: string | null; announceDate: string | null }>,
   calendar: Array<{ date: string; year?: number; quarter?: number }>,
+  maxDate?: string,
 ): void {
   const calSorted = [...calendar].sort((a, b) => a.date.localeCompare(b.date));
   const byYq = new Map<string, string>();
@@ -1047,10 +1058,10 @@ function assignAnnounceDates(
     let match: string | undefined;
     if (row.yq !== null) {
       const d = byYq.get(row.yq);
-      if (d !== undefined && isPlausibleAnnouncement(row.period, d)) match = d;
+      if (d !== undefined && isPlausibleAnnouncement(row.period, d, maxDate)) match = d;
     }
     if (match === undefined) {
-      match = calSorted.find((c) => isPlausibleAnnouncement(row.period, c.date))?.date;
+      match = calSorted.find((c) => isPlausibleAnnouncement(row.period, c.date, maxDate))?.date;
     }
     if (match !== undefined) {
       const list = claims.get(match) ?? [];
@@ -1153,29 +1164,31 @@ export async function getEarningsHistory(
     // Join announcement dates when the caller needs them. asOfDate forces
     // the join: PIT visibility is meaningless without announcement dates.
     if ((opts.withAnnounceDates || opts.asOfDate) && internal.length > 0) {
+      // A report already carrying actuals was announced in the PAST; for a
+      // PIT read the horizon is asOfDate. Passing it stops the vendor's
+      // upcoming-report entry being back-attached to a closed quarter.
+      const announceHorizon = opts.asOfDate ?? new Date().toISOString().slice(0, 10);
       const calendar = await fetchAnnouncementCalendar(ticker, internal.map((r) => r.period)).catch(() => []);
-      assignAnnounceDates(internal, calendar);
+      assignAnnounceDates(internal, calendar, announceHorizon);
 
-      // SEC 8-K Item 2.02 fallback. The vendor calendar does not serve
+      // SEC 8-K Item 2.02 — AUTHORITATIVE. The vendor calendar serves no
       // HISTORICAL entries on this entitlement, so the join above resolved
-      // nothing for 379 of 380 names — which silently disabled both
-      // volatility branches of the earnings model (see
-      // shared/earnings-announce-dates.ts for the measurement). Item 2.02 is
-      // the earnings release itself, so its filing date IS the announcement
-      // date — a real event, not a proxy. Only rows the vendor left
-      // unresolved are touched; the vendor stays authoritative when present.
-      const unresolved = internal.filter((r) => r.announceDate === null);
-      if (unresolved.length > 0) {
-        const announcements = await getAnnouncementDates(ticker).catch(() => [] as string[]);
-        if (announcements.length > 0) {
-          for (const row of unresolved) {
-            row.announceDate = pickAnnouncementForPeriod(
-              row.period,
-              announcements,
-              MAX_ANNOUNCE_LAG_DAYS,
-            );
-          }
-        }
+      // nothing for 379 of 380 names, which silently disabled both volatility
+      // branches of the earnings model (see shared/earnings-announce-dates.ts
+      // for the measurement). Item 2.02 is the earnings release itself, so
+      // its filing date IS the announcement date — a real event, not a proxy.
+      //
+      // SEC OVERRIDES the vendor rather than merely filling gaps. An earlier
+      // revision only filled nulls "so the vendor stays authoritative"; live
+      // data showed why that was wrong — for MSFT the vendor had back-attached
+      // its UPCOMING 2026-07-29 report to the quarter ending 2026-03-31, so
+      // the row wasn't null, the fallback skipped it, and the reaction stayed
+      // uncomputable. SEC says 2026-04-29 and SEC is the filing of record.
+      // The vendor still covers anything SEC can't answer.
+      const announcements = await getAnnouncementDates(ticker).catch(() => [] as string[]);
+      for (const row of internal) {
+        const sec = pickAnnouncementForPeriod(row.period, announcements, MAX_ANNOUNCE_LAG_DAYS);
+        if (sec !== null) row.announceDate = sec;
       }
     }
 

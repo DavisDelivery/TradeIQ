@@ -119,3 +119,12 @@ describe('pickAnnouncementForPeriod', () => {
     expect(pickAnnouncementForPeriod('2026-03-31', [], 120)).toBeNull();
   });
 });
+
+// Ordering guarantee relied on by the SEC-authoritative join: when both the
+// real announcement and a later date qualify, the real (earliest) one wins.
+describe('earliest-qualifying selection', () => {
+  it("prefers the true announcement over a later date that also fits the lag", () => {
+    expect(pickAnnouncementForPeriod('2026-03-31', ['2026-04-29', '2026-07-29'], 120))
+      .toBe('2026-04-29');
+  });
+});
