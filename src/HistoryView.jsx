@@ -20,6 +20,10 @@ const BOARDS = [
   { id: 'williams', label: 'Williams' },
   { id: 'lynch', label: 'Lynch' },
   { id: 'earnings', label: 'Earnings' },
+  { id: 'fable', label: 'FABLE' },
+  { id: 'crosses', label: 'Crosses' },
+  { id: 'trident', label: 'TRIDENT' },
+  { id: 'sentiment', label: 'Sentiment' },
 ];
 
 const UNIVERSES_PER_BOARD = {
@@ -34,6 +38,10 @@ const UNIVERSES_PER_BOARD = {
   williams: ['sp500', 'ndx', 'dow', 'russell2k'],
   lynch: ['sp500', 'ndx', 'dow', 'russell2k'],
   earnings: ['all'],
+  fable: ['sp500'],
+  crosses: ['sp500'],
+  trident: ['sp500', 'russell2k'],
+  sentiment: ['sp500'],
 };
 
 function formatDate(iso) {
