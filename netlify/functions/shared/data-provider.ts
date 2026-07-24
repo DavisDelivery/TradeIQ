@@ -833,7 +833,17 @@ export async function getUpcomingEarnings(
     const from = asOf;
     const to = new Date(asOfMs + daysAhead * 86400000).toISOString().slice(0, 10);
     const url = `${FINNHUB}/calendar/earnings?from=${from}&to=${to}&symbol=${ticker}&token=${finnhubKey()}`;
-    const res = await fetch(url);
+    // Pace through the shared Finnhub bucket. This used to be a bare fetch(),
+    // so a fan-out caller (the scan's near-term probe maps over the whole core
+    // watchlist at once) issued 33 unthrottled concurrent calls and 429-stormed
+    // the key — which then took the scan's calendar call down with it. Retries
+    // are deliberately short: stock-detail calls this behind a timeout guard.
+    await getFinnhubBucket().acquire();
+    const { res } = await fetchWithRateLimit(url, undefined, {
+      maxRetries: 2,
+      initialBackoffMs: 1_000,
+      maxBackoffMs: 4_000,
+    });
     if (!res.ok) return null;
     const data = parseOrFallback(
       FinnhubEarningsCalendarResponseSchema,
