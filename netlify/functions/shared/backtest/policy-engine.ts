@@ -70,6 +70,43 @@ export interface PolicyConfig {
    * this to a few days.
    */
   minCalendarDays?: number;
+
+  // -------------------------------------------------------------------------
+  // Selection mode (2026-07-25). The percentile band answers "how good must a
+  // name be?"; it does NOT answer "what if I just buy what the board shows
+  // me?" — which is how the boards are actually read. topN takes the highest-
+  // ranked N at each checkpoint regardless of where the percentile lands, so a
+  // board's DISPLAYED list is what gets tested.
+  // -------------------------------------------------------------------------
+  /** 'percentile' (default, legacy) or 'topN' — buy the board's top N. */
+  selectionMode?: 'percentile' | 'topN';
+  /** Names taken per checkpoint when selectionMode==='topN'. */
+  topN?: number;
+  /**
+   * topN exit rule: drop a holding once it falls out of the top `exitRankN`
+   * (default topN × 2 — a hysteresis band so a name at the boundary doesn't
+   * churn in and out on noise).
+   */
+  exitRankN?: number;
+
+  // -------------------------------------------------------------------------
+  // Run-up exits (2026-07-25). Neither existed: the engine could only stop out
+  // at a LOSS (stopPct), age out (maxHoldDays), or rank out. A winner that
+  // spiked and round-tripped gave the whole move back. Both rules below are
+  // evaluated daily on the close, like the fixed stop.
+  // -------------------------------------------------------------------------
+  /**
+   * Trailing stop as a fraction below the highest close SINCE ENTRY
+   * (0.10 = exit after giving back 10% from the peak). Undefined = off.
+   * Ratchets only upward — it never loosens.
+   */
+  trailingStopPct?: number;
+  /**
+   * Hard take-profit: exit once the close is this fraction above the entry
+   * fill (0.25 = +25%). Undefined = off. Applied before the trailing stop so
+   * a gap through both books the target, not the give-back.
+   */
+  takeProfitPct?: number;
 }
 
 export const DEFAULT_POLICY_CONFIG: PolicyConfig = {
@@ -109,7 +146,7 @@ export interface PolicyTrade {
   entryPx: number; // fill incl. slippage
   exitDate: string | null;
   exitPx: number | null; // fill incl. slippage
-  exitReason: 'stop' | 'max-hold' | 'band-exit' | 'gate-fail' | 'end' | null;
+  exitReason: 'stop' | 'max-hold' | 'band-exit' | 'gate-fail' | 'end' | 'trail' | 'take-profit' | 'rank-exit' | null;
   returnPct: number | null;
   holdTradingDays: number | null;
 }
@@ -214,6 +251,8 @@ interface OpenPosition {
   entryPx: number; // fill incl. slippage
   shares: number;
   stopPx: number;
+  /** Highest close seen SINCE ENTRY — the trailing stop ratchets off this. */
+  peakClose: number;
   entryTradingDayIdx: number; // index into the global calendar
   /** Most recent close seen — valuation + forced-exit price for series that end (delistings/mergers). */
   lastClose: number;
@@ -320,6 +359,20 @@ export function runPolicyBacktest(inputs: PolicyInputs): PolicyResult {
         sellAt(pos, date, close, 'stop');
         continue;
       }
+      // Run-up exits. Take-profit is checked FIRST so a day that clears the
+      // target and also breaches the trail books the target rather than the
+      // give-back. The peak ratchets up only — it never loosens.
+      if (close > pos.peakClose) pos.peakClose = close;
+      if (config.takeProfitPct !== undefined &&
+          close >= pos.entryPx * (1 + config.takeProfitPct)) {
+        sellAt(pos, date, close, 'take-profit');
+        continue;
+      }
+      if (config.trailingStopPct !== undefined &&
+          close <= pos.peakClose * (1 - config.trailingStopPct)) {
+        sellAt(pos, date, close, 'trail');
+        continue;
+      }
       if (di - pos.entryTradingDayIdx >= config.maxHoldDays) {
         sellAt(pos, date, close, 'max-hold');
       }
@@ -345,6 +398,12 @@ export function runPolicyBacktest(inputs: PolicyInputs): PolicyResult {
 
       const pctls = pctlAmong(scored.map((s) => s.composite));
       const pctlByTicker = new Map(scored.map((s, i) => [s.ticker, pctls[i]] as const));
+      // Dense rank by composite, 1 = best — the board's DISPLAYED order, which
+      // is what topN selection and the rank-exit are defined against.
+      const rankByTicker = new Map<string, number>();
+      [...scored]
+        .sort((a, b) => b.composite - a.composite)
+        .forEach((s, i) => rankByTicker.set(s.ticker, i + 1));
 
       // IC bookkeeping: composite vs forward 63d/126d returns (by bar index).
       const fwd = (s: { ctx: TickerCtx; barIdx: number }, n: number): number | null => {
@@ -389,6 +448,14 @@ export function runPolicyBacktest(inputs: PolicyInputs): PolicyResult {
         if (p === undefined) {
           // no longer a gate-passer
           sellAt(pos, date, close, 'gate-fail');
+        } else if (config.selectionMode === 'topN') {
+          // Rank-based exit with hysteresis: hold until the name falls out of
+          // the top exitRankN (default 2×topN), so a holding sitting near the
+          // boundary doesn't churn in and out on noise.
+          const topN = config.topN ?? 10;
+          const exitRank = config.exitRankN ?? topN * 2;
+          const r = rankByTicker.get(pos.ticker);
+          if (r === undefined || r > exitRank) sellAt(pos, date, close, 'rank-exit');
         } else if (p < config.exitPctl) {
           sellAt(pos, date, close, 'band-exit');
         }
@@ -404,8 +471,14 @@ export function runPolicyBacktest(inputs: PolicyInputs): PolicyResult {
         spyClose > spySma;
       if (regimeOk) {
         const nav = markToMarket(date);
-        const candidates = scored
-          .filter((s) => (pctlByTicker.get(s.ticker) ?? 0) >= config.enterPctl)
+        const topNMode = config.selectionMode === 'topN';
+        const topNLimit = config.topN ?? 10;
+        const eligible = topNMode
+          // "Buy what the board shows": the highest-ranked N at this
+          // checkpoint, regardless of where the percentile falls.
+          ? scored.filter((s) => (rankByTicker.get(s.ticker) ?? Infinity) <= topNLimit)
+          : scored.filter((s) => (pctlByTicker.get(s.ticker) ?? 0) >= config.enterPctl);
+        const candidates = eligible
           .filter((s) => !open.has(s.ticker))
           .map((s) => {
             // Size proxy: trailing 63d median dollar volume (PIT-safe cap proxy).
@@ -449,6 +522,7 @@ export function runPolicyBacktest(inputs: PolicyInputs): PolicyResult {
               entryPx: fill,
               shares,
               stopPx: fill * (1 - config.stopPct),
+              peakClose: close,
               entryTradingDayIdx: di,
               lastClose: close,
               tradeRef: trade,
