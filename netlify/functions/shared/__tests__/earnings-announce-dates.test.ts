@@ -128,3 +128,89 @@ describe('earliest-qualifying selection', () => {
       .toBe('2026-04-29');
   });
 });
+
+// ---------------------------------------------------------------------------
+// The 32%-coverage bug: a transient SEC failure was being PERSISTED as "this
+// ticker has no announcements" for 24h. Measured 2026-07-25 — the first full
+// scan resolved 122/376 names while a direct 20-ticker sample showed 19/20
+// have 8-K/2.02 available. The data was there; cached failures hid it.
+// ---------------------------------------------------------------------------
+// loadCikTickerMap also persists (the CIK map), so these assertions must
+// isolate writes to the ANNOUNCEMENT key rather than counting all writes.
+const announceWrites = () =>
+  h.cacheSet.mock.calls.filter((c: any[]) => c[0]?.endpoint === '8k-item-202').length;
+
+describe('never caches a failure', () => {
+  it('does NOT persist an empty result when the SEC call threw', async () => {
+    h.edgarFetch.mockRejectedValue(new Error('EDGAR 403'));
+    expect(await getAnnouncementDates('MSFT')).toEqual([]);
+    expect(announceWrites()).toBe(0); // retried next run, not written off
+  });
+
+  it('DOES persist a genuine empty (SEC answered, no earnings 8-K)', async () => {
+    h.edgarFetch.mockResolvedValue({
+      json: async () => ({ filings: { recent: { form: ['10-Q'], filingDate: ['2026-04-30'], items: [''] } } }),
+    });
+    expect(await getAnnouncementDates('MSFT')).toEqual([]);
+    expect(announceWrites()).toBe(1);
+  });
+
+  it('persists an unmappable ticker as a stable empty (no CIK is an answer)', async () => {
+    await getAnnouncementDates('NOTREAL');
+    expect(announceWrites()).toBe(1);
+    expect(h.edgarFetch).not.toHaveBeenCalled();
+  });
+
+  it('persists a successful lookup', async () => {
+    await getAnnouncementDates('MSFT');
+    expect(announceWrites()).toBe(1);
+  });
+});
+
+// Heavy filers overflow filings.recent into filings.files[] shards — JPM
+// carries 25,457 recent entries plus 68 shards.
+describe('shard paging for heavy filers', () => {
+  it('pages into shards when recent yields too few announcements', async () => {
+    h.edgarFetch.mockImplementation(async (url: string) => {
+      if (url.includes('-submissions-001.json')) {
+        return { json: async () => ({
+          form: ['8-K', '8-K', '8-K', '8-K'],
+          filingDate: ['2025-10-14', '2025-07-15', '2025-04-14', '2025-01-15'],
+          items: ['2.02,9.01', '2.02,9.01', '2.02,9.01', '2.02,9.01'],
+        }) } as any;
+      }
+      return { json: async () => ({ filings: {
+        recent: { form: ['8-K'], filingDate: ['2026-04-14'], items: ['2.02,9.01'] },
+        files: [{ name: 'CIK0000789019-submissions-001.json' }],
+      } }) } as any;
+    });
+    const dates = await getAnnouncementDates('MSFT');
+    expect(dates.length).toBeGreaterThanOrEqual(5);
+    expect(dates[0]).toBe('2026-04-14'); // newest first across recent + shard
+    expect(dates).toContain('2025-01-15');
+  });
+
+  it('does NOT page shards when recent already has enough', async () => {
+    h.edgarFetch.mockImplementation(async () => ({ json: async () => ({ filings: {
+      recent: {
+        form: Array(6).fill('8-K'),
+        filingDate: ['2026-04-29','2026-01-28','2025-10-29','2025-07-30','2025-04-30','2025-01-29'],
+        items: Array(6).fill('2.02,9.01'),
+      },
+      files: [{ name: 'CIK0000789019-submissions-001.json' }],
+    } }) }) as any);
+    await getAnnouncementDates('MSFT');
+    expect(h.edgarFetch).toHaveBeenCalledTimes(1); // one call — no shard fetch
+  });
+
+  it('a failed shard caps history but keeps the primary answer', async () => {
+    h.edgarFetch.mockImplementation(async (url: string) => {
+      if (url.includes('-submissions-')) throw new Error('shard 500');
+      return { json: async () => ({ filings: {
+        recent: { form: ['8-K'], filingDate: ['2026-04-29'], items: ['2.02,9.01'] },
+        files: [{ name: 'CIK0000789019-submissions-001.json' }],
+      } }) } as any;
+    });
+    expect(await getAnnouncementDates('MSFT')).toEqual(['2026-04-29']);
+  });
+});

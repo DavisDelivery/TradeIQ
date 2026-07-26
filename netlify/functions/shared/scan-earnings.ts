@@ -240,6 +240,12 @@ export async function runEarningsScanBatch(
     );
   }
 
+  // Reaction-history coverage. avgPriorMove gates BOTH volatility strategies,
+  // so a low resolution rate silently halves the model — and the only reason
+  // the 379/380-null outage was ever found was a hand audit of a stored
+  // snapshot. Report it every run so it is visible without one.
+  reportAnnounceCoverage(setups, warnings);
+
   return { setups, tickersConsumed: slice.length, tickersErrored, warnings };
 }
 
@@ -889,3 +895,22 @@ function buildRationale(input: {
 // annVol / chunksAnnVol / avg now live in shared/earnings-scoring.ts
 // (imported above) so the live scan, the PIT backtest scorer, and the
 // FIX-2 event study compute RV rank / expected move identically.
+
+/**
+ * Push a coverage line for avgPriorMove (the earnings-reaction history that
+ * gates the long-straddle and iron-condor branches). Low coverage is not
+ * cosmetic: at 0% those two strategies are unreachable and ~70% of the board
+ * collapses to a "no clear edge" floor.
+ */
+function reportAnnounceCoverage(setups: EarningsSetup[], warnings: string[]): void {
+  const pre = setups.filter((s) => !s.postPrint);
+  if (pre.length === 0) return;
+  const withHistory = pre.filter((s) => s.avgPriorMove !== null && s.avgPriorMove !== undefined).length;
+  const pct = Math.round((withHistory / pre.length) * 100);
+  warnings.push(`reaction-history coverage: ${withHistory}/${pre.length} pre-print setups (${pct}%)`);
+  if (pct < 80) {
+    warnings.push(
+      `LOW reaction-history coverage (${pct}%) — volatility strategies are partly unreachable; check SEC 8-K/2.02 resolution`,
+    );
+  }
+}
