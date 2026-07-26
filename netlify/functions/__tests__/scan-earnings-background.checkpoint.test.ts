@@ -249,6 +249,34 @@ describe('earnings bg-worker — checkpoint resume chain', () => {
     expect(runIds[0].split('/')[1]).toMatch(/^earnings-all-/);
   });
 
+  it('batch warnings survive re-invocation and reach the published snapshot', async () => {
+    // Regression (measured 2026-07-26): batch warnings lived in a LOCAL array
+    // during the walk, but the terminal step runs in its OWN invocation with a
+    // fresh array — so every per-batch diagnostic in a chained scan was
+    // discarded. A 469s earnings run published with ZERO warnings while its
+    // reaction-history coverage sat at 18%. The cursor now carries them.
+    setCalendar(80);
+    mocks.createWatchdog.mockReturnValue(fakeWatchdog(10));
+    mocks.batchScan.mockImplementation(async (opts: any) => ({
+      setups: opts.entries
+        .slice(opts.startIdx, opts.startIdx + opts.batchSize)
+        .map((e: any) => makeSetup(e.ticker)),
+      tickersConsumed: Math.min(opts.batchSize, opts.entries.length - opts.startIdx),
+      tickersErrored: 0,
+      warnings: [`reaction-history coverage: 5/40 pre-print setups (12%)`],
+    }));
+
+    await handler(postEvent({}), { waitUntil: vi.fn() } as any); // walk → finalizing
+    const runId = Object.keys(store)
+      .filter((k) => k.startsWith('scanRuns/') && !k.includes('/partial/'))[0]
+      .split('/')[1];
+    await handler(postEvent({ runId, resume: true }), { waitUntil: vi.fn() } as any); // terminal
+
+    expect(mocks.writeSnapshot).toHaveBeenCalledTimes(1);
+    const snap = mocks.writeSnapshot.mock.calls[0][2];
+    expect(snap.warnings.some((w: string) => /reaction-history coverage/.test(w))).toBe(true);
+  });
+
   it('full chain: walk → finalizing → terminal publishes ONE earnings/all snapshot; resume does NOT re-resolve the calendar', async () => {
     setCalendar(80); // 2 clean batches of 40
     mocks.createWatchdog.mockReturnValue(fakeWatchdog(10));
