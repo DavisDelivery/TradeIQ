@@ -60,6 +60,14 @@ const EMPTY_TTL_MS = 24 * 60 * 60_000;
 
 /** The 8-K item that IS an earnings release. */
 const EARNINGS_ITEM = '2.02';
+/**
+ * Announcements needed before we stop looking. The scorer walks up to 6
+ * quarters of history and bars span 400 days, so ~5 covers everything it can
+ * actually use; below this we page into shards.
+ */
+const MIN_ANNOUNCEMENTS = 5;
+/** Hard cap on shard pages per ticker — bounds cost for heavy filers. */
+const MAX_SHARDS = 3;
 
 let tickerToCik: Map<string, string> | null = null;
 
@@ -92,38 +100,88 @@ interface SubmissionsRecent {
  * leave announceDate null rather than substituting anything.
  */
 export async function getAnnouncementDates(ticker: string): Promise<string[]> {
-  const key = { provider: 'sec', endpoint: '8k-item-202', ticker: ticker.toUpperCase(), extra: 'v1' };
+  const key = { provider: 'sec', endpoint: '8k-item-202', ticker: ticker.toUpperCase(), extra: 'v2' };
   const hit = await liveCacheGet<string[]>(key, (v) => (v.length > 0 ? ANNOUNCE_TTL_MS : EMPTY_TTL_MS));
   if (Array.isArray(hit)) return hit;
 
   let dates: string[] = [];
+  // Did SEC actually ANSWER? A transient failure must never be persisted.
+  // Measured 2026-07-25: the first full scan resolved only 122/376 names while
+  // a direct sample showed 19/20 have 8-K/2.02 available — i.e. the data was
+  // there and transient failures during a 376-call cold-cache burst were being
+  // cached as "this ticker has no announcements" for 24h. That is exactly the
+  // error-shaped empty the codebase forbids caching elsewhere (4t-W1c).
+  let answered = false;
   try {
     const cik = await resolveCik(ticker);
     if (cik) {
-      const res = await edgarFetch(`https://data.sec.gov/submissions/CIK${cik}.json`);
-      const data = (await res.json()) as { filings?: { recent?: SubmissionsRecent } };
-      const recent = data?.filings?.recent;
-      const forms = recent?.form ?? [];
-      const filingDates = recent?.filingDate ?? [];
-      const items = recent?.items ?? [];
-      const out: string[] = [];
-      for (let i = 0; i < forms.length; i++) {
-        // 8-K and 8-K/A both carry the release; the amendment restates it.
-        if (!String(forms[i] ?? '').startsWith('8-K')) continue;
-        if (!String(items[i] ?? '').includes(EARNINGS_ITEM)) continue;
-        const d = String(filingDates[i] ?? '').slice(0, 10);
-        if (/^\d{4}-\d{2}-\d{2}$/.test(d)) out.push(d);
-      }
-      // Newest first, de-duplicated (an 8-K/A can repeat a date).
-      dates = [...new Set(out)].sort((a, b) => b.localeCompare(a));
+      dates = await fetchAnnouncementsForCik(cik);
+      answered = true;
+    } else {
+      // No CIK is a genuine, stable answer (not an error) — cache the empty so
+      // unmappable symbols don't re-probe every run.
+      answered = true;
     }
   } catch {
-    // SEC unreachable / WAF / shape change — return empty, never guess.
+    // SEC unreachable / WAF / shape change. Return empty for THIS call so the
+    // caller leaves rows unresolved, but do NOT persist — the next run retries.
+    answered = false;
     dates = [];
   }
 
-  await liveCacheSet(key, dates).catch(() => {});
+  if (answered) await liveCacheSet(key, dates).catch(() => {});
   return dates;
+}
+
+/** Extract 8-K item-2.02 filing dates from one submissions payload. */
+function extract202(recent: SubmissionsRecent | undefined): string[] {
+  const forms = recent?.form ?? [];
+  const filingDates = recent?.filingDate ?? [];
+  const items = recent?.items ?? [];
+  const out: string[] = [];
+  for (let i = 0; i < forms.length; i++) {
+    // 8-K and 8-K/A both carry the release; the amendment restates it.
+    if (!String(forms[i] ?? '').startsWith('8-K')) continue;
+    if (!String(items[i] ?? '').includes(EARNINGS_ITEM)) continue;
+    const d = String(filingDates[i] ?? '').slice(0, 10);
+    if (/^\d{4}-\d{2}-\d{2}$/.test(d)) out.push(d);
+  }
+  return out;
+}
+
+/**
+ * All known announcement dates for a CIK, newest first.
+ *
+ * Heavy filers overflow `filings.recent` into `filings.files[]` shards — JPM
+ * carries 25,457 recent entries plus 68 shards. When `recent` yields too few
+ * announcements to cover the quarters the scorer needs, walk shards newest-
+ * first until we have enough. Bounded hard: shards are only fetched when the
+ * ticker genuinely lacks coverage, and never more than MAX_SHARDS, so the
+ * common case stays one SEC call per ticker.
+ */
+async function fetchAnnouncementsForCik(cik: string): Promise<string[]> {
+  const res = await edgarFetch(`https://data.sec.gov/submissions/CIK${cik}.json`);
+  const data = (await res.json()) as {
+    filings?: { recent?: SubmissionsRecent; files?: Array<{ name?: string }> };
+  };
+  const out = extract202(data?.filings?.recent);
+
+  if (out.length < MIN_ANNOUNCEMENTS) {
+    const shards = (data?.filings?.files ?? []).slice(0, MAX_SHARDS);
+    for (const sh of shards) {
+      const name = String(sh?.name ?? '');
+      if (!name) continue;
+      try {
+        const sres = await edgarFetch(`https://data.sec.gov/submissions/${name}`);
+        // Shard payloads are the bare `recent`-shaped object.
+        out.push(...extract202((await sres.json()) as SubmissionsRecent));
+      } catch {
+        break; // a failed shard just caps history; the primary answer stands
+      }
+      if (out.length >= MIN_ANNOUNCEMENTS) break;
+    }
+  }
+  return [...new Set(out)].sort((a, b) => b.localeCompare(a));
 }
 
 /**
