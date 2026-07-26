@@ -256,6 +256,13 @@ export const handler: Handler = async (event, context) => {
         logger: log,
       });
       warnings.push(...batchResult.warnings);
+      // Persist onto the cursor — the terminal step runs in a SEPARATE
+      // invocation with a fresh local array, so anything left only in memory
+      // here never reaches the snapshot.
+      activeCursor = {
+        ...activeCursor,
+        warnings: [...(activeCursor.warnings ?? []), ...batchResult.warnings].slice(-40),
+      };
 
       if (batchResult.setups.length > 0) {
         await appendPartialBatch<EarningsSetup>(
@@ -402,7 +409,7 @@ interface TerminalStepArgs {
 
 async function runTerminalStep(args: TerminalStepArgs) {
   const { db, log, runId, cursor } = args;
-  const warnings = [...args.warnings];
+  const warnings = [...(args.cursor.warnings ?? []), ...args.warnings];
   const totalTickers = cursor.totalTickers;
 
   log.info('scan_terminal_step_start', {

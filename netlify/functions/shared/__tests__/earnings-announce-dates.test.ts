@@ -185,7 +185,7 @@ describe('shard paging for heavy filers', () => {
       } }) } as any;
     });
     const dates = await getAnnouncementDates('MSFT');
-    expect(dates.length).toBeGreaterThanOrEqual(5);
+    expect(dates.length).toBeGreaterThanOrEqual(4);
     expect(dates[0]).toBe('2026-04-14'); // newest first across recent + shard
     expect(dates).toContain('2025-01-15');
   });

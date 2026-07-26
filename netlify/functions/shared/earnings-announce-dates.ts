@@ -61,11 +61,15 @@ const EMPTY_TTL_MS = 24 * 60 * 60_000;
 /** The 8-K item that IS an earnings release. */
 const EARNINGS_ITEM = '2.02';
 /**
- * Announcements needed before we stop looking. The scorer walks up to 6
- * quarters of history and bars span 400 days, so ~5 covers everything it can
- * actually use; below this we page into shards.
+ * Announcements needed before we stop looking.
+ *
+ * Tied to the 400-day bar window the scorer runs on: a prior move can only be
+ * measured where BARS exist, so at most ~4 quarters are ever usable. Asking
+ * for more just forces shard fetches for data that can never be scored —
+ * measured 2026-07-26, a threshold of 5 multiplied EDGAR calls during the very
+ * cold-cache burst that was already failing, and coverage fell to 18%.
  */
-const MIN_ANNOUNCEMENTS = 5;
+const MIN_ANNOUNCEMENTS = 4;
 /** Hard cap on shard pages per ticker — bounds cost for heavy filers. */
 const MAX_SHARDS = 3;
 

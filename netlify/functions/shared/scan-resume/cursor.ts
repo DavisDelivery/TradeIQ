@@ -65,6 +65,17 @@ export interface ScanCursor {
   scoredCount: number;
   /** Most recent error (if any). Cleared on a successful batch. */
   lastError?: string;
+  /**
+   * Warnings accumulated across ALL invocations of a chained scan.
+   *
+   * Batch warnings used to live in a local array that the terminal step —
+   * which runs in its OWN invocation — never saw, so every per-batch
+   * diagnostic in a chained scan was silently discarded before reaching the
+   * snapshot (measured 2026-07-26: a 469s earnings run published with zero
+   * warnings despite low-coverage and rate-limit conditions). Bounded so a
+   * noisy run cannot bloat the cursor doc.
+   */
+  warnings?: string[];
   /** Set if a self-reinvoke fetch failed; orchestrator may need to recover. */
   lastReinvokeError?: string;
   /** Phase 4o W2 — ISO timestamp of the most recent self-reinvoke
