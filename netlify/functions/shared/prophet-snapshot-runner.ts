@@ -177,3 +177,64 @@ export async function runProphetSnapshot(
     };
   }
 }
+
+/**
+ * Assemble + publish a Prophet snapshot from an already-scored pick set.
+ *
+ * Extracted so the CHAINED worker (which scores the universe across several
+ * invocations) publishes through exactly the same publish-guard and retention
+ * path as the single-shot runner — the guard logic must not fork.
+ */
+export async function publishProphetSnapshot(args: {
+  storeKey: UniverseKey;
+  picks: import('./scan-prophet').ProphetPick[];
+  universeChecked: number;
+  scanDurationMs: number;
+  warnings: string[];
+  budgetExceeded: boolean;
+  logger: Logger;
+}): Promise<{ snapshotId: string; promotedToLatest: boolean; status: 'complete' | 'partial' }> {
+  const { storeKey, picks, universeChecked, scanDurationMs, logger: log } = args;
+  const warnings = [...args.warnings];
+  let status: 'complete' | 'partial' = args.budgetExceeded ? 'partial' : 'complete';
+  let degraded: boolean | undefined;
+  let degradedReason: string | undefined;
+
+  if (status === 'complete') {
+    const decision = assessSnapshotPublish({ resultCount: picks.length, universeChecked });
+    if (decision.action === 'skip') {
+      log.warn('publish_guard_skip', { reason: decision.reason });
+      status = 'partial';
+      warnings.push(`publish guard: ${decision.reason}`);
+    } else if (decision.action === 'publish-degraded') {
+      log.warn('publish_guard_degraded', { reason: decision.reason });
+      degraded = true;
+      degradedReason = decision.reason;
+    }
+  }
+
+  const snapshot: BoardSnapshot = {
+    modelVersion: MODEL_VERSION,
+    generatedAt: new Date().toISOString(),
+    scanDurationMs,
+    universeChecked,
+    universeSize: universeChecked,
+    results: picks,
+    freshnessBudgetMs: FRESHNESS_BUDGETS_MS.prophet,
+    warnings,
+    degraded,
+    degradedReason,
+    status,
+  };
+
+  const { snapshotId, promotedToLatest } = await writeSnapshot('prophet', storeKey, snapshot);
+  try {
+    const { deleted, kept } = await pruneOldSnapshots('prophet', storeKey, { mode: 'keep-daily-close' });
+    log.info('snapshot_retention_pruned', { universe: storeKey, deleted, kept });
+  } catch (pruneErr: unknown) {
+    log.warn('snapshot_retention_prune_failed', {
+      err: pruneErr instanceof Error ? pruneErr.message : String(pruneErr),
+    });
+  }
+  return { snapshotId, promotedToLatest, status };
+}
