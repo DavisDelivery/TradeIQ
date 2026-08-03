@@ -19,6 +19,7 @@ import { snapshotBeforeDate } from './snapshot-store';
 import { fetchWithRateLimit, getFinnhubBucket } from './rate-limiter';
 import { getAnnouncementDates, pickAnnouncementForPeriod } from './earnings-announce-dates';
 import { liveCacheGet, liveCacheSet, type LiveCacheKey } from './provider-live-cache';
+import { finvizBarsEnabled, getFinvizDailyBars, getFinvizPreviousClose } from './finviz-bars';
 import {
   fetchRatiosWithStatus,
   fetchIncomeStatementsWithStatus,
@@ -79,6 +80,34 @@ export async function getDailyBars(
   from: string,
   to: string,
 ): Promise<Bar[]> {
+  // FVZ-4: Finviz first. Its /export/stock is UNRANGED — one fetch returns
+  // the full ~10y history and every window becomes a slice of one cached
+  // payload, so the same ticker stops being refetched once per distinct
+  // lookback (our scans use 120/320/400/460/560/680/2200-day windows over
+  // overlapping universes). Closes were verified identical to Polygon's
+  // across all 252 trading days of 2024.
+  //
+  // null means "failed OR not covered" — delisted names return no rows —
+  // so Polygon remains the fallback and keeps backtests whole. If Polygon
+  // is deconfigured the fallback throws below and the name drops out; that
+  // is survivorship bias, and `barsCoverageGaps()` is what lets a caller
+  // report it rather than hide it.
+  if (finvizBarsEnabled()) {
+    try {
+      const bars = await getFinvizDailyBars(ticker, from, to);
+      if (bars !== null) return bars;
+    } catch {
+      // Never let the new path break a call site the old one served.
+    }
+  }
+  return getPolygonDailyBars(ticker, from, to);
+}
+
+export async function getPolygonDailyBars(
+  ticker: string,
+  from: string,
+  to: string,
+): Promise<Bar[]> {
   const url = `${POLYGON}/v2/aggs/ticker/${encodeURIComponent(ticker)}/range/1/day/${from}/${to}?adjusted=true&sort=asc&limit=5000&apiKey=${polygonKey()}`;
   const res = await fetch(url);
   if (!res.ok) throw new Error(`Polygon bars ${ticker}: ${res.status}`);
@@ -131,6 +160,16 @@ export async function getIntradayBarsWithStatus(
 }
 
 export async function getPreviousClose(ticker: string): Promise<Bar | null> {
+  // Served free from the shared full-history cache when Finviz covers the
+  // name — the same payload every other window for this ticker slices.
+  if (finvizBarsEnabled()) {
+    try {
+      const bar = await getFinvizPreviousClose(ticker);
+      if (bar !== null) return bar;
+    } catch {
+      /* fall through to Polygon */
+    }
+  }
   const url = `${POLYGON}/v2/aggs/ticker/${encodeURIComponent(ticker)}/prev?adjusted=true&apiKey=${polygonKey()}`;
   const res = await fetch(url);
   if (!res.ok) return null;

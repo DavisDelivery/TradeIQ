@@ -23,6 +23,7 @@
 import { getAdminDb } from './firebase-admin';
 import { getGroupedDaily } from './vector-data';
 import { latestSnapshot, type BoardName, type UniverseKey } from './snapshot-store';
+import { SCREENS } from './finviz-screens';
 import type { Logger } from './logger';
 
 export const FORWARD_COLLECTION = 'forwardPicks';
@@ -42,6 +43,17 @@ export interface ForwardBoardConfig {
   filter?: (row: any) => boolean;
 }
 
+/**
+ * One cohort per published screen. `take` follows each strategy's own
+ * published cap where it has one (Tiny Titans is explicitly a 25-name list),
+ * otherwise the league's standard 20.
+ */
+export const SCREEN_FORWARD_BOARDS: ForwardBoardConfig[] = SCREENS.map((s) => ({
+  board: 'screens' as BoardName,
+  universe: s.id as unknown as UniverseKey,
+  take: Math.min(s.take ?? 20, 25),
+}));
+
 export const FORWARD_BOARDS: ForwardBoardConfig[] = [
   { board: 'target-board', universe: 'sp500', take: 20 },
   { board: 'prophet', universe: 'largecap', take: 20 },
@@ -54,6 +66,17 @@ export const FORWARD_BOARDS: ForwardBoardConfig[] = [
   { board: 'crosses', universe: 'sp500', take: 20, filter: (r) => r?.type === 'golden' },
   { board: 'trident', universe: 'sp500', take: 20 },
   { board: 'sentiment', universe: 'sp500', take: 20, filter: (r) => r?.label === 'bullish' },
+  // FVZ-6 — every published screen enters the league as its own cohort, with
+  // the screen id standing in for the universe key (scan-screens-background
+  // writes one snapshot per screen).
+  //
+  // This is the point of having shipped other people's strategies at all.
+  // Two of these are graded 'anecdotal' and one ('short-squeeze') ships with
+  // published evidence AGAINST it — so the league is the instrument that
+  // settles, on our own data and against the same SPY benchmark as our own
+  // boards, whether any of them deserves a dollar. Including the ones I
+  // expect to fail: dropping those would rig the comparison.
+  ...SCREEN_FORWARD_BOARDS,
 ];
 
 export interface HorizonReturn {

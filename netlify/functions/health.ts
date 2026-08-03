@@ -37,6 +37,7 @@ const BOARD_UNIVERSES: Record<BoardName, UniverseKey[]> = {
   crosses: ['sp500'],
   trident: ['sp500', 'russell2k'],
   sentiment: ['sp500'],
+  screens: ['sp500', 'russell2k'],
 };
 
 export const handler: Handler = async () => {

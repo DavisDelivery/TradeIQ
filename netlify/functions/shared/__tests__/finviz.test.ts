@@ -57,6 +57,8 @@ const HEADERS = [
   'Insider Transactions', 'Short Ratio', 'Return on Assets',
   'Return on Invested Capital', 'Current Ratio', 'Performance (Quarter)',
   'Beta', 'Average True Range',
+  // FVZ-5 extended hours.
+  'After-Hours Close', 'After-Hours Change',
 ];
 
 const q = (v: string) => `"${v.replace(/"/g, '""')}"`;
@@ -210,7 +212,7 @@ describe('getFinvizUniverseSnapshot cache discipline', () => {
       provider: 'finviz',
       endpoint: 'screener-universe',
       ticker: '_sp500',
-      extra: 'v2', // epoch bumped with the column widening
+      extra: 'v3', // epoch bumped again with the after-hours columns
     });
     expect(manifests[0][1].shards).toBe(1);
     expect(manifests[0][1].f).toContain('ticker');

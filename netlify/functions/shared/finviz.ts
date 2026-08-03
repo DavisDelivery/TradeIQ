@@ -100,6 +100,9 @@ export interface FinvizRow {
   perfQuarterPct: number | null;
   beta: number | null;
   atr: number | null;
+  // FVZ-5 — extended hours. Null outside the after-hours session.
+  afterHoursClose: number | null;
+  afterHoursChangePct: number | null;
 }
 
 interface ColumnSpec {
@@ -169,6 +172,14 @@ const COLUMNS: ColumnSpec[] = [
   { id: 44, header: 'Performance (Quarter)', field: 'perfQuarterPct', kind: 'num' },
   { id: 48, header: 'Beta', field: 'beta', kind: 'num' },
   { id: 49, header: 'Average True Range', field: 'atr', kind: 'num' },
+  // FVZ-5 — extended-hours pricing. Confirmed live against the real token
+  // (a c=0..99 header dump): 71 = After-Hours Close, 72 = After-Hours
+  // Change. Nothing in the app had this before. It is what lets the PEAD
+  // screen see an earnings reaction the EVENING it happens rather than
+  // inferring it from week-over-week performance a day or more late —
+  // which is the window Bernard & Thomas showed the drift starts from.
+  { id: 71, header: 'After-Hours Close', field: 'afterHoursClose', kind: 'num' },
+  { id: 72, header: 'After-Hours Change', field: 'afterHoursChangePct', kind: 'num' },
 ];
 
 const REQUEST_TIMEOUT_MS = 20_000;
@@ -488,7 +499,7 @@ const CACHE_FIELDS: (keyof FinvizRow)[] = [
  * cached VALUES must change the cache KEY, or containers keep serving
  * pre-change shapes for a full TTL.
  */
-const UNIVERSE_CACHE_EPOCH = 'v2';
+const UNIVERSE_CACHE_EPOCH = 'v3';
 
 /**
  * Rows per cache shard. Measured 2026-08-03: the russell2k columnar doc at

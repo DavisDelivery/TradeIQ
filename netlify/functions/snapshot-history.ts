@@ -32,6 +32,7 @@ const VALID_BOARDS: BoardName[] = [
   'crosses',
   'trident',
   'sentiment',
+  'screens',
 ];
 
 const VALID_UNIVERSES: UniverseKey[] = [

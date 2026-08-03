@@ -38,7 +38,8 @@ export type BoardName =
   | 'fable'
   | 'crosses'
   | 'trident'
-  | 'sentiment';
+  | 'sentiment'
+  | 'screens';
 
 export type UniverseKey =
   | 'sp500'
@@ -141,6 +142,10 @@ export const FRESHNESS_BUDGETS_MS: Record<BoardName, number> = {
   // last good headline-sentiment snapshot served off-hours/weekends without
   // flipping to a slow live fallback.
   sentiment: 12 * 60 * 60_000,
+  // FVZ-6 — screens snapshot nightly after the close so the forward-test
+  // league can track them. 26h matches the other daily boards so weekends
+  // serve Friday's snapshot un-flagged.
+  screens: 26 * 60 * 60_000,
 };
 
 // ====================================================================
@@ -569,6 +574,8 @@ const DAILY_CLOSE_SLOTS: Partial<
   crosses: { slot: { hourUtc: 21, minuteUtc: 10 }, universes: ['sp500'] },
   fable: { slot: { hourUtc: 23, minuteUtc: 30 }, universes: ['sp500'] },
   sentiment: { slot: { hourUtc: 12, minuteUtc: 20 }, universes: ['sp500'] },
+  // FVZ-6 — screens scan at 23:50 UTC, after every other board has landed.
+  screens: { slot: { hourUtc: 23, minuteUtc: 50 } },
 };
 
 /**

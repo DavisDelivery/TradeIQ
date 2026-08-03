@@ -144,16 +144,26 @@ export const SCREENS: ScreenDef[] = [
       'One of the most durable anomalies in finance — Bernard & Thomas found the top-vs-bottom surprise decile spread positive in 41 of 48 quarters. Direction is well established; magnitude estimates vary widely by study (roughly 5-10% per quarter for an extreme-decile long-short, before costs).',
     source: 'https://jkatz.caltech.edu/documents/28622/peads.pdf',
     filters: [],
+    // FVZ-5: the reaction leg accepts EITHER a settled multi-day move OR a
+    // live after-hours pop. Bernard & Thomas measure the drift from the
+    // announcement itself, and most S&P names report after the close — so
+    // requiring a week-over-week move meant this screen could only ever see
+    // the event a day or more late, after the first leg of the drift had
+    // already been given away.
     predicate: (r) =>
       num(r.epsGrowthQoQPct) && r.epsGrowthQoQPct > 20 &&
-      num(r.perfWeekPct) && r.perfWeekPct > 3 &&
+      ((num(r.perfWeekPct) && r.perfWeekPct > 3) ||
+        (num(r.afterHoursChangePct) && r.afterHoursChangePct > 2)) &&
       num(r.relVolume) && r.relVolume > 1.5 &&
       num(r.price) && r.price >= 10 &&
       liquid(r),
-    rank: (r) => r.epsGrowthQoQPct,
+    // An after-hours reaction outranks a stale one: it is the fresher
+    // evidence of the same surprise.
+    rank: (r) => (num(r.afterHoursChangePct) ? 1000 + r.afterHoursChangePct : (r.epsGrowthQoQPct ?? null)),
     take: 40,
     approximations: [
       'True SUE (surprise scaled by its own standard deviation) needs consensus history; EPS growth QoQ plus a post-report price/volume reaction is the available proxy.',
+      'After-hours change is only populated during the extended session, so intraday runs of this screen fall back to the week-over-week reaction.',
     ],
   },
   {
