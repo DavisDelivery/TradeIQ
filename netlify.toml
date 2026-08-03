@@ -110,9 +110,21 @@
 [functions."stock-detail"]
   timeout = 26
 
+# FVZ-1 — Finviz Elite universe snapshot fetches an external CSV export
+# (up to ~475KB for russell2k) on a cache miss; give it scan-board headroom.
+[functions."finviz-snapshot"]
+  timeout = 26
+
 # ==========================================================================
 # API redirects — rewrite /api/<endpoint> to /.netlify/functions/<endpoint>
 # ==========================================================================
+
+# FVZ-1 — Finviz Elite universe snapshot (explicit rule required: no /api/*
+# wildcard exists; without it the SPA catch-all serves HTML at 200).
+[[redirects]]
+  from = "/api/finviz-snapshot"
+  to = "/.netlify/functions/finviz-snapshot"
+  status = 200
 
 [[redirects]]
   from = "/api/target-board"
