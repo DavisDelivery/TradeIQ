@@ -179,6 +179,13 @@
   from = "/api/research"
   to = "/.netlify/functions/research"
   status = 200
+# CAMILLO RESEARCH — the judgment pass the screen cannot do: product,
+# trend, materiality, discovery + falsifier, from fetched evidence only.
+[[redirects]]
+  from = "/api/camillo-research"
+  to = "/.netlify/functions/camillo-research"
+  status = 200
+
 
 [[redirects]]
   from = "/api/ticker-info"
