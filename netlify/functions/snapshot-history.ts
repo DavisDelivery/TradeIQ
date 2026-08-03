@@ -17,6 +17,7 @@ import {
   type UniverseKey,
 } from './shared/snapshot-store';
 import { logger } from './shared/logger';
+import { SCREENS_BY_ID } from './shared/finviz-screens';
 
 const VALID_BOARDS: BoardName[] = [
   'target-board',
@@ -57,13 +58,28 @@ export const handler: Handler = async (event) => {
   if (!board || !VALID_BOARDS.includes(board)) {
     return json(400, { error: 'invalid or missing board' });
   }
-  if (!universe || !VALID_UNIVERSES.includes(universe)) {
-    return json(400, { error: 'invalid or missing universe' });
+  // FVZ-6 — the 'screens' board keys its snapshots by SCREEN ID rather than
+  // by index name (one cohort per published strategy), so the index-name
+  // allow-list would reject every valid screens request. Validate against
+  // the screen catalog instead: still a closed set, just a different one.
+  const universeAllowed =
+    board === 'screens'
+      ? SCREENS_BY_ID.has(String(universe))
+      : Boolean(universe) && VALID_UNIVERSES.includes(universe as UniverseKey);
+  if (!universeAllowed) {
+    return json(400, {
+      error: 'invalid or missing universe',
+      ...(board === 'screens' ? { validScreens: [...SCREENS_BY_ID.keys()] } : {}),
+    });
   }
+
+  // Narrowed by the allow-list check above; the store uses it as an opaque
+  // document key, which is what lets a screen id stand in for an index name.
+  const universeKey = universe as UniverseKey;
 
   try {
     if (snapshotId) {
-      const snap = await getSnapshotById(board, universe, snapshotId);
+      const snap = await getSnapshotById(board, universeKey, snapshotId);
       if (!snap) {
         log.warn('snapshot_not_found', { snapshotId });
         return json(404, { error: 'snapshot not found', snapshotId });
@@ -76,7 +92,7 @@ export const handler: Handler = async (event) => {
       });
     }
 
-    const items = await listSnapshots(board, universe, limit);
+    const items = await listSnapshots(board, universeKey, limit);
     log.info('snapshots_listed', { count: items.length });
     return json(200, {
       ok: true,
