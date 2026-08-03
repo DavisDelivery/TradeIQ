@@ -14,6 +14,7 @@ import {
 } from './shared/snapshot-store';
 import { logger } from './shared/logger';
 import { APP_VERSION } from './shared/app-version';
+import { SCREENS } from './shared/finviz-screens';
 
 // FIX-1 W1 — check each board under the universe keys its producer
 // ACTUALLY writes. The previous table checked prophet + earnings under
@@ -37,7 +38,12 @@ const BOARD_UNIVERSES: Record<BoardName, UniverseKey[]> = {
   crosses: ['sp500'],
   trident: ['sp500', 'russell2k'],
   sentiment: ['sp500'],
-  screens: ['sp500', 'russell2k'],
+  // FVZ-6 — the screens producer writes ONE snapshot per screen, keyed by
+  // SCREEN ID, not by index name. Listing index names here would reproduce
+  // exactly the FIX-1 bug described above: permanently-null entries for a
+  // board that is publishing fine. Derived from the catalog so a new screen
+  // is monitored the day it ships.
+  screens: SCREENS.map((s) => s.id as unknown as UniverseKey),
 };
 
 export const handler: Handler = async () => {
