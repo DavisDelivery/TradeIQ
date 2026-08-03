@@ -1,0 +1,6 @@
+pytrends>=4.9
+yfinance
+pandas
+numpy
+flask
+requests
