@@ -1,0 +1,30 @@
+{
+  "generated_at": "2026-08-03T13:28:26",
+  "equity": 25000,
+  "rules": {
+    "max_positions": 6,
+    "max_risk_pct": 1.0,
+    "stop_pct": 18.0,
+    "target_pct": 45.0,
+    "min_sas": 70,
+    "max_saturation": 45
+  },
+  "tickets": [
+    {
+      "ticker": "BROS",
+      "company": "Dutch Bros",
+      "theme": "Drive-thru coffee expansion",
+      "side": "buy",
+      "type": "limit",
+      "qty": 21,
+      "limit_price": 66.16,
+      "notional": 1382.43,
+      "stop_loss": 53.98,
+      "take_profit": 95.45,
+      "time_in_force": "gfd",
+      "rationale": "SAS 93.0 | saturation 11.2 | 2 sources converging | consumer z 0.99 vs investor z -1.84",
+      "invalidation": "Exit if consumer velocity z drops below 0 for 2 consecutive weeks, saturation exceeds 70, or stop is hit."
+    }
+  ],
+  "total_notional": 1382.43
+}

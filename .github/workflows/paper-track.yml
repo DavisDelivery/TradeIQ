@@ -1,0 +1,104 @@
+# Forward paper-tracking — the evidence loop.
+#
+# Runs on a schedule, records the day's signals and matched controls, marks
+# any horizons that have matured, and commits the ledger back to the repo so
+# the record survives the runner being destroyed.
+#
+# This has to run somewhere persistent. A cloud dev container is reclaimed
+# between sessions, so a scan run there is lost. GitHub Actions is the
+# cheapest durable host; a cron entry on an always-on machine works equally
+# well (see README).
+#
+# Cadence: `open` on weekdays after the US close, `mark` daily. The tracker
+# is idempotent — a duplicate run inserts nothing, because positions are keyed
+# on (run_id, cohort, ticker) and marks on (position_id, horizon).
+
+name: paper-track
+
+on:
+  schedule:
+    # 21:30 UTC = 17:30 ET, ~90 min after the US close, Mon-Fri.
+    - cron: '30 21 * * 1-5'
+  workflow_dispatch:
+    inputs:
+      force:
+        description: 'Record the run even if data coverage is degraded'
+        type: boolean
+        default: false
+
+concurrency:
+  group: paper-track
+  cancel-in-progress: false
+
+jobs:
+  track:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    defaults:
+      run:
+        # The tracker lives under paper/ inside the app repo (integrated
+        # 2026-08-03); every command and relative path is scoped there.
+        working-directory: paper
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: paper/requirements.txt
+
+      - run: pip install -r requirements.txt
+
+      - name: Open today's run
+        id: open
+        env:
+          # Optional. Every paid adapter degrades to {} without its key, so
+          # the job runs unchanged before you subscribe to anything.
+          KEEPA_API_KEY: ${{ secrets.KEEPA_API_KEY }}
+          SIMILARWEB_API_KEY: ${{ secrets.SIMILARWEB_API_KEY }}
+          SENSORTOWER_API_KEY: ${{ secrets.SENSORTOWER_API_KEY }}
+          APIFY_TOKEN: ${{ secrets.APIFY_TOKEN }}
+          REDDIT_CLIENT_ID: ${{ secrets.REDDIT_CLIENT_ID }}
+          REDDIT_CLIENT_SECRET: ${{ secrets.REDDIT_CLIENT_SECRET }}
+        run: |
+          set +e
+          python -m tradeiq.paper open ${{ inputs.force && '--force' || '' }}
+          code=$?
+          # Exit 2 is a DELIBERATE skip: the scan was too degraded to record.
+          # That is the guard working, not a build failure — do not fail the
+          # job, or a week of Google Trends throttling turns into a week of
+          # red builds and someone "fixes" it by removing the guard.
+          if [ $code -eq 2 ]; then
+            echo "skipped=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          exit $code
+
+      - name: Mark matured horizons
+        # Always runs. Marking is independent of whether a new run opened,
+        # and old positions still need their 4w/12w/26w marks on days the
+        # scan is skipped.
+        if: always()
+        run: python -m tradeiq.paper mark
+
+      - name: Report
+        if: always()
+        run: python -m tradeiq.paper report
+
+      - name: Commit the ledger
+        if: always()
+        run: |
+          git config user.name  "paper-track"
+          git config user.email "actions@github.com"
+          git add -f data/tradeiq.db out/paper_report.json
+          git diff --staged --quiet || git commit -m "paper-track: $(date -u +%F)"
+          git push
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: paper-report-${{ github.run_number }}
+          path: paper/out/paper_report.json
+          retention-days: 90

@@ -1,0 +1,1042 @@
+{
+  "run_date": "2026-08-02",
+  "generated_at": "2026-08-02T23:40:38",
+  "equity": 25000.0,
+  "paid_feeds": {
+    "similarweb": false,
+    "sensortower": false,
+    "keepa": false,
+    "apify_tiktok": false
+  },
+  "rows": [
+    {
+      "ticker": "BROS",
+      "company": "Dutch Bros",
+      "theme": "Drive-thru coffee expansion",
+      "keywords": [
+        "dutch bros",
+        "dutch bros menu"
+      ],
+      "sas": 93.0,
+      "saturation": 11.2,
+      "consumer_z": 0.99,
+      "investor_z": -1.84,
+      "convergence": 2,
+      "sources_used": 3,
+      "source_z": {
+        "gtrends:dutch bros": 0.36,
+        "gtrends:dutch bros menu": 1.16,
+        "wiki:Dutch Bros": 1.44
+      },
+      "investor_source_z": {
+        "gtrends:BROS stock": -1.84
+      },
+      "yoy_pct": {
+        "wiki:Dutch Bros": 597.3
+      },
+      "price_z": -0.73,
+      "vol_z": -0.81,
+      "recent_gap_pct": -3.09,
+      "gap_days_ago": 10,
+      "event_risk": false,
+      "ret_1m": -8.77,
+      "ret_3m": 14.47,
+      "price": 65.83,
+      "chg_pct": 0.61,
+      "avg_vol": 2587940,
+      "ios_rank": null,
+      "action": "EARLY \u2014 candidate entry",
+      "sizing": {
+        "conviction": 1.0,
+        "risk_dollars": 250.0,
+        "notional": 1388.89,
+        "stop_pct": 18.0
+      }
+    },
+    {
+      "ticker": "FIGS",
+      "company": "FIGS Inc",
+      "theme": "Premium scrubs",
+      "keywords": [
+        "figs scrubs"
+      ],
+      "sas": 87.5,
+      "saturation": 20.3,
+      "consumer_z": 1.3,
+      "investor_z": -1.01,
+      "convergence": 1,
+      "sources_used": 1,
+      "source_z": {
+        "gtrends:figs scrubs": 1.3
+      },
+      "investor_source_z": {
+        "gtrends:FIGS stock": -1.01
+      },
+      "yoy_pct": {},
+      "price_z": 0.07,
+      "vol_z": -0.29,
+      "recent_gap_pct": -6.85,
+      "gap_days_ago": 7,
+      "event_risk": false,
+      "ret_1m": 7.11,
+      "ret_3m": -28.48,
+      "price": 10.7,
+      "chg_pct": 2.0,
+      "avg_vol": 2919015,
+      "ios_rank": null,
+      "action": "BUILDING \u2014 watch for confirmation",
+      "sizing": {
+        "conviction": 0.93,
+        "risk_dollars": 232.14,
+        "notional": 1289.68,
+        "stop_pct": 18.0
+      }
+    },
+    {
+      "ticker": "CROX",
+      "company": "Crocs",
+      "theme": "Crocs / HeyDude footwear cycle",
+      "keywords": [
+        "crocs",
+        "hey dude shoes"
+      ],
+      "sas": 55.0,
+      "saturation": 30.8,
+      "consumer_z": 0.14,
+      "investor_z": -0.65,
+      "convergence": 0,
+      "sources_used": 3,
+      "source_z": {
+        "gtrends:crocs": 0.47,
+        "gtrends:hey dude shoes": 0.08,
+        "wiki:Crocs": -0.12
+      },
+      "investor_source_z": {
+        "gtrends:CROX stock": -0.65
+      },
+      "yoy_pct": {
+        "wiki:Crocs": -23.3
+      },
+      "price_z": -0.07,
+      "vol_z": -0.3,
+      "recent_gap_pct": -7.38,
+      "gap_days_ago": 2,
+      "event_risk": false,
+      "ret_1m": 2.18,
+      "ret_3m": 25.52,
+      "price": 128.01,
+      "chg_pct": 3.52,
+      "avg_vol": 1068450,
+      "ios_rank": null,
+      "action": "NEUTRAL",
+      "sizing": {
+        "conviction": 0.0,
+        "risk_dollars": 0.0,
+        "notional": 0.0,
+        "stop_pct": 18.0
+      }
+    },
+    {
+      "ticker": "CAVA",
+      "company": "CAVA Group",
+      "theme": "Mediterranean fast casual",
+      "keywords": [
+        "cava restaurant",
+        "cava menu"
+      ],
+      "sas": 55.0,
+      "saturation": 20.1,
+      "consumer_z": -0.05,
+      "investor_z": -1.01,
+      "convergence": 0,
+      "sources_used": 3,
+      "source_z": {
+        "gtrends:cava restaurant": -0.86,
+        "gtrends:cava menu": 0.99,
+        "wiki:Cava (restaurant)": -0.29
+      },
+      "investor_source_z": {
+        "gtrends:CAVA stock": -1.01
+      },
+      "yoy_pct": {
+        "wiki:Cava (restaurant)": -19.0
+      },
+      "price_z": -0.85,
+      "vol_z": 0.23,
+      "recent_gap_pct": -7.76,
+      "gap_days_ago": 10,
+      "event_risk": false,
+      "ret_1m": -15.15,
+      "ret_3m": -30.17,
+      "price": 65.23,
+      "chg_pct": -1.82,
+      "avg_vol": 3415950,
+      "ios_rank": null,
+      "action": "NEUTRAL",
+      "sizing": {
+        "conviction": 0.0,
+        "risk_dollars": 0.0,
+        "notional": 0.0,
+        "stop_pct": 18.0
+      }
+    },
+    {
+      "ticker": "SG",
+      "company": "Sweetgreen",
+      "theme": "Healthy fast casual",
+      "keywords": [
+        "sweetgreen",
+        "sweetgreen menu"
+      ],
+      "sas": 55.0,
+      "saturation": 16.7,
+      "consumer_z": -0.21,
+      "investor_z": -1.15,
+      "convergence": 0,
+      "sources_used": 3,
+      "source_z": {
+        "gtrends:sweetgreen": 0.21,
+        "gtrends:sweetgreen menu": -0.13,
+        "wiki:Sweetgreen": -0.71
+      },
+      "investor_source_z": {
+        "gtrends:SG stock": -1.15
+      },
+      "yoy_pct": {
+        "wiki:Sweetgreen": -23.7
+      },
+      "price_z": -1.2,
+      "vol_z": 0.15,
+      "recent_gap_pct": -7.22,
+      "gap_days_ago": 8,
+      "event_risk": false,
+      "ret_1m": -26.45,
+      "ret_3m": -6.25,
+      "price": 6.45,
+      "chg_pct": -1.53,
+      "avg_vol": 5558910,
+      "ios_rank": null,
+      "action": "NEUTRAL",
+      "sizing": {
+        "conviction": 0.0,
+        "risk_dollars": 0.0,
+        "notional": 0.0,
+        "stop_pct": 18.0
+      }
+    },
+    {
+      "ticker": "WING",
+      "company": "Wingstop",
+      "theme": "Wingstop unit growth",
+      "keywords": [
+        "wingstop",
+        "wingstop menu"
+      ],
+      "sas": 55.0,
+      "saturation": 15.8,
+      "consumer_z": -0.14,
+      "investor_z": -2.5,
+      "convergence": 0,
+      "sources_used": 3,
+      "source_z": {
+        "gtrends:wingstop": 0.36,
+        "gtrends:wingstop menu": 0.2,
+        "wiki:Wingstop": -0.98
+      },
+      "investor_source_z": {
+        "gtrends:WING stock": -2.5
+      },
+      "yoy_pct": {
+        "wiki:Wingstop": -27.6
+      },
+      "price_z": -1.33,
+      "vol_z": 0.25,
+      "recent_gap_pct": -4.36,
+      "gap_days_ago": 9,
+      "event_risk": false,
+      "ret_1m": -27.25,
+      "ret_3m": -21.07,
+      "price": 129.49,
+      "chg_pct": -3.61,
+      "avg_vol": 1249650,
+      "ios_rank": null,
+      "action": "NEUTRAL",
+      "sizing": {
+        "conviction": 0.0,
+        "risk_dollars": 0.0,
+        "notional": 0.0,
+        "stop_pct": 18.0
+      }
+    },
+    {
+      "ticker": "YETI",
+      "company": "YETI Holdings",
+      "theme": "Premium drinkware cycle",
+      "keywords": [
+        "yeti cooler",
+        "yeti tumbler"
+      ],
+      "sas": 55.0,
+      "saturation": 23.0,
+      "consumer_z": 0.04,
+      "investor_z": -0.76,
+      "convergence": 0,
+      "sources_used": 3,
+      "source_z": {
+        "gtrends:yeti cooler": 0.34,
+        "gtrends:yeti tumbler": -0.62,
+        "wiki:Yeti (company)": 0.39
+      },
+      "investor_source_z": {
+        "gtrends:YETI stock": -0.76
+      },
+      "yoy_pct": {
+        "wiki:Yeti (company)": 212.6
+      },
+      "price_z": -0.5,
+      "vol_z": -0.35,
+      "recent_gap_pct": -3.19,
+      "gap_days_ago": 7,
+      "event_risk": false,
+      "ret_1m": -1.51,
+      "ret_3m": 24.02,
+      "price": 48.94,
+      "chg_pct": -1.41,
+      "avg_vol": 1063575,
+      "ios_rank": null,
+      "action": "NEUTRAL",
+      "sizing": {
+        "conviction": 0.0,
+        "risk_dollars": 0.0,
+        "notional": 0.0,
+        "stop_pct": 18.0
+      }
+    },
+    {
+      "ticker": "DKNG",
+      "company": "DraftKings",
+      "theme": "Sports betting handle",
+      "keywords": [
+        "draftkings",
+        "sportsbook"
+      ],
+      "sas": 51.4,
+      "saturation": 23.3,
+      "consumer_z": -0.42,
+      "investor_z": -0.91,
+      "convergence": 0,
+      "sources_used": 3,
+      "source_z": {
+        "gtrends:draftkings": -0.36,
+        "gtrends:sportsbook": -1.29,
+        "wiki:DraftKings": 0.39
+      },
+      "investor_source_z": {
+        "gtrends:DKNG stock": -0.91
+      },
+      "yoy_pct": {
+        "wiki:DraftKings": 25.9
+      },
+      "price_z": -0.46,
+      "vol_z": -0.39,
+      "recent_gap_pct": 4.78,
+      "gap_days_ago": 5,
+      "event_risk": false,
+      "ret_1m": -9.31,
+      "ret_3m": 0.69,
+      "price": 23.48,
+      "chg_pct": -1.01,
+      "avg_vol": 10783770,
+      "ios_rank": null,
+      "action": "NEUTRAL",
+      "sizing": {
+        "conviction": 0.0,
+        "risk_dollars": 0.0,
+        "notional": 0.0,
+        "stop_pct": 18.0
+      }
+    },
+    {
+      "ticker": "RBLX",
+      "company": "Roblox",
+      "theme": "Youth gaming engagement",
+      "keywords": [
+        "roblox",
+        "roblox codes"
+      ],
+      "sas": 50.0,
+      "saturation": 8.1,
+      "consumer_z": 2.1,
+      "investor_z": -0.56,
+      "convergence": 3,
+      "sources_used": 3,
+      "source_z": {
+        "gtrends:roblox": 1.31,
+        "gtrends:roblox codes": 2.5,
+        "wiki:Roblox": 2.5
+      },
+      "investor_source_z": {
+        "gtrends:RBLX stock": -0.56
+      },
+      "yoy_pct": {
+        "wiki:Roblox": 35.9
+      },
+      "price_z": -2.13,
+      "vol_z": 0.43,
+      "recent_gap_pct": -26.85,
+      "gap_days_ago": 1,
+      "event_risk": true,
+      "ret_1m": -35.75,
+      "ret_3m": -35.58,
+      "price": 35.6,
+      "chg_pct": -26.85,
+      "avg_vol": 10522680,
+      "ios_rank": null,
+      "action": "EVENT RISK \u2014 -26.85% gap 1d ago",
+      "sizing": {
+        "conviction": 0.0,
+        "risk_dollars": 0.0,
+        "notional": 0.0,
+        "stop_pct": 18.0
+      }
+    },
+    {
+      "ticker": "LULU",
+      "company": "Lululemon",
+      "theme": "Athleisure demand",
+      "keywords": [
+        "lululemon",
+        "lululemon leggings"
+      ],
+      "sas": 48.0,
+      "saturation": 34.3,
+      "consumer_z": -0.2,
+      "investor_z": -0.95,
+      "convergence": 0,
+      "sources_used": 3,
+      "source_z": {
+        "gtrends:lululemon": -0.22,
+        "gtrends:lululemon leggings": -0.28,
+        "wiki:Lululemon Athletica": -0.09
+      },
+      "investor_source_z": {
+        "gtrends:LULU stock": -0.95
+      },
+      "yoy_pct": {
+        "wiki:Lululemon Athletica": -32.4
+      },
+      "price_z": 0.44,
+      "vol_z": -0.35,
+      "recent_gap_pct": 3.3,
+      "gap_days_ago": 6,
+      "event_risk": false,
+      "ret_1m": 0.37,
+      "ret_3m": -13.67,
+      "price": 118.87,
+      "chg_pct": -0.51,
+      "avg_vol": 2517240,
+      "ios_rank": null,
+      "action": "NEUTRAL",
+      "sizing": {
+        "conviction": 0.0,
+        "risk_dollars": 0.0,
+        "notional": 0.0,
+        "stop_pct": 18.0
+      }
+    },
+    {
+      "ticker": "ONON",
+      "company": "On Holding",
+      "theme": "Premium running shoes",
+      "keywords": [
+        "on cloud shoes",
+        "on running"
+      ],
+      "sas": 46.8,
+      "saturation": 28.0,
+      "consumer_z": -0.5,
+      "investor_z": -1.17,
+      "convergence": 0,
+      "sources_used": 3,
+      "source_z": {
+        "gtrends:on cloud shoes": 0.62,
+        "gtrends:on running": -1.04,
+        "wiki:On (company)": -1.08
+      },
+      "investor_source_z": {
+        "gtrends:ONON stock": -1.17
+      },
+      "yoy_pct": {
+        "wiki:On (company)": -50.6
+      },
+      "price_z": 0.03,
+      "vol_z": -0.48,
+      "recent_gap_pct": -4.94,
+      "gap_days_ago": 7,
+      "event_risk": false,
+      "ret_1m": -1.6,
+      "ret_3m": 1.77,
+      "price": 36.24,
+      "chg_pct": -2.32,
+      "avg_vol": 3919185,
+      "ios_rank": null,
+      "action": "NEUTRAL",
+      "sizing": {
+        "conviction": 0.0,
+        "risk_dollars": 0.0,
+        "notional": 0.0,
+        "stop_pct": 18.0
+      }
+    },
+    {
+      "ticker": "PTON",
+      "company": "Peloton",
+      "theme": "Connected fitness",
+      "keywords": [
+        "peloton",
+        "peloton bike"
+      ],
+      "sas": 45.6,
+      "saturation": 34.9,
+      "consumer_z": -0.33,
+      "investor_z": -1.37,
+      "convergence": 0,
+      "sources_used": 3,
+      "source_z": {
+        "gtrends:peloton": -0.54,
+        "gtrends:peloton bike": -1.12,
+        "wiki:Peloton (company)": 0.66
+      },
+      "investor_source_z": {
+        "gtrends:PTON stock": -1.37
+      },
+      "yoy_pct": {
+        "wiki:Peloton (company)": 134.1
+      },
+      "price_z": 0.64,
+      "vol_z": -0.6,
+      "recent_gap_pct": 6.54,
+      "gap_days_ago": 10,
+      "event_risk": false,
+      "ret_1m": 11.13,
+      "ret_3m": 17.25,
+      "price": 6.39,
+      "chg_pct": 0.16,
+      "avg_vol": 7360915,
+      "ios_rank": null,
+      "action": "NEUTRAL",
+      "sizing": {
+        "conviction": 0.0,
+        "risk_dollars": 0.0,
+        "notional": 0.0,
+        "stop_pct": 18.0
+      }
+    },
+    {
+      "ticker": "DECK",
+      "company": "Deckers Brands",
+      "theme": "Hoka + UGG demand",
+      "keywords": [
+        "hoka",
+        "ugg boots"
+      ],
+      "sas": 42.7,
+      "saturation": 31.0,
+      "consumer_z": -0.48,
+      "investor_z": -2.02,
+      "convergence": 0,
+      "sources_used": 3,
+      "source_z": {
+        "gtrends:hoka": -0.71,
+        "gtrends:ugg boots": -0.67,
+        "wiki:Deckers Brands": -0.05
+      },
+      "investor_source_z": {
+        "gtrends:DECK stock": -2.02
+      },
+      "yoy_pct": {
+        "wiki:Deckers Brands": -28.0
+      },
+      "price_z": -0.68,
+      "vol_z": 0.96,
+      "recent_gap_pct": 6.33,
+      "gap_days_ago": 4,
+      "event_risk": false,
+      "ret_1m": -7.46,
+      "ret_3m": -5.21,
+      "price": 96.88,
+      "chg_pct": -2.82,
+      "avg_vol": 2315140,
+      "ios_rank": null,
+      "action": "NEUTRAL",
+      "sizing": {
+        "conviction": 0.0,
+        "risk_dollars": 0.0,
+        "notional": 0.0,
+        "stop_pct": 18.0
+      }
+    },
+    {
+      "ticker": "CHWY",
+      "company": "Chewy",
+      "theme": "Online pet spend",
+      "keywords": [
+        "chewy",
+        "chewy pet food"
+      ],
+      "sas": 41.0,
+      "saturation": 58.3,
+      "consumer_z": 0.28,
+      "investor_z": -0.28,
+      "convergence": 0,
+      "sources_used": 2,
+      "source_z": {
+        "gtrends:chewy": 0.94,
+        "wiki:Chewy (company)": -0.37
+      },
+      "investor_source_z": {
+        "gtrends:CHWY stock": -0.28
+      },
+      "yoy_pct": {
+        "wiki:Chewy (company)": -28.0
+      },
+      "price_z": 1.15,
+      "vol_z": -0.3,
+      "recent_gap_pct": 5.14,
+      "gap_days_ago": 4,
+      "event_risk": false,
+      "ret_1m": 8.39,
+      "ret_3m": -11.09,
+      "price": 22.6,
+      "chg_pct": -0.96,
+      "avg_vol": 7891395,
+      "ios_rank": null,
+      "action": "NEUTRAL",
+      "sizing": {
+        "conviction": 0.0,
+        "risk_dollars": 0.0,
+        "notional": 0.0,
+        "stop_pct": 18.0
+      }
+    },
+    {
+      "ticker": "APP",
+      "company": "AppLovin",
+      "theme": "Ad-tech / e-commerce ads",
+      "keywords": [
+        "applovin"
+      ],
+      "sas": 39.3,
+      "saturation": 20.0,
+      "consumer_z": -1.13,
+      "investor_z": -2.5,
+      "convergence": 0,
+      "sources_used": 2,
+      "source_z": {
+        "gtrends:applovin": -1.69,
+        "wiki:AppLovin": -0.56
+      },
+      "investor_source_z": {
+        "gtrends:APP stock": -2.5
+      },
+      "yoy_pct": {
+        "wiki:AppLovin": -11.4
+      },
+      "price_z": -1.52,
+      "vol_z": 0.52,
+      "recent_gap_pct": 5.29,
+      "gap_days_ago": 5,
+      "event_risk": false,
+      "ret_1m": -24.89,
+      "ret_3m": -11.3,
+      "price": 395.9,
+      "chg_pct": -1.97,
+      "avg_vol": 6179550,
+      "ios_rank": null,
+      "action": "DECAYING \u2014 exit / avoid",
+      "sizing": {
+        "conviction": 0.0,
+        "risk_dollars": 0.0,
+        "notional": 0.0,
+        "stop_pct": 18.0
+      }
+    },
+    {
+      "ticker": "RDDT",
+      "company": "Reddit Inc",
+      "theme": "Reddit as a search engine",
+      "keywords": [
+        "reddit"
+      ],
+      "sas": 36.8,
+      "saturation": 38.1,
+      "consumer_z": -0.38,
+      "investor_z": 0.14,
+      "convergence": 0,
+      "sources_used": 2,
+      "source_z": {
+        "gtrends:reddit": -0.88,
+        "wiki:Reddit": 0.12
+      },
+      "investor_source_z": {
+        "gtrends:RDDT stock": 0.14
+      },
+      "yoy_pct": {
+        "wiki:Reddit": 20.2
+      },
+      "price_z": -1.55,
+      "vol_z": 0.79,
+      "recent_gap_pct": -20.99,
+      "gap_days_ago": 1,
+      "event_risk": true,
+      "ret_1m": -27.74,
+      "ret_3m": -4.46,
+      "price": 140.67,
+      "chg_pct": -20.99,
+      "avg_vol": 5631120,
+      "ios_rank": 81,
+      "action": "EVENT RISK \u2014 -20.99% gap 1d ago",
+      "sizing": {
+        "conviction": 0.0,
+        "risk_dollars": 0.0,
+        "notional": 0.0,
+        "stop_pct": 18.0
+      }
+    },
+    {
+      "ticker": "HIMS",
+      "company": "Hims & Hers",
+      "theme": "Telehealth GLP-1 / hair",
+      "keywords": [
+        "hims",
+        "hers weight loss"
+      ],
+      "sas": 35.9,
+      "saturation": 23.7,
+      "consumer_z": -1.21,
+      "investor_z": -0.8,
+      "convergence": 0,
+      "sources_used": 3,
+      "source_z": {
+        "gtrends:hims": -0.87,
+        "gtrends:hers weight loss": -2.18,
+        "wiki:Hims & Hers Health": -0.57
+      },
+      "investor_source_z": {
+        "gtrends:HIMS stock": -0.8
+      },
+      "yoy_pct": {
+        "wiki:Hims & Hers Health": -53.5
+      },
+      "price_z": -0.87,
+      "vol_z": -0.45,
+      "recent_gap_pct": -14.73,
+      "gap_days_ago": 3,
+      "event_risk": true,
+      "ret_1m": -24.54,
+      "ret_3m": 2.21,
+      "price": 27.77,
+      "chg_pct": 2.7,
+      "avg_vol": 14614500,
+      "ios_rank": null,
+      "action": "EVENT RISK \u2014 -14.73% gap 3d ago",
+      "sizing": {
+        "conviction": 0.0,
+        "risk_dollars": 0.0,
+        "notional": 0.0,
+        "stop_pct": 18.0
+      }
+    },
+    {
+      "ticker": "TDUP",
+      "company": "ThredUp",
+      "theme": "Online resale",
+      "keywords": [
+        "thredup"
+      ],
+      "sas": 34.1,
+      "saturation": 34.1,
+      "consumer_z": -0.81,
+      "investor_z": 0.0,
+      "convergence": 0,
+      "sources_used": 2,
+      "source_z": {
+        "gtrends:thredup": -0.7,
+        "wiki:ThredUp": -0.92
+      },
+      "investor_source_z": {},
+      "yoy_pct": {
+        "wiki:ThredUp": -7.6
+      },
+      "price_z": -0.84,
+      "vol_z": -0.7,
+      "recent_gap_pct": -6.07,
+      "gap_days_ago": 8,
+      "event_risk": false,
+      "ret_1m": -17.78,
+      "ret_3m": 34.73,
+      "price": 5.78,
+      "chg_pct": -1.53,
+      "avg_vol": 1416205,
+      "ios_rank": null,
+      "action": "DECAYING \u2014 exit / avoid",
+      "sizing": {
+        "conviction": 0.0,
+        "risk_dollars": 0.0,
+        "notional": 0.0,
+        "stop_pct": 18.0
+      }
+    },
+    {
+      "ticker": "ELF",
+      "company": "e.l.f. Beauty",
+      "theme": "Mass-market beauty dupes",
+      "keywords": [
+        "elf cosmetics",
+        "elf makeup"
+      ],
+      "sas": 26.6,
+      "saturation": 49.3,
+      "consumer_z": -0.87,
+      "investor_z": -0.47,
+      "convergence": 0,
+      "sources_used": 2,
+      "source_z": {
+        "gtrends:elf cosmetics": -0.58,
+        "gtrends:elf makeup": -1.16
+      },
+      "investor_source_z": {
+        "gtrends:ELF stock": -0.47
+      },
+      "yoy_pct": {},
+      "price_z": 0.52,
+      "vol_z": -0.51,
+      "recent_gap_pct": 8.6,
+      "gap_days_ago": 5,
+      "event_risk": false,
+      "ret_1m": 8.47,
+      "ret_3m": 29.58,
+      "price": 82.89,
+      "chg_pct": 0.77,
+      "avg_vol": 2255100,
+      "ios_rank": null,
+      "action": "DECAYING \u2014 exit / avoid",
+      "sizing": {
+        "conviction": 0.0,
+        "risk_dollars": 0.0,
+        "notional": 0.0,
+        "stop_pct": 18.0
+      }
+    },
+    {
+      "ticker": "SKX",
+      "company": "Skechers",
+      "theme": "Comfort footwear",
+      "keywords": [
+        "skechers"
+      ],
+      "sas": 23.9,
+      "saturation": 55.6,
+      "consumer_z": -0.74,
+      "investor_z": 0.0,
+      "convergence": 0,
+      "sources_used": 2,
+      "source_z": {
+        "gtrends:skechers": -0.76,
+        "wiki:Skechers": -0.73
+      },
+      "investor_source_z": {},
+      "yoy_pct": {
+        "wiki:Skechers": -18.5
+      },
+      "price_z": 0.0,
+      "vol_z": 0.0,
+      "ret_1m": null,
+      "ret_3m": null,
+      "recent_gap_pct": 0.0,
+      "gap_days_ago": null,
+      "event_risk": false,
+      "price": null,
+      "chg_pct": null,
+      "avg_vol": null,
+      "ios_rank": null,
+      "action": "NEUTRAL",
+      "sizing": {
+        "conviction": 0.0,
+        "risk_dollars": 0.0,
+        "notional": 0.0,
+        "stop_pct": 18.0
+      }
+    },
+    {
+      "ticker": "OLPX",
+      "company": "Olaplex",
+      "theme": "Hair repair category",
+      "keywords": [
+        "olaplex"
+      ],
+      "sas": 20.4,
+      "saturation": 57.2,
+      "consumer_z": -0.96,
+      "investor_z": 0.0,
+      "convergence": 0,
+      "sources_used": 2,
+      "source_z": {
+        "gtrends:olaplex": -1.01,
+        "wiki:Olaplex": -0.91
+      },
+      "investor_source_z": {},
+      "yoy_pct": {
+        "wiki:Olaplex": -9.4
+      },
+      "price_z": 0.0,
+      "vol_z": 0.0,
+      "ret_1m": null,
+      "ret_3m": null,
+      "recent_gap_pct": 0.0,
+      "gap_days_ago": null,
+      "event_risk": false,
+      "price": 2.07,
+      "chg_pct": 0.0,
+      "avg_vol": 0,
+      "ios_rank": null,
+      "action": "DECAYING \u2014 exit / avoid",
+      "sizing": {
+        "conviction": 0.0,
+        "risk_dollars": 0.0,
+        "notional": 0.0,
+        "stop_pct": 18.0
+      }
+    },
+    {
+      "ticker": "PLNT",
+      "company": "Planet Fitness",
+      "theme": "Budget gym membership",
+      "keywords": [
+        "planet fitness"
+      ],
+      "sas": 20.0,
+      "saturation": 67.4,
+      "consumer_z": -0.69,
+      "investor_z": -0.08,
+      "convergence": 0,
+      "sources_used": 2,
+      "source_z": {
+        "gtrends:planet fitness": -0.32,
+        "wiki:Planet Fitness": -1.06
+      },
+      "investor_source_z": {
+        "gtrends:PLNT stock": -0.08
+      },
+      "yoy_pct": {
+        "wiki:Planet Fitness": -16.5
+      },
+      "price_z": 0.91,
+      "vol_z": -0.1,
+      "recent_gap_pct": 5.52,
+      "gap_days_ago": 10,
+      "event_risk": false,
+      "ret_1m": 4.6,
+      "ret_3m": -16.14,
+      "price": 55.91,
+      "chg_pct": -0.13,
+      "avg_vol": 1718580,
+      "ios_rank": null,
+      "action": "NEUTRAL",
+      "sizing": {
+        "conviction": 0.0,
+        "risk_dollars": 0.0,
+        "notional": 0.0,
+        "stop_pct": 18.0
+      }
+    },
+    {
+      "ticker": "DUOL",
+      "company": "Duolingo",
+      "theme": "Gamified language learning",
+      "keywords": [
+        "duolingo",
+        "duolingo app"
+      ],
+      "sas": 19.2,
+      "saturation": 48.6,
+      "consumer_z": -1.52,
+      "investor_z": -0.93,
+      "convergence": 0,
+      "sources_used": 3,
+      "source_z": {
+        "gtrends:duolingo": -1.95,
+        "gtrends:duolingo app": -1.77,
+        "wiki:Duolingo": -0.83
+      },
+      "investor_source_z": {
+        "gtrends:DUOL stock": -0.93
+      },
+      "yoy_pct": {
+        "wiki:Duolingo": -26.4
+      },
+      "price_z": 0.77,
+      "vol_z": -0.48,
+      "recent_gap_pct": 8.66,
+      "gap_days_ago": 5,
+      "event_risk": false,
+      "ret_1m": 7.2,
+      "ret_3m": 22.44,
+      "price": 134.81,
+      "chg_pct": 0.91,
+      "avg_vol": 999535,
+      "ios_rank": 69,
+      "action": "DECAYING \u2014 exit / avoid",
+      "sizing": {
+        "conviction": 0.0,
+        "risk_dollars": 0.0,
+        "notional": 0.0,
+        "stop_pct": 18.0
+      }
+    },
+    {
+      "ticker": "CELH",
+      "company": "Celsius Holdings",
+      "theme": "Energy drink share shift",
+      "keywords": [
+        "celsius energy drink",
+        "celsius drink"
+      ],
+      "sas": 13.4,
+      "saturation": 62.9,
+      "consumer_z": -1.34,
+      "investor_z": 0.59,
+      "convergence": 0,
+      "sources_used": 3,
+      "source_z": {
+        "gtrends:celsius energy drink": -1.14,
+        "gtrends:celsius drink": -1.3,
+        "wiki:Celsius Holdings": -1.56
+      },
+      "investor_source_z": {
+        "gtrends:CELH stock": 0.59
+      },
+      "yoy_pct": {
+        "wiki:Celsius Holdings": -36.2
+      },
+      "price_z": -0.57,
+      "vol_z": -0.02,
+      "recent_gap_pct": 6.16,
+      "gap_days_ago": 5,
+      "event_risk": false,
+      "ret_1m": -11.91,
+      "ret_3m": -12.99,
+      "price": 29.21,
+      "chg_pct": -0.48,
+      "avg_vol": 7528365,
+      "ios_rank": null,
+      "action": "DECAYING \u2014 exit / avoid",
+      "sizing": {
+        "conviction": 0.0,
+        "risk_dollars": 0.0,
+        "notional": 0.0,
+        "stop_pct": 18.0
+      }
+    }
+  ]
+}

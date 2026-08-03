@@ -1,0 +1,359 @@
+[
+  {
+    "ticker": "CELH",
+    "company": "Celsius Holdings",
+    "theme": "Energy drink share shift",
+    "consumer_keywords": [
+      "celsius energy drink",
+      "celsius drink"
+    ],
+    "wiki_product": "Celsius Holdings",
+    "wiki_company": "Celsius Holdings",
+    "investor_keywords": [
+      "CELH stock"
+    ],
+    "domain": "celsius.com"
+  },
+  {
+    "ticker": "ELF",
+    "company": "e.l.f. Beauty",
+    "theme": "Mass-market beauty dupes",
+    "consumer_keywords": [
+      "elf cosmetics",
+      "elf makeup"
+    ],
+    "wiki_product": "E.l.f. Beauty",
+    "wiki_company": "E.l.f. Beauty",
+    "investor_keywords": [
+      "ELF stock"
+    ],
+    "domain": "elfcosmetics.com"
+  },
+  {
+    "ticker": "DUOL",
+    "company": "Duolingo",
+    "theme": "Gamified language learning",
+    "consumer_keywords": [
+      "duolingo",
+      "duolingo app"
+    ],
+    "wiki_product": "Duolingo",
+    "wiki_company": "Duolingo",
+    "investor_keywords": [
+      "DUOL stock"
+    ],
+    "app": "Duolingo",
+    "domain": "duolingo.com"
+  },
+  {
+    "ticker": "CROX",
+    "company": "Crocs",
+    "theme": "Crocs / HeyDude footwear cycle",
+    "consumer_keywords": [
+      "crocs",
+      "hey dude shoes"
+    ],
+    "wiki_product": "Crocs",
+    "wiki_company": "Crocs",
+    "investor_keywords": [
+      "CROX stock"
+    ],
+    "domain": "crocs.com"
+  },
+  {
+    "ticker": "ONON",
+    "company": "On Holding",
+    "theme": "Premium running shoes",
+    "consumer_keywords": [
+      "on cloud shoes",
+      "on running"
+    ],
+    "wiki_product": "On (company)",
+    "wiki_company": "On (company)",
+    "investor_keywords": [
+      "ONON stock"
+    ],
+    "domain": "on-running.com"
+  },
+  {
+    "ticker": "DECK",
+    "company": "Deckers Brands",
+    "theme": "Hoka + UGG demand",
+    "consumer_keywords": [
+      "hoka",
+      "ugg boots"
+    ],
+    "wiki_product": "Deckers Brands",
+    "wiki_company": "Deckers Brands",
+    "investor_keywords": [
+      "DECK stock"
+    ],
+    "domain": "hoka.com"
+  },
+  {
+    "ticker": "CAVA",
+    "company": "CAVA Group",
+    "theme": "Mediterranean fast casual",
+    "consumer_keywords": [
+      "cava restaurant",
+      "cava menu"
+    ],
+    "wiki_product": "Cava (restaurant)",
+    "wiki_company": "Cava (restaurant)",
+    "investor_keywords": [
+      "CAVA stock"
+    ],
+    "domain": "cava.com"
+  },
+  {
+    "ticker": "SG",
+    "company": "Sweetgreen",
+    "theme": "Healthy fast casual",
+    "consumer_keywords": [
+      "sweetgreen",
+      "sweetgreen menu"
+    ],
+    "wiki_product": "Sweetgreen",
+    "wiki_company": "Sweetgreen",
+    "investor_keywords": [
+      "SG stock"
+    ],
+    "domain": "sweetgreen.com"
+  },
+  {
+    "ticker": "WING",
+    "company": "Wingstop",
+    "theme": "Wingstop unit growth",
+    "consumer_keywords": [
+      "wingstop",
+      "wingstop menu"
+    ],
+    "wiki_product": "Wingstop",
+    "wiki_company": "Wingstop",
+    "investor_keywords": [
+      "WING stock"
+    ],
+    "domain": "wingstop.com"
+  },
+  {
+    "ticker": "BROS",
+    "company": "Dutch Bros",
+    "theme": "Drive-thru coffee expansion",
+    "consumer_keywords": [
+      "dutch bros",
+      "dutch bros menu"
+    ],
+    "wiki_product": "Dutch Bros",
+    "wiki_company": "Dutch Bros",
+    "investor_keywords": [
+      "BROS stock"
+    ],
+    "domain": "dutchbros.com"
+  },
+  {
+    "ticker": "HIMS",
+    "company": "Hims & Hers",
+    "theme": "Telehealth GLP-1 / hair",
+    "consumer_keywords": [
+      "hims",
+      "hers weight loss"
+    ],
+    "wiki_product": "Hims & Hers Health",
+    "wiki_company": "Hims & Hers Health",
+    "investor_keywords": [
+      "HIMS stock"
+    ],
+    "domain": "forhims.com"
+  },
+  {
+    "ticker": "RBLX",
+    "company": "Roblox",
+    "theme": "Youth gaming engagement",
+    "consumer_keywords": [
+      "roblox",
+      "roblox codes"
+    ],
+    "wiki_product": "Roblox",
+    "wiki_company": "Roblox",
+    "investor_keywords": [
+      "RBLX stock"
+    ],
+    "app": "Roblox",
+    "domain": "roblox.com"
+  },
+  {
+    "ticker": "APP",
+    "company": "AppLovin",
+    "theme": "Ad-tech / e-commerce ads",
+    "consumer_keywords": [
+      "applovin"
+    ],
+    "wiki_product": "AppLovin",
+    "wiki_company": "AppLovin",
+    "investor_keywords": [
+      "APP stock"
+    ],
+    "domain": "applovin.com"
+  },
+  {
+    "ticker": "RDDT",
+    "company": "Reddit Inc",
+    "theme": "Reddit as a search engine",
+    "consumer_keywords": [
+      "reddit"
+    ],
+    "wiki_product": "Reddit",
+    "wiki_company": "Reddit",
+    "investor_keywords": [
+      "RDDT stock"
+    ],
+    "app": "Reddit",
+    "domain": "reddit.com"
+  },
+  {
+    "ticker": "CHWY",
+    "company": "Chewy",
+    "theme": "Online pet spend",
+    "consumer_keywords": [
+      "chewy",
+      "chewy pet food"
+    ],
+    "wiki_product": "Chewy (company)",
+    "wiki_company": "Chewy (company)",
+    "investor_keywords": [
+      "CHWY stock"
+    ],
+    "domain": "chewy.com"
+  },
+  {
+    "ticker": "DKNG",
+    "company": "DraftKings",
+    "theme": "Sports betting handle",
+    "consumer_keywords": [
+      "draftkings",
+      "sportsbook"
+    ],
+    "wiki_product": "DraftKings",
+    "wiki_company": "DraftKings",
+    "investor_keywords": [
+      "DKNG stock"
+    ],
+    "app": "DraftKings",
+    "domain": "draftkings.com"
+  },
+  {
+    "ticker": "PLNT",
+    "company": "Planet Fitness",
+    "theme": "Budget gym membership",
+    "consumer_keywords": [
+      "planet fitness"
+    ],
+    "wiki_product": "Planet Fitness",
+    "wiki_company": "Planet Fitness",
+    "investor_keywords": [
+      "PLNT stock"
+    ],
+    "domain": "planetfitness.com"
+  },
+  {
+    "ticker": "YETI",
+    "company": "YETI Holdings",
+    "theme": "Premium drinkware cycle",
+    "consumer_keywords": [
+      "yeti cooler",
+      "yeti tumbler"
+    ],
+    "wiki_product": "Yeti (company)",
+    "wiki_company": "Yeti (company)",
+    "investor_keywords": [
+      "YETI stock"
+    ],
+    "domain": "yeti.com"
+  },
+  {
+    "ticker": "FIGS",
+    "company": "FIGS Inc",
+    "theme": "Premium scrubs",
+    "consumer_keywords": [
+      "figs scrubs"
+    ],
+    "wiki_product": "Figs, Inc.",
+    "wiki_company": "Figs, Inc.",
+    "investor_keywords": [
+      "FIGS stock"
+    ],
+    "domain": "wearfigs.com"
+  },
+  {
+    "ticker": "OLPX",
+    "company": "Olaplex",
+    "theme": "Hair repair category",
+    "consumer_keywords": [
+      "olaplex"
+    ],
+    "wiki_product": "Olaplex",
+    "wiki_company": "Olaplex",
+    "investor_keywords": [
+      "OLPX stock"
+    ],
+    "domain": "olaplex.com"
+  },
+  {
+    "ticker": "TDUP",
+    "company": "ThredUp",
+    "theme": "Online resale",
+    "consumer_keywords": [
+      "thredup"
+    ],
+    "wiki_product": "ThredUp",
+    "wiki_company": "ThredUp",
+    "investor_keywords": [
+      "TDUP stock"
+    ],
+    "domain": "thredup.com"
+  },
+  {
+    "ticker": "LULU",
+    "company": "Lululemon",
+    "theme": "Athleisure demand",
+    "consumer_keywords": [
+      "lululemon",
+      "lululemon leggings"
+    ],
+    "wiki_product": "Lululemon Athletica",
+    "wiki_company": "Lululemon Athletica",
+    "investor_keywords": [
+      "LULU stock"
+    ],
+    "domain": "lululemon.com"
+  },
+  {
+    "ticker": "PTON",
+    "company": "Peloton",
+    "theme": "Connected fitness",
+    "consumer_keywords": [
+      "peloton",
+      "peloton bike"
+    ],
+    "wiki_product": "Peloton (company)",
+    "wiki_company": "Peloton (company)",
+    "investor_keywords": [
+      "PTON stock"
+    ],
+    "domain": "onepeloton.com"
+  },
+  {
+    "ticker": "SKX",
+    "company": "Skechers",
+    "theme": "Comfort footwear",
+    "consumer_keywords": [
+      "skechers"
+    ],
+    "wiki_product": "Skechers",
+    "wiki_company": "Skechers",
+    "investor_keywords": [
+      "SKX stock"
+    ],
+    "domain": "skechers.com"
+  }
+]
