@@ -18,7 +18,14 @@
 
 export type VerdictStatus = 'NO_EDGE' | 'MIXED' | 'PENDING' | 'VALIDATED';
 
-export type VerdictBoard = 'williams' | 'lynch' | 'prophet' | 'target' | 'fable' | 'vector';
+export type VerdictBoard =
+  | 'williams'
+  | 'lynch'
+  | 'prophet'
+  | 'target'
+  | 'fable'
+  | 'vector'
+  | 'trend';
 
 export interface BoardVerdict {
   board: VerdictBoard;
@@ -42,6 +49,39 @@ export interface BoardVerdict {
 }
 
 export const BOARD_VERDICTS: Record<VerdictBoard, BoardVerdict> = {
+  // TREND-1 — the consumer-attention ("social arbitrage") signal was
+  // measured and FAILED ITS PLACEBO TEST. Recorded here so the Trend
+  // Exposure tab can never be mistaken for a predictive board.
+  //
+  // The tab that ships is ATTRIBUTION ONLY (which filers mention a
+  // phrase) plus descriptive pageview context. It deliberately exposes
+  // no score and no ranking by expected return. This row exists so that
+  // if anyone — including a future me — tries to add one, the chip in
+  // the header already says what the measurement found.
+  trend: {
+    board: 'trend',
+    status: 'NO_EDGE',
+    window: '2021-08 -> 2026-07, 22 hand-picked consumer tickers, 225 events, weekly z >= 1.5',
+    // NULL on purpose. The raw figure is +3.36 pp, but rendering it in the
+    // chip would print "NO VALIDATED EDGE (+3.36pp vs SPY)" — which reads as
+    // a win. Placebo-adjusted it is ~0, so the honest chip carries no number
+    // and the full decomposition lives in `note` (the tooltip).
+    excessVsSPYPp: null,
+    excessVsQQQPp: null,
+    ic: null,
+    rollingWindowsWon: null,
+    runId: 'social-arb-study-2026-08-03',
+    date: '2026-08-03',
+    note:
+      'Raw +3.36 pp 12w excess vs SPY does NOT survive controls. Placebo (random entry, ' +
+      'same 22 names) matches or beats it. Entry landed inside the signal week (look-ahead); ' +
+      'beta assumed 1.0 on a universe averaging 1.59; overlapping windows put N_eff at ~66, ' +
+      'not 225 — corrected t ~= 0.4. The headline "low-saturation" split was an artifact: 58 ' +
+      'of 194 events had a quantised investor series whose z was coerced from null to 0.0 and ' +
+      'auto-classified into the winning cohort (those 58 average +16.2%; the 136 with a real ' +
+      'investor z average -1.2%, vs -0.56% for high saturation — no split). Two tickers supply ' +
+      'more than 100% of the total; 12 of 22 are net negative. Attribution shipped; scoring did not.',
+  },
   williams: {
     board: 'williams',
     status: 'NO_EDGE',

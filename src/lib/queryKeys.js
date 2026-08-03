@@ -86,4 +86,10 @@ export const queryKeys = {
   // engine-test "backtest" key above which talks to /api/backtest).
   backtestRuns: (limit) => ['tradeiq', 'backtestRuns', limit ?? 20],
   backtestRun: (runId) => ['tradeiq', 'backtestRun', runId ?? null],
+
+  // TREND-1 — EDGAR filing-mention attribution. Server-parameterised by
+  // phrase + form set + lookback window, so all three must be in the key
+  // or switching forms/window is a cache no-op within staleTime.
+  trendExposure: (phrase, forms, days) =>
+    ['tradeiq', 'trendExposure', phrase ?? '', forms ?? '10-K', days ?? 730],
 };

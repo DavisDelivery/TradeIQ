@@ -6,7 +6,7 @@ import {
   BarChart3, Brain, Newspaper, Globe2, Eye, Target, Clock, ArrowUpRight,
   ArrowDownRight, Minus, Shield, Cpu, LineChart as LineChartIcon, Filter, X,
   Inbox, Bell, ExternalLink, Info, BookMarked, Sparkles, Landmark, FlaskConical,
-  Monitor, Menu, Crosshair, Trophy
+  Monitor, Menu, Crosshair, Trophy, ScanSearch
 } from 'lucide-react';
 import {
   AreaChart, Area, LineChart, Line, BarChart, Bar, RadarChart,
@@ -56,6 +56,7 @@ import { RegimeStrip } from './layout/RegimeStrip.jsx';
 import { MobileDrawer } from './layout/MobileDrawer.jsx';
 import { CrossesView } from './CrossesView.jsx';
 import { SentimentView } from './SentimentView.jsx';
+import { TrendExposureView } from './TrendExposureView.jsx';
 import { ForwardTestView } from './ForwardTestView.jsx';
 
 
@@ -122,6 +123,13 @@ const VIEWS = [
   // SENTIMENT — Most Bullish/Bearish news screener (Finnhub headlines, finance
   // lexicon). Coincident + noisy, so it lives here in the Unvalidated section.
   { id: 'sentiment', label: 'Sentiment', shortLabel: 'Sentiment', icon: Newspaper, section: 'unvalidated' },
+  // TREND-1 — EDGAR filing-mention attribution ("who is exposed to this
+  // phrase?"). Deliberately score-free: the consumer-attention signal it
+  // grew out of failed its placebo test (verdicts.ts `trend`), so only the
+  // entity-resolution half shipped. Attribution is a fact about disclosure,
+  // which is why it can live in the app at all; it sits in Unvalidated so
+  // nobody mistakes it for a measured edge.
+  { id: 'trend', label: 'Trend Exposure', shortLabel: 'Trend', icon: ScanSearch, section: 'unvalidated' },
 ];
 
 // ======================================================================
@@ -408,6 +416,7 @@ export default function App() {
       {activeView === 'earnings' && <ErrorBoundary label="Earnings"><EarningsPlaysView universe={universe} /></ErrorBoundary>}
       {activeView === 'crosses' && <ErrorBoundary label="Crosses"><CrossesView /></ErrorBoundary>}
       {activeView === 'sentiment' && <ErrorBoundary label="Sentiment"><SentimentView /></ErrorBoundary>}
+      {activeView === 'trend' && <ErrorBoundary label="Trend Exposure"><TrendExposureView /></ErrorBoundary>}
       {activeView === 'forward' && <ErrorBoundary label="Forward Test"><ForwardTestView /></ErrorBoundary>}
       {activeView === 'history' && <ErrorBoundary label="History"><HistoryView /></ErrorBoundary>}
       {activeView === 'options' && <ErrorBoundary label="Options"><OptionsFlowView universe={universe} /></ErrorBoundary>}
