@@ -42,6 +42,7 @@ import {
   parseOrFallback,
 } from './schemas';
 import { pitCacheGet, pitCacheSet, type PitCacheKey, type PitDataClass } from './pit-cache';
+import { liveCacheGet, liveCacheSet } from './provider-live-cache';
 
 const MASSIVE = 'https://api.massive.com';
 
@@ -92,7 +93,53 @@ async function fetchJson(url: string): Promise<{ ok: boolean; status: number; bo
   return { ok: true, status: res.status, body };
 }
 
+// ---------------------------------------------------------------------------
+// Durable live cache (staleness audit 2026-08-03).
+//
+// These four fetches previously had NO cross-container cache: makeLiveCache
+// below is an in-memory Map, and every background scan runs in a fresh
+// container. The Prophet russell/all sieve therefore paid ~450 names x 4
+// Massive HTTP calls from the network on EVERY 30-minute run. That survived
+// only while Massive was fast; when its latency rose (~2026-07-25), stage 2
+// tipped from finishing in 61s to exhausting its 245s budget at ~220 names —
+// on every single run for ten days. Every snapshot stamped `partial`,
+// partials never promote, and prophet/russell2k+all froze at their last
+// complete run while the scanner looked busy the whole time.
+//
+// Fundamentals are QUARTERLY data — a 26h TTL is conservative (same
+// discipline as earnings history). Failure-shaped results (rate-limited,
+// errored, or the identity-mismatch guard) are NEVER cached (4t-W1c: an
+// error-shaped empty served for 26h is a lie). PIT reads (asOfDate) bypass
+// this entirely and keep their pit-cache semantics.
+const MASSIVE_LIVE_TTL_MS = 26 * 60 * 60_000;
+const MASSIVE_EMPTY_TTL_MS = 6 * 60 * 60_000; // genuine no-coverage retries sooner
+
+async function massiveLiveCached<T>(
+  endpoint: string,
+  ticker: string,
+  extra: string,
+  fetcher: () => Promise<MassiveFetchStatus<T>>,
+): Promise<MassiveFetchStatus<T>> {
+  const key = { provider: 'massive', endpoint, ticker, extra };
+  try {
+    const hit = await liveCacheGet<T[]>(key, (v) =>
+      Array.isArray(v) && v.length > 0 ? MASSIVE_LIVE_TTL_MS : MASSIVE_EMPTY_TTL_MS,
+    );
+    if (Array.isArray(hit)) return { ...emptyStatus<T>(), data: hit };
+  } catch { /* cache read failure degrades to a plain fetch */ }
+  const res = await fetcher();
+  const failed = res.rateLimited || res.rateLimitExhausted || res.errorMessage;
+  if (!failed) await liveCacheSet(key, res.data).catch(() => {});
+  return res;
+}
+
 export async function fetchRatiosWithStatus(
+  ticker: string,
+): Promise<MassiveFetchStatus<MassiveRatiosResult>> {
+  return massiveLiveCached('ratios', ticker, 'limit=1:v1', () => fetchRatiosRaw(ticker));
+}
+
+async function fetchRatiosRaw(
   ticker: string,
 ): Promise<MassiveFetchStatus<MassiveRatiosResult>> {
   try {
@@ -180,6 +227,22 @@ export async function fetchIncomeStatementsWithStatus(
   ticker: string,
   opts: StatementFetchOpts = {},
 ): Promise<MassiveFetchStatus<MassiveIncomeStatement>> {
+  // PIT reads (asOfDate) keep their pit-cache semantics; only the live
+  // path goes through the durable cache.
+  if (!opts.asOfDate) {
+    return massiveLiveCached<MassiveIncomeStatement>(
+      'income-statements',
+      ticker,
+      `limit=${opts.limit ?? 8}:v1`,
+      () => fetchStatementWithStatus<MassiveIncomeStatement>(
+        '/stocks/financials/v1/income-statements',
+        ticker,
+        opts,
+        (body, ctx) => parseOrFallback(MassiveIncomeStatementsResponseSchema, body, ctx, { results: [] }).results ?? [],
+        'massive/income-statements',
+      ),
+    );
+  }
   return fetchStatementWithStatus<MassiveIncomeStatement>(
     '/stocks/financials/v1/income-statements',
     ticker,
@@ -193,6 +256,22 @@ export async function fetchBalanceSheetsWithStatus(
   ticker: string,
   opts: StatementFetchOpts = {},
 ): Promise<MassiveFetchStatus<MassiveBalanceSheet>> {
+  // PIT reads (asOfDate) keep their pit-cache semantics; only the live
+  // path goes through the durable cache.
+  if (!opts.asOfDate) {
+    return massiveLiveCached<MassiveBalanceSheet>(
+      'balance-sheets',
+      ticker,
+      `limit=${opts.limit ?? 8}:v1`,
+      () => fetchStatementWithStatus<MassiveBalanceSheet>(
+        '/stocks/financials/v1/balance-sheets',
+        ticker,
+        opts,
+        (body, ctx) => parseOrFallback(MassiveBalanceSheetsResponseSchema, body, ctx, { results: [] }).results ?? [],
+        'massive/balance-sheets',
+      ),
+    );
+  }
   return fetchStatementWithStatus<MassiveBalanceSheet>(
     '/stocks/financials/v1/balance-sheets',
     ticker,
@@ -206,6 +285,22 @@ export async function fetchCashFlowStatementsWithStatus(
   ticker: string,
   opts: StatementFetchOpts = {},
 ): Promise<MassiveFetchStatus<MassiveCashFlow>> {
+  // PIT reads (asOfDate) keep their pit-cache semantics; only the live
+  // path goes through the durable cache.
+  if (!opts.asOfDate) {
+    return massiveLiveCached<MassiveCashFlow>(
+      'cash-flow-statements',
+      ticker,
+      `limit=${opts.limit ?? 8}:v1`,
+      () => fetchStatementWithStatus<MassiveCashFlow>(
+        '/stocks/financials/v1/cash-flow-statements',
+        ticker,
+        opts,
+        (body, ctx) => parseOrFallback(MassiveCashFlowStatementsResponseSchema, body, ctx, { results: [] }).results ?? [],
+        'massive/cash-flow-statements',
+      ),
+    );
+  }
   return fetchStatementWithStatus<MassiveCashFlow>(
     '/stocks/financials/v1/cash-flow-statements',
     ticker,

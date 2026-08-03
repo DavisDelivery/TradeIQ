@@ -557,6 +557,18 @@ const DAILY_CLOSE_SLOTS: Partial<
   // slot is the schedule-aware freshness bound; the 11:50 morning run
   // is covered by the 12h budget floor.
   earnings: { slot: { hourUtc: 23, minuteUtc: 50 } },
+  // Staleness audit 2026-08-03 — these four are weekday-evening (or
+  // weekday-noon) boards that were MISSING from this registry, so the
+  // moment their wall-clock budget lapsed on a weekend they flagged
+  // stale: every Saturday through Monday-daytime the app showed stale
+  // banners on Trident, Crosses, FABLE and Sentiment while their Friday
+  // snapshots were exactly as fresh as the schedule allows. Measured on
+  // prod: trident served `snapshot-stale` at 63.6h on a Monday 13:53 UTC
+  // while insider (registered here) served `snapshot` at 63.0h.
+  trident: { slot: { hourUtc: 22, minuteUtc: 15 } }, // sp500 22:15, r2k 22:20 — earliest is the conservative bound
+  crosses: { slot: { hourUtc: 21, minuteUtc: 10 }, universes: ['sp500'] },
+  fable: { slot: { hourUtc: 23, minuteUtc: 30 }, universes: ['sp500'] },
+  sentiment: { slot: { hourUtc: 12, minuteUtc: 20 }, universes: ['sp500'] },
 };
 
 /**
