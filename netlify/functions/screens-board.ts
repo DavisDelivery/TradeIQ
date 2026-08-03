@@ -38,18 +38,21 @@ const json = (statusCode: number, body: unknown) => ({
 
 /** Catalog entries omit the functions — they are not serializable. */
 const catalog = () =>
-  SCREENS.map(({ id, name, thesis, popularizedBy, evidence, evidenceNote, source, approximations, take }) => ({
-    id,
-    name,
-    thesis,
-    popularizedBy,
-    evidence,
-    evidenceNote,
-    source,
-    approximations: approximations ?? [],
-    take: take ?? null,
-    needsDedicatedFetch: (SCREENS_BY_ID.get(id)?.filters.length ?? 0) > 0,
-  }));
+  SCREENS.map(
+    ({ id, name, thesis, popularizedBy, evidence, evidenceNote, source, approximations, take, preferredUniverse }) => ({
+      id,
+      name,
+      thesis,
+      popularizedBy,
+      evidence,
+      evidenceNote,
+      source,
+      approximations: approximations ?? [],
+      take: take ?? null,
+      preferredUniverse: preferredUniverse ?? null,
+      needsDedicatedFetch: (SCREENS_BY_ID.get(id)?.filters.length ?? 0) > 0,
+    }),
+  );
 
 export const handler: Handler = async (event) => {
   const start = Date.now();

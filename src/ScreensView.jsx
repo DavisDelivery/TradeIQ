@@ -127,6 +127,12 @@ export const ScreensView = () => {
             onClick={() => {
               setScreenId(s.id);
               setSelected(null);
+              // Some strategies are DEFINED over a universe they can only
+              // match in: Tiny Titans wants $25-250M caps and the squeeze
+              // screen wants a <50M float, so both match exactly 0 names in
+              // the S&P 500 (verified on prod). Landing the user on an empty
+              // board would read as "broken" rather than "wrong universe".
+              if (s.preferredUniverse) setUniverse(s.preferredUniverse);
             }}
             title={s.thesis}
             className={`px-3 h-8 text-[11px] font-mono uppercase tracking-widest border transition-colors ${

@@ -62,6 +62,15 @@ export interface ScreenDef {
   take?: number;
   /** Honest list of criteria we could NOT reproduce. Surfaced in the UI. */
   approximations?: string[];
+  /**
+   * Universe the strategy is actually defined over. Verified live on prod:
+   * Tiny Titans matched 0/503 on the S&P 500 and 25/1954 on the Russell 2000
+   * — correct in both cases, since its published rule is a $25-250M market
+   * cap band that no S&P constituent can satisfy. Same for the short-squeeze
+   * screen (needs a <50M float). Without this the UI opens those screens on
+   * the default large-cap universe, shows an empty board, and looks broken.
+   */
+  preferredUniverse?: 'sp500' | 'russell2k' | 'ndx' | 'dji';
 }
 
 const num = (v: number | null | undefined): v is number => typeof v === 'number' && Number.isFinite(v);
@@ -205,6 +214,7 @@ export const SCREENS: ScreenDef[] = [
     // The published rule is "then take the 25 highest 52-week relative strength".
     rank: (r) => r.perfYearPct,
     take: 25,
+    preferredUniverse: 'russell2k',
   },
   {
     id: 'magic-formula',
@@ -332,6 +342,7 @@ export const SCREENS: ScreenDef[] = [
       liquid(r),
     rank: (r) => r.shortFloatPct,
     take: 30,
+    preferredUniverse: 'russell2k',
   },
 ];
 

@@ -242,6 +242,30 @@ describe('screen predicates behave as documented', () => {
   });
 });
 
+describe('universe appropriateness', () => {
+  // Measured on prod: both of these matched 0/503 on the S&P 500 and real
+  // counts on the Russell 2000 (tiny-titans 25, short-squeeze 10). The
+  // predicates were right; the default universe was wrong.
+  it('screens with small-cap/low-float rules declare russell2k', () => {
+    expect(SCREENS_BY_ID.get('tiny-titans')!.preferredUniverse).toBe('russell2k');
+    expect(SCREENS_BY_ID.get('short-squeeze')!.preferredUniverse).toBe('russell2k');
+  });
+
+  it('Tiny Titans matches nothing at S&P-scale caps but does at micro-cap scale', () => {
+    const s = SCREENS_BY_ID.get('tiny-titans')!;
+    const spScale = row({ marketCapM: 80_000, ps: 0.5, price: 50, avgVolume: 5000 });
+    const microScale = row({ marketCapM: 120, ps: 0.5, price: 10, avgVolume: 300 });
+    expect(s.predicate!(spScale)).toBe(false);
+    expect(s.predicate!(microScale)).toBe(true);
+  });
+
+  it('large-cap screens do NOT force a universe switch', () => {
+    for (const id of ['high52w', 'lowvol', 'dividend-growth', 'canslim']) {
+      expect(SCREENS_BY_ID.get(id)!.preferredUniverse, `screen ${id}`).toBeUndefined();
+    }
+  });
+});
+
 describe('catalog integrity', () => {
   it('ids are unique and index correctly', () => {
     expect(SCREENS_BY_ID.size).toBe(SCREENS.length);
