@@ -277,3 +277,73 @@ describe('catalog integrity', () => {
     }
   });
 });
+
+describe('Undiscovered Consumer (Camillo structural screen)', () => {
+  const s = SCREENS_BY_ID.get('camillo-undiscovered')!;
+  const base = {
+    sector: 'Consumer Cyclical' as const,
+    floatM: 50,
+    instOwnPct: 45,
+    insiderOwnPct: 8,
+    salesGrowthQoQPct: 22,
+    high52wDistPct: -12,
+    avgVolume: 1500,
+  };
+
+  it('matches a small-float, lightly-owned, growing consumer name', () => {
+    expect(s.predicate!(row(base))).toBe(true);
+  });
+
+  it('rejects a big float — retail flow cannot move it', () => {
+    // PG-scale float was ~2,327M against ELF's 56.9M; the gate is the point.
+    expect(s.predicate!(row({ ...base, floatM: 2_327 }))).toBe(false);
+  });
+
+  it('rejects a crowded name — high institutional ownership IS the closed gap', () => {
+    expect(s.predicate!(row({ ...base, instOwnPct: 93 }))).toBe(false);
+  });
+
+  it('rejects a non-consumer sector', () => {
+    expect(s.predicate!(row({ ...base, sector: 'Technology' }))).toBe(false);
+    expect(s.predicate!(row({ ...base, sector: 'Consumer Defensive' }))).toBe(true);
+  });
+
+  it('requires actual demand growth, not just attention', () => {
+    expect(s.predicate!(row({ ...base, salesGrowthQoQPct: 2 }))).toBe(false);
+  });
+
+  it('excludes a collapse — a broken thesis is not an undiscovered one', () => {
+    expect(s.predicate!(row({ ...base, high52wDistPct: -72 }))).toBe(false);
+  });
+
+  it('treats a MISSING field as a fail, never as a pass', () => {
+    // The null-to-zero coercion in the original study turned absent data into
+    // a winning cohort. A null here must never satisfy a threshold.
+    for (const k of ['floatM', 'instOwnPct', 'insiderOwnPct', 'salesGrowthQoQPct', 'high52wDistPct'] as const) {
+      expect(s.predicate!(row({ ...base, [k]: null })), `${k} null must fail`).toBe(false);
+    }
+  });
+
+  it('ranks the least-discovered name first', () => {
+    const quiet = s.rank!(row({ ...base, instOwnPct: 20 }))!;
+    const crowded = s.rank!(row({ ...base, instOwnPct: 65 }))!;
+    expect(quiet).toBeGreaterThan(crowded);
+  });
+
+  it('is graded anecdotal and states the placebo failure outright', () => {
+    expect(s.evidence).toBe('anecdotal');
+    expect(s.evidenceNote).toMatch(/placebo/i);
+    expect(s.evidenceNote).toMatch(/NO_EDGE/);
+    // The compound-vs-arithmetic correction must survive any edit.
+    expect(s.evidenceNote).toMatch(/48%\s*CAGR/);
+  });
+
+  it('says out loud that the trend signal is NOT in the screen', () => {
+    expect(s.approximations?.join(' ')).toMatch(/signal is absent by design/i);
+    expect(s.approximations?.join(' ')).toMatch(/materiality/i);
+  });
+
+  it('opens on the universe where small floats actually live', () => {
+    expect(s.preferredUniverse).toBe('russell2k');
+  });
+});

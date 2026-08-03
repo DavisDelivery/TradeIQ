@@ -324,6 +324,61 @@ export const SCREENS: ScreenDef[] = [
     take: 40,
   },
   {
+    id: 'camillo-undiscovered',
+    name: 'Undiscovered Consumer',
+    thesis:
+      'A consumer-facing company small enough that a real demand shift moves the stock, ' +
+      'and not yet crowded with institutions. The STRUCTURAL preconditions of social ' +
+      'arbitrage — not the trend signal itself.',
+    popularizedBy: 'Chris Camillo',
+    evidence: 'anecdotal',
+    evidenceNote:
+      'Camillo\'s record is self-reported and reviewed, not audited: Jack Schwager read ' +
+      'his brokerage statements ($84k Aug-2006 to $42M May-2021) but that is an author\'s ' +
+      'review, not a CPA audit, and the widely quoted 68%/77% are ARITHMETIC AVERAGES of ' +
+      'annual returns — the compound rate is ~48% CAGR. His one fiduciary vehicle (Social ' +
+      'Information Arbitrage LP, CIK 0001606432) raised $0 and has filed nothing since 2014, ' +
+      'so no LP or auditor has ever struck his numbers. CRITICALLY: we measured the ' +
+      'attention half of his method on our own data and it FAILED ITS PLACEBO TEST ' +
+      '(reports/trend/social-arb-study.md, verdict NO_EDGE) — random entry into the same ' +
+      'names matched it. So this screen deliberately ships the STRUCTURAL half only: the ' +
+      'float, ownership and demand-growth conditions under which a trend COULD move a ' +
+      'stock. It does not claim to know that a trend is happening.',
+    source: 'https://www.businessinsider.com/how-to-invest-social-arbitrage-strategy-chris-camillo-2021-8',
+    filters: [],
+    predicate: (r) =>
+      // Consumer-facing. Finviz sector filters are include-only, so post-fetch.
+      (r.sector === 'Consumer Cyclical' || r.sector === 'Consumer Defensive') &&
+      // FLOAT is the gate that separates names retail flow can move from names
+      // it cannot. The winners in the study had 40-90x smaller floats than the
+      // absorbers (ELF 56.9M, CROX 47.7M vs PG 2,326.8M).
+      num(r.floatM) && r.floatM <= 250 &&
+      // Not yet crowded. High institutional ownership IS the closed-gap state.
+      num(r.instOwnPct) && r.instOwnPct <= 70 &&
+      // Operator-aligned. Camillo favours founder/insider-heavy names.
+      num(r.insiderOwnPct) && r.insiderOwnPct >= 3 &&
+      // DEMAND, not attention. Signals from what consumers DO (revenue, sales
+      // rank, downloads) do not reverse; signals from what people LOOK AT do
+      // (Da/Engelberg/Gao 2011, reversing weeks 5-52). Sales growth is the
+      // only "do" measure in the Finviz column set.
+      num(r.salesGrowthQoQPct) && r.salesGrowthQoQPct >= 10 &&
+      // Exclude collapses — a broken thesis is not an undiscovered one.
+      num(r.high52wDistPct) && r.high52wDistPct >= -50 &&
+      liquid(r),
+    // Least discovered first: lowest institutional ownership ranks best.
+    rank: (r) => (num(r.instOwnPct) ? -r.instOwnPct : null),
+    take: 40,
+    approximations: [
+      'The social-arbitrage SIGNAL is absent by design — it measured NO_EDGE. Use the Trend Exposure tab to ask whether a trend exists and who discloses it.',
+      'Sales growth QoQ is a weak proxy for the consumer-demand data Camillo actually buys (credit-card panels, six figures a year).',
+      'No materiality test: Finviz has no segment revenue, so a trending product immaterial to the parent still passes (Mattel/Barbie was 2.3% of revenue and MAT underperformed SPY by 32pp in 2023).',
+      'Insider ownership is a level, not a change — it does not detect recent insider buying.',
+    ],
+    // Small float + sub-70% institutional ownership is structurally a
+    // small/mid-cap condition; on the S&P this matches almost nothing.
+    preferredUniverse: 'russell2k',
+  },
+  {
     id: 'short-squeeze',
     name: 'Short Squeeze Candidates',
     thesis: 'Crowded shorts plus upside momentum can force covering.',
