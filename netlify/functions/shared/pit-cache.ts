@@ -63,6 +63,31 @@ export interface PitCacheKey {
 
 const COLLECTION = 'pitCache';
 
+/**
+ * FVZ-4 — bar-source epoch.
+ *
+ * `pitCache` entries have NO TTL by design: a point-in-time answer is
+ * immutable, so it is written once and trusted forever. That is exactly why
+ * changing where bars come from is dangerous here — without an epoch, a
+ * backtest run after the switch would mix bars Polygon wrote months ago
+ * with bars Finviz returns today, inside the same equity curve, with
+ * nothing in the data saying so. (The two agree to 0.00000% on closes but
+ * differ by up to ~5% on volume, and the provider field on existing rows
+ * is already known to be unreliable — massive-fundamentals writes
+ * `provider: 'polygon'` for Massive statements.)
+ *
+ * So bars keys carry the active source. Flipping FINVIZ_BARS moves every
+ * bars key to a fresh namespace; pre-existing Polygon entries stay valid
+ * and reachable under the old namespace rather than being silently
+ * reinterpreted.
+ */
+export function barsSourceEpoch(): string {
+  const finvizOn =
+    Boolean(process.env.FINVIZ_AUTH_TOKEN) &&
+    (process.env.FINVIZ_BARS ?? 'on').toLowerCase() !== 'off';
+  return finvizOn ? 'finviz' : 'polygon';
+}
+
 /** Stable hash over the key — sorted-key JSON → sha1 → hex. */
 export function hashKey(key: PitCacheKey): string {
   const source = key as unknown as Record<string, unknown>;
@@ -70,6 +95,11 @@ export function hashKey(key: PitCacheKey): string {
   for (const k of Object.keys(source).sort()) {
     const v = source[k];
     if (v !== undefined) canonical[k] = v;
+  }
+  // Only the bars class is source-switchable; every other data class keeps
+  // its historical key so this change invalidates nothing it need not.
+  if (key.dataClass === 'bars') {
+    canonical.__barsSource = barsSourceEpoch();
   }
   return createHash('sha1').update(JSON.stringify(canonical)).digest('hex');
 }

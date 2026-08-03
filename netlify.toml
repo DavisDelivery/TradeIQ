@@ -121,6 +121,12 @@
 [functions."screens-board"]
   timeout = 26
 
+# FVZ-4 — /api/quotes now calls Finviz first (one call covers 500+ tickers)
+# and only then backfills any residue from Polygon. Two sequential upstreams
+# do not fit the 10s default with any margin.
+[functions."quotes"]
+  timeout = 26
+
 # ==========================================================================
 # API redirects — rewrite /api/<endpoint> to /.netlify/functions/<endpoint>
 # ==========================================================================

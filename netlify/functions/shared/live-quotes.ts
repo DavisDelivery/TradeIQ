@@ -14,6 +14,8 @@
 // upstream omits simply fall through to the snapshot value on the client.
 // Callers treat a missing entry as "no live quote, keep the scored price."
 
+import { fetchFinvizQuotes, finvizEnabled } from './finviz';
+
 const POLYGON = 'https://api.polygon.io';
 
 export interface LiveQuote {
@@ -37,13 +39,54 @@ function round2(n: number): number {
  * it returns whatever chunks succeeded.
  */
 export async function getLiveQuotes(tickers: string[]): Promise<Record<string, LiveQuote>> {
-  const key = process.env.POLYGON_API_KEY;
-  if (!key) throw new Error('POLYGON_API_KEY not set');
-
   const uniq = [...new Set(tickers.map((t) => String(t || '').trim().toUpperCase()).filter(Boolean))];
   const out: Record<string, LiveQuote> = {};
   if (uniq.length === 0) return out;
 
+  // FVZ-4: Finviz first. Its screener takes an arbitrary ticker LIST and
+  // answered all 503 S&P names in ONE call (measured) versus Polygon's
+  // 100-per-call snapshot — and this is the highest-frequency upstream we
+  // have, polled every 15-30s per open board while the market is open.
+  //
+  // Whatever Finviz misses (an uncovered symbol, a throttle) falls through
+  // to Polygon below, so a partial answer degrades instead of blanking the
+  // price overlay.
+  if (finvizEnabled()) {
+    try {
+      const quotes = await fetchFinvizQuotes(uniq);
+      if (quotes) {
+        for (const q of quotes) {
+          if (q.price == null || q.price <= 0) continue;
+          out[q.ticker.toUpperCase()] = {
+            price: round2(q.price),
+            changePct: q.changePct == null ? 0 : round2(q.changePct),
+          };
+        }
+      }
+    } catch {
+      // Never let the new path break the overlay.
+    }
+  }
+
+  const missing = uniq.filter((t) => !(t in out));
+  if (missing.length === 0) return out;
+
+  const key = process.env.POLYGON_API_KEY;
+  // Finviz alone is a complete answer when Polygon is deconfigured; only
+  // the residual tickers would have been backfilled.
+  if (!key) {
+    if (Object.keys(out).length > 0) return out;
+    throw new Error('POLYGON_API_KEY not set');
+  }
+
+  return backfillFromPolygon(missing, out, key);
+}
+
+async function backfillFromPolygon(
+  uniq: string[],
+  out: Record<string, LiveQuote>,
+  key: string,
+): Promise<Record<string, LiveQuote>> {
   const CHUNK = 100;
   for (let i = 0; i < uniq.length; i += CHUNK) {
     const chunk = uniq.slice(i, i + CHUNK);
