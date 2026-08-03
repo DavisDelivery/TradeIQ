@@ -20,7 +20,7 @@ const CATALOG = {
   ok: true,
   screens: [
     { id: 'high52w', name: '52-Week High Momentum', thesis: 'Nearness predicts continuation.', evidence: 'academic', evidenceNote: 'n', approximations: [] },
-    { id: 'short-squeeze', name: 'Short Squeeze Candidates', thesis: 'Crowded shorts squeeze.', evidence: 'contrary', evidenceNote: 'n', approximations: [] },
+    { id: 'short-squeeze', name: 'Short Squeeze Candidates', thesis: 'Crowded shorts squeeze.', evidence: 'contrary', evidenceNote: 'n', approximations: [], preferredUniverse: 'russell2k' },
   ],
 };
 
@@ -116,6 +116,22 @@ describe('ScreensView', () => {
     fireEvent.click(screen.getByText('Short Squeeze Candidates'));
     await waitFor(() =>
       expect(fetchMock.mock.calls.some(([u]) => String(u).includes('screen=short-squeeze'))).toBe(true),
+    );
+  });
+
+  it('a screen that only matches small caps switches universe with it', async () => {
+    // Verified on prod: this screen matches 0/503 on the S&P 500 and 10/1954
+    // on the Russell 2000. Opening it on the default universe would show an
+    // empty board and read as a bug.
+    renderView();
+    await waitFor(() => expect(screen.getByText('Short Squeeze Candidates')).toBeInTheDocument());
+    fireEvent.click(screen.getByText('Short Squeeze Candidates'));
+    await waitFor(() =>
+      expect(
+        fetchMock.mock.calls.some(
+          ([u]) => String(u).includes('screen=short-squeeze') && String(u).includes('universe=russell2k'),
+        ),
+      ).toBe(true),
     );
   });
 
