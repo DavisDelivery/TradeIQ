@@ -56,6 +56,7 @@ import { RegimeStrip } from './layout/RegimeStrip.jsx';
 import { MobileDrawer } from './layout/MobileDrawer.jsx';
 import { CrossesView } from './CrossesView.jsx';
 import { SentimentView } from './SentimentView.jsx';
+import { ScreensView } from './ScreensView.jsx';
 import { TrendExposureView } from './TrendExposureView.jsx';
 import { ForwardTestView } from './ForwardTestView.jsx';
 
@@ -130,6 +131,14 @@ const VIEWS = [
   // which is why it can live in the app at all; it sits in Unvalidated so
   // nobody mistakes it for a measured edge.
   { id: 'trend', label: 'Trend Exposure', shortLabel: 'Trend', icon: ScanSearch, section: 'unvalidated' },
+  // FVZ-3 — published screening strategies (Minervini, CAN SLIM, Piotroski,
+  // Magic Formula, PEAD, ...) over the Finviz universe. Unvalidated on
+  // purpose: these are OTHER PEOPLE'S published screens, carrying their
+  // authors' evidence and not ours. Each one renders its own evidence grade
+  // — including 'evidence against' for the short-squeeze screen — and the
+  // forward-test league is what will eventually tell us which ones work on
+  // our data.
+  { id: 'screens', label: 'Screens', shortLabel: 'Screens', icon: Filter, section: 'unvalidated' },
 ];
 
 // ======================================================================
@@ -416,6 +425,7 @@ export default function App() {
       {activeView === 'earnings' && <ErrorBoundary label="Earnings"><EarningsPlaysView universe={universe} /></ErrorBoundary>}
       {activeView === 'crosses' && <ErrorBoundary label="Crosses"><CrossesView /></ErrorBoundary>}
       {activeView === 'sentiment' && <ErrorBoundary label="Sentiment"><SentimentView /></ErrorBoundary>}
+      {activeView === 'screens' && <ErrorBoundary label="Screens"><ScreensView /></ErrorBoundary>}
       {activeView === 'trend' && <ErrorBoundary label="Trend Exposure"><TrendExposureView /></ErrorBoundary>}
       {activeView === 'forward' && <ErrorBoundary label="Forward Test"><ForwardTestView /></ErrorBoundary>}
       {activeView === 'history' && <ErrorBoundary label="History"><HistoryView /></ErrorBoundary>}

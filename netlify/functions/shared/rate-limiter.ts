@@ -183,6 +183,51 @@ export function _resetFinnhubBucketForTests(): void {
 }
 
 // ---------------------------------------------------------------------------
+// Finviz Elite pacing
+// ---------------------------------------------------------------------------
+//
+// Finviz publishes no documented limit, so this is set from MEASUREMENT
+// (2026-08-03, live account): a ~25-call unpaced burst tripped the limiter
+// (HTTP 200 with a plain-text "unusual high number of requests" body, NOT a
+// 429), and it cleared inside 60s. A re-test at 1.2s spacing ran 15 calls
+// clean, and a 10-call unpaced burst also passed.
+//
+// 45 rpm ≈ 1.33s spacing sits just under the measured-safe rate with margin.
+// initialTokens: 6 keeps a cold start from spending the whole burst budget in
+// the first second — the same lesson the Finnhub bucket above encodes, and
+// the one whose absence tripped the limiter during endpoint discovery.
+//
+// This paces WITHIN one invocation only (Netlify is stateless per call); the
+// durable Firestore cache is what keeps cross-invocation volume down, and the
+// throttle circuit breaker in shared/finviz.ts is the backstop if we still
+// trip it.
+const DEFAULT_FINVIZ_RPM = 45;
+
+let _finvizBucket: TokenBucket | null = null;
+
+export function resolveFinvizRpm(): number {
+  const raw = process.env.FINVIZ_RPM;
+  if (raw === undefined || raw === '') return DEFAULT_FINVIZ_RPM;
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? n : DEFAULT_FINVIZ_RPM;
+}
+
+export function getFinvizBucket(): TokenBucket {
+  if (_finvizBucket === null) {
+    _finvizBucket = createTokenBucket({
+      callsPerWindow: resolveFinvizRpm(),
+      initialTokens: 6,
+    });
+  }
+  return _finvizBucket;
+}
+
+/** Tests only. */
+export function _resetFinvizBucketForTests(): void {
+  _finvizBucket = null;
+}
+
+// ---------------------------------------------------------------------------
 // 429-aware fetch wrapper
 // ---------------------------------------------------------------------------
 
