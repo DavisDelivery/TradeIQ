@@ -52,6 +52,11 @@ const HEADERS = [
   '50-Day Simple Moving Average', '200-Day Simple Moving Average', '52-Week High',
   '52-Week Low', 'Relative Strength Index (14)', 'Analyst Recom', 'Average Volume',
   'Relative Volume', 'Price', 'Change', 'Volume', 'Earnings Date', 'Target Price',
+  // FVZ-3 screen-enabling columns.
+  'P/S', 'P/B', 'Payout Ratio', 'EPS Growth Past 5 Years', 'Shares Float',
+  'Insider Transactions', 'Short Ratio', 'Return on Assets',
+  'Return on Invested Capital', 'Current Ratio', 'Performance (Quarter)',
+  'Beta', 'Average True Range',
 ];
 
 const q = (v: string) => `"${v.replace(/"/g, '""')}"`;
@@ -174,30 +179,79 @@ describe('fetchFinvizScreener', () => {
   });
 });
 
+// Sharded cache (FVZ-3). The russell2k columnar doc reached 989KB — 94% of
+// Firestore's 1MB ceiling — once COLUMNS widened to 51, so the universe is
+// stored as a manifest + N row-shards. `writes` indexes cacheSet calls by
+// their endpoint so the tests read against intent rather than call order.
+const writesTo = (endpoint: string) =>
+  h.cacheSet.mock.calls.filter((c: any[]) => c[0]?.endpoint === endpoint);
+
+/** Replay whatever the last live fetch stored, as liveCacheGet would serve it. */
+const serveFromStore = () => {
+  const store = new Map<string, unknown>();
+  for (const [key, value] of h.cacheSet.mock.calls) {
+    store.set(`${key.endpoint}|${key.ticker}`, value);
+  }
+  return (key: any) => Promise.resolve(store.get(`${key.endpoint}|${key.ticker}`) ?? null);
+};
+
 describe('getFinvizUniverseSnapshot cache discipline', () => {
-  it('live success persists ONE columnar doc and reports source=live', async () => {
+  it('live success writes shards + a manifest and reports source=live', async () => {
     fetchMock.mockImplementation(() => ok(csvOf(HEADERS, [AAPL])));
     const snap = await getFinvizUniverseSnapshot('sp500');
     expect(snap!.source).toBe('live');
     expect(snap!.rows[0].ticker).toBe('AAPL');
-    expect(h.cacheSet).toHaveBeenCalledTimes(1);
-    const [key, value] = h.cacheSet.mock.calls[0];
-    expect(key).toEqual({ provider: 'finviz', endpoint: 'screener-universe', ticker: '_sp500', extra: 'v1' });
-    expect(value.f).toContain('ticker');
-    expect(value.r).toHaveLength(1);
+
+    const shards = writesTo('screener-universe-shard');
+    const manifests = writesTo('screener-universe');
+    expect(shards).toHaveLength(1);
+    expect(manifests).toHaveLength(1);
+    expect(manifests[0][0]).toEqual({
+      provider: 'finviz',
+      endpoint: 'screener-universe',
+      ticker: '_sp500',
+      extra: 'v2', // epoch bumped with the column widening
+    });
+    expect(manifests[0][1].shards).toBe(1);
+    expect(manifests[0][1].f).toContain('ticker');
+  });
+
+  it('the manifest is written LAST so a crash cannot promise missing shards', async () => {
+    fetchMock.mockImplementation(() => ok(csvOf(HEADERS, [AAPL])));
+    await getFinvizUniverseSnapshot('sp500');
+    const endpoints = h.cacheSet.mock.calls.map((c: any[]) => c[0].endpoint);
+    expect(endpoints[endpoints.length - 1]).toBe('screener-universe');
   });
 
   it('a cache hit costs zero fetches and round-trips every field', async () => {
     fetchMock.mockImplementation(() => ok(csvOf(HEADERS, [AAPL])));
     const first = await getFinvizUniverseSnapshot('sp500');
-    const stored = h.cacheSet.mock.calls[0][1];
+    const replay = serveFromStore();
     vi.clearAllMocks();
-    h.cacheGet.mockResolvedValue(stored);
+    h.cacheGet.mockImplementation(replay);
 
     const snap = await getFinvizUniverseSnapshot('sp500');
     expect(fetchMock).not.toHaveBeenCalled();
     expect(snap!.source).toBe('cache');
     expect(snap!.rows).toEqual(first!.rows);
+  });
+
+  it('a MISSING shard is a cache miss, never a truncated universe', async () => {
+    fetchMock.mockImplementation(() => ok(csvOf(HEADERS, [AAPL])));
+    await getFinvizUniverseSnapshot('sp500');
+    vi.clearAllMocks();
+    // Manifest survives but its shard was evicted/never written. Serving the
+    // manifest alone would silently return an EMPTY S&P 500 as authoritative.
+    h.cacheGet.mockImplementation((key: any) =>
+      Promise.resolve(
+        key.endpoint === 'screener-universe' ? { shards: 1, f: ['ticker'], at: 'x', mh: [] } : null,
+      ),
+    );
+    fetchMock.mockImplementation(() => ok(csvOf(HEADERS, [AAPL])));
+    const snap = await getFinvizUniverseSnapshot('sp500');
+    expect(fetchMock).toHaveBeenCalled(); // refetched rather than served short
+    expect(snap!.source).toBe('live');
+    expect(snap!.rows).toHaveLength(1);
   });
 
   it('a FAILED fetch (login-page HTML) returns null and caches NOTHING', async () => {
@@ -210,7 +264,7 @@ describe('getFinvizUniverseSnapshot cache discipline', () => {
     fetchMock.mockImplementation(() => ok(csvOf(HEADERS, [])));
     const snap = await getFinvizUniverseSnapshot('sp500');
     expect(snap!.rows).toEqual([]);
-    expect(h.cacheSet).toHaveBeenCalledTimes(1);
+    expect(writesTo('screener-universe')).toHaveLength(1);
   });
 
   it('disabled (no token): null, no fetch, no cache traffic', async () => {

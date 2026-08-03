@@ -92,4 +92,9 @@ export const queryKeys = {
   // or switching forms/window is a cache no-op within staleTime.
   trendExposure: (phrase, forms, days) =>
     ['tradeiq', 'trendExposure', phrase ?? '', forms ?? '10-K', days ?? 730],
+
+  // FVZ-3 — published screening strategies. The catalog is static; results
+  // are parameterised by screen AND universe, so both belong in the key.
+  screenCatalog: () => ['tradeiq', 'screenCatalog'],
+  screen: (screenId, universe) => ['tradeiq', 'screen', screenId ?? '', universe ?? 'sp500'],
 };

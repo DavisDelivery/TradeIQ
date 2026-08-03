@@ -84,6 +84,22 @@ export interface FinvizRow {
   earningsDate: string | null;
   earningsSession: 'amc' | 'bmo' | null;
   targetPrice: number | null;
+  // FVZ-3 — screen-enabling columns.
+  ps: number | null;
+  pb: number | null;
+  payoutRatioPct: number | null;
+  epsGrowthPast5YPct: number | null;
+  /** Free float in millions of shares. */
+  floatM: number | null;
+  insiderTransPct: number | null;
+  /** Days to cover. */
+  shortRatio: number | null;
+  roaPct: number | null;
+  roicPct: number | null;
+  currentRatio: number | null;
+  perfQuarterPct: number | null;
+  beta: number | null;
+  atr: number | null;
 }
 
 interface ColumnSpec {
@@ -135,6 +151,24 @@ const COLUMNS: ColumnSpec[] = [
   { id: 67, header: 'Volume', field: 'volume', kind: 'num' },
   { id: 68, header: 'Earnings Date', field: 'earningsDate', kind: 'earnings' },
   { id: 69, header: 'Target Price', field: 'targetPrice', kind: 'num' },
+  // FVZ-3 additions. Each one moves a published screen off a dedicated
+  // Finviz call and onto the cached universe snapshot (free post-fetch):
+  // P/S+P/B → small-cap value & Piotroski pre-filter; ROA/ROIC/current ratio
+  // → Piotroski & Magic-Formula proxies; float+short ratio → squeeze screens;
+  // perf quarter → the two-window momentum screens; beta+ATR → low-volatility.
+  { id: 10, header: 'P/S', field: 'ps', kind: 'num' },
+  { id: 11, header: 'P/B', field: 'pb', kind: 'num' },
+  { id: 15, header: 'Payout Ratio', field: 'payoutRatioPct', kind: 'num' },
+  { id: 19, header: 'EPS Growth Past 5 Years', field: 'epsGrowthPast5YPct', kind: 'num' },
+  { id: 25, header: 'Shares Float', field: 'floatM', kind: 'num' },
+  { id: 27, header: 'Insider Transactions', field: 'insiderTransPct', kind: 'num' },
+  { id: 31, header: 'Short Ratio', field: 'shortRatio', kind: 'num' },
+  { id: 32, header: 'Return on Assets', field: 'roaPct', kind: 'num' },
+  { id: 34, header: 'Return on Invested Capital', field: 'roicPct', kind: 'num' },
+  { id: 35, header: 'Current Ratio', field: 'currentRatio', kind: 'num' },
+  { id: 44, header: 'Performance (Quarter)', field: 'perfQuarterPct', kind: 'num' },
+  { id: 48, header: 'Beta', field: 'beta', kind: 'num' },
+  { id: 49, header: 'Average True Range', field: 'atr', kind: 'num' },
 ];
 
 const REQUEST_TIMEOUT_MS = 20_000;
@@ -318,6 +352,51 @@ export interface FinvizScreenResult {
 }
 
 /**
+ * Finviz filters are ONE VALUE PER KEY, and a repeated key silently
+ * LAST-WINS rather than AND-ing or erroring. Measured on the live screener:
+ *
+ *   ta_highlow52w_a30h                        -> 4378 results
+ *   ta_highlow52w_b0to10h                     -> 5018
+ *   ta_highlow52w_a30h,ta_highlow52w_b0to10h  -> 5018   (second only)
+ *
+ * So a screen that "adds a constraint" by repeating a family can silently
+ * REPLACE the constraint it meant to tighten — and the result set still
+ * looks plausible. That is a silent-corruption bug, so it fails loudly here
+ * (screens are code, not user input; a throw is a build-time-ish error).
+ *
+ * Note the deliberate exception: `ta_perf` and `ta_perf2` are two
+ * INDEPENDENT performance slots that do AND (verified: ta_perf_52w30o=2348,
+ * ta_perf2_13w10o=1974, together=1020). They are distinct keys, so the
+ * prefix rule below treats them correctly without special-casing.
+ */
+export function finvizFilterKey(filter: string): string {
+  // Codes are `<family>_<value>`; the family is everything up to the LAST
+  // underscore-delimited value token... except values themselves contain
+  // underscores (ta_highlow52w_b0to10h). The stable rule is: the first two
+  // underscore-separated segments identify the family (ta_highlow52w,
+  // fa_pe, sh_avgvol, idx, cap, sec, exch).
+  const parts = filter.split('_');
+  return parts.length <= 1 ? filter : `${parts[0]}_${parts[1]}`;
+}
+
+export function assertNoDuplicateFilterKeys(filters: string[]): void {
+  const seen = new Map<string, string>();
+  for (const f of filters) {
+    const key = finvizFilterKey(f);
+    const prev = seen.get(key);
+    if (prev !== undefined) {
+      throw new Error(
+        `finviz: duplicate filter family '${key}' ('${prev}' then '${f}'). ` +
+          `Finviz silently last-wins on repeated keys, so this would DROP ` +
+          `'${prev}' instead of AND-ing. Express the second constraint ` +
+          `post-fetch, or use the ta_perf2 slot for a second performance window.`,
+      );
+    }
+    seen.set(key, f);
+  }
+}
+
+/**
  * Run a screener export. Pass `filters` (Finviz `f=` codes) and/or an
  * explicit `tickers` list (`t=`) — the ticker list accepts arbitrary symbols,
  * including names in no index (verified live: IONQ, PLTR, RKLB, SOFI), and
@@ -330,6 +409,7 @@ export async function fetchFinvizScreener(
   filters: string[],
   tickers?: string[],
 ): Promise<FinvizScreenResult | null> {
+  assertNoDuplicateFilterKeys(filters);
   const query: Record<string, string> = {
     v: '152',
     c: COLUMNS.map((c) => c.id).join(','),
@@ -389,53 +469,56 @@ export interface FinvizUniverseSnapshot {
 }
 
 /**
- * Columnar wire format for the cache doc: field-name list once + value
- * arrays per row. At ~1954 Russell 2000 rows the object-per-row encoding
- * would repeat 38 key strings per row — columnar keeps the doc well under
- * Firestore's 1MB ceiling (measured ~400KB).
+ * Columnar wire format: the field-name list is stored ONCE in the manifest
+ * and each row is a bare value array. Object-per-row would repeat 51 key
+ * strings 1,954 times for the Russell 2000.
+ *
+ * earningsSession is derived from the 'earnings' column rather than being a
+ * COLUMNS entry of its own, so both explicit fields are appended at the end.
  */
-interface CachedUniverse {
-  f: string[];
-  r: (string | number | null)[][];
-  at: string;
-  mh: string[];
-}
-
-// earningsSession is derived from the 'earnings' column, not a COLUMNS
-// entry of its own — append both explicit fields at the end.
 const CACHE_FIELDS: (keyof FinvizRow)[] = [
   ...(COLUMNS.map((c) => c.field).filter((f) => f !== 'earningsDate') as (keyof FinvizRow)[]),
   'earningsDate',
   'earningsSession',
 ];
 
-function toColumnar(res: FinvizScreenResult, at: string): CachedUniverse {
-  return {
-    f: CACHE_FIELDS as string[],
-    r: res.rows.map((row) => CACHE_FIELDS.map((f) => (row[f] === undefined ? null : row[f]) as string | number | null)),
-    at,
-    mh: res.missingHeaders,
-  };
-}
+/**
+ * Cache epoch. Bumped to v2 when FVZ-3 widened COLUMNS from 36 to 51 and
+ * switched to sharded storage — per the standing rule, a change that alters
+ * cached VALUES must change the cache KEY, or containers keep serving
+ * pre-change shapes for a full TTL.
+ */
+const UNIVERSE_CACHE_EPOCH = 'v2';
 
-function fromColumnar(c: CachedUniverse): { rows: FinvizRow[]; at: string; mh: string[] } | null {
-  if (!c || !Array.isArray(c.f) || !Array.isArray(c.r) || typeof c.at !== 'string') return null;
-  const rows = c.r.map((vals) => {
-    const row = {} as Record<string, unknown>;
-    c.f.forEach((field, i) => {
-      row[field] = vals[i] ?? null;
-    });
-    return row as unknown as FinvizRow;
-  });
-  return { rows, at: c.at, mh: Array.isArray(c.mh) ? c.mh : [] };
-}
+/**
+ * Rows per cache shard. Measured 2026-08-03: the russell2k columnar doc at
+ * 51 columns × 1,954 rows serialized to 989KB — 94% of Firestore's 1MB
+ * per-document ceiling, i.e. one index-reconstitution away from silently
+ * failing every write. Sharding makes the bound structural instead of
+ * lucky: 700 rows ≈ 350KB per shard regardless of how the index grows.
+ */
+const UNIVERSE_SHARD_ROWS = 700;
 
-const universeCacheKey = (universe: FinvizUniverse) => ({
+const universeManifestKey = (universe: FinvizUniverse) => ({
   provider: 'finviz',
   endpoint: 'screener-universe',
   ticker: `_${universe}`,
-  extra: 'v1',
+  extra: UNIVERSE_CACHE_EPOCH,
 });
+
+const universeShardKey = (universe: FinvizUniverse, i: number) => ({
+  provider: 'finviz',
+  endpoint: 'screener-universe-shard',
+  ticker: `_${universe}#${i}`,
+  extra: UNIVERSE_CACHE_EPOCH,
+});
+
+interface UniverseManifest {
+  shards: number;
+  f: string[];
+  at: string;
+  mh: string[];
+}
 
 /**
  * Universe snapshot with the durable-cache discipline: a fresh cache hit
@@ -447,24 +530,77 @@ export async function getFinvizUniverseSnapshot(
   universe: FinvizUniverse,
 ): Promise<FinvizUniverseSnapshot | null> {
   if (!finvizEnabled()) return null;
-  const key = universeCacheKey(universe);
 
-  const hit = await liveCacheGet<CachedUniverse>(key, (v) =>
-    v && Array.isArray(v.r) && v.r.length > 0 ? UNIVERSE_TTL_MS : UNIVERSE_EMPTY_TTL_MS,
-  ).catch(() => null);
-  if (hit) {
-    const decoded = fromColumnar(hit);
-    if (decoded) {
-      return { universe, rows: decoded.rows, fetchedAt: decoded.at, source: 'cache', missingHeaders: decoded.mh };
-    }
-  }
+  const cached = await readShardedUniverse(universe).catch(() => null);
+  if (cached) return cached;
 
   const res = await fetchFinvizScreener([FINVIZ_UNIVERSE_FILTERS[universe]]);
   if (res === null) return null;
 
   const at = new Date().toISOString();
-  await liveCacheSet(key, toColumnar(res, at)).catch(() => {});
+  await writeShardedUniverse(universe, res, at).catch(() => {});
   return { universe, rows: res.rows, fetchedAt: at, source: 'live', missingHeaders: res.missingHeaders };
+}
+
+async function readShardedUniverse(
+  universe: FinvizUniverse,
+): Promise<FinvizUniverseSnapshot | null> {
+  const manifest = await liveCacheGet<UniverseManifest>(universeManifestKey(universe), (m) =>
+    m && m.shards > 0 ? UNIVERSE_TTL_MS : UNIVERSE_EMPTY_TTL_MS,
+  );
+  if (!manifest || !Array.isArray(manifest.f) || typeof manifest.shards !== 'number') return null;
+
+  const rows: FinvizRow[] = [];
+  for (let i = 0; i < manifest.shards; i++) {
+    const shard = await liveCacheGet<(string | number | null)[][]>(
+      universeShardKey(universe, i),
+      () => UNIVERSE_TTL_MS,
+    );
+    // A partial shard set is a MISS, not a short universe — serving 700 of
+    // 1,954 names as if complete would silently truncate every screen.
+    if (!Array.isArray(shard)) return null;
+    for (const vals of shard) {
+      const row = {} as Record<string, unknown>;
+      manifest.f.forEach((field, fi) => {
+        row[field] = vals[fi] ?? null;
+      });
+      rows.push(row as unknown as FinvizRow);
+    }
+  }
+  return {
+    universe,
+    rows,
+    fetchedAt: manifest.at,
+    source: 'cache',
+    missingHeaders: Array.isArray(manifest.mh) ? manifest.mh : [],
+  };
+}
+
+async function writeShardedUniverse(
+  universe: FinvizUniverse,
+  res: FinvizScreenResult,
+  at: string,
+): Promise<void> {
+  const encoded = res.rows.map((row) =>
+    CACHE_FIELDS.map((f) => (row[f] === undefined ? null : row[f]) as string | number | null),
+  );
+  const shards: (string | number | null)[][][] = [];
+  for (let i = 0; i < encoded.length; i += UNIVERSE_SHARD_ROWS) {
+    shards.push(encoded.slice(i, i + UNIVERSE_SHARD_ROWS));
+  }
+  // Shards BEFORE manifest: the manifest is the commit point, so a crash
+  // mid-write leaves orphan shards (harmless, TTL'd) rather than a manifest
+  // promising shards that were never written (a permanent miss loop).
+  for (let i = 0; i < shards.length; i++) {
+    await liveCacheSet(universeShardKey(universe, i), shards[i]);
+  }
+  const manifest: UniverseManifest = {
+    shards: shards.length,
+    f: CACHE_FIELDS as string[],
+    at,
+    mh: res.missingHeaders,
+  };
+  await liveCacheSet(universeManifestKey(universe), manifest);
 }
 
 // ---------------------------------------------------------------------------
