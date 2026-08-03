@@ -823,11 +823,38 @@ export interface UpcomingEarning {
  * the next-known earnings would only be the ones whose announcement
  * date is ≥ asOfDate.
  */
+/** Upcoming-earnings live cache TTLs. An earnings DATE moves rarely (a
+ *  scheduled report shifts days-to-weeks out, not intraday); 12h staleness
+ *  is immaterial next to the daysAhead window it feeds. "No upcoming
+ *  report" is a real answer and cacheable, but shorter, so a company that
+ *  ANNOUNCES a date isn't hidden for long. Failures are never cached. */
+const UPCOMING_TTL_MS = 12 * 60 * 60_000;
+const UPCOMING_EMPTY_TTL_MS = 6 * 60 * 60_000;
+
 export async function getUpcomingEarnings(
   ticker: string,
   daysAhead = 60,
   opts: { asOfDate?: string } = {},
 ): Promise<UpcomingEarning | null> {
+  // Staleness audit 2026-08-03, part 2 — this was the sieve's REAL ceiling.
+  // #160 added bucket pacing here (correct: the bare fetch caused 429
+  // storms) but left the call UNCACHED, so every Prophet stage-2 name paid
+  // a 55-rpm Finnhub token on EVERY 30-minute run: 245s budget ÷ ~1.1s per
+  // token ≈ 224 names — exactly the observed stage-2 ceiling, starting
+  // exactly the day #160 merged. Pacing without caching just moves a burst
+  // problem into a throughput problem. Live path is Firestore-cached;
+  // PIT reads (asOfDate) bypass and stay uncached as before.
+  const liveKey: LiveCacheKey | null = opts.asOfDate
+    ? null
+    : { provider: 'finnhub', endpoint: 'calendar/upcoming', ticker, extra: `d${daysAhead}:v1` };
+  if (liveKey) {
+    const hit = await liveCacheGet<{ v: UpcomingEarning | null }>(
+      liveKey,
+      (w) => (w && w.v ? UPCOMING_TTL_MS : UPCOMING_EMPTY_TTL_MS),
+    ).catch(() => null);
+    // The wrapper object distinguishes "cached null answer" from "no entry".
+    if (hit && typeof hit === 'object' && 'v' in hit) return hit.v;
+  }
   try {
     const asOf = opts.asOfDate ?? new Date().toISOString().slice(0, 10);
     const asOfMs = new Date(`${asOf}T12:00:00Z`).getTime();
@@ -845,6 +872,10 @@ export async function getUpcomingEarnings(
       initialBackoffMs: 1_000,
       maxBackoffMs: 4_000,
     });
+    // A FAILED call returns null but must never be cached — "Finnhub was
+    // throttled" and "no upcoming report" mean opposite things (the exact
+    // 4t-W1c mistake that produced the 32%-coverage bug in the announce
+    // resolver; not repeating it here).
     if (!res.ok) return null;
     const data = parseOrFallback(
       FinnhubEarningsCalendarResponseSchema,
@@ -857,14 +888,17 @@ export async function getUpcomingEarnings(
       (e) => e.date >= from && e.date <= to,
     );
     const first = inWindow[0];
-    if (!first) return null;
-    return {
-      ticker,
-      date: first.date,
-      hour: first.hour,
-      epsEstimate: first.epsEstimate ?? undefined,
-      revenueEstimate: first.revenueEstimate ?? undefined,
-    };
+    const result: UpcomingEarning | null = first
+      ? {
+          ticker,
+          date: first.date,
+          hour: first.hour,
+          epsEstimate: first.epsEstimate ?? undefined,
+          revenueEstimate: first.revenueEstimate ?? undefined,
+        }
+      : null;
+    if (liveKey) await liveCacheSet(liveKey, { v: result }).catch(() => {});
+    return result;
   } catch {
     return null;
   }
