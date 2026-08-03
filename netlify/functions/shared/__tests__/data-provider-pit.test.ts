@@ -1,5 +1,17 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
+// Staleness audit 2026-08-03 — the Massive fetch layer now persists live
+// results through provider-live-cache. This file tests the FETCH layer
+// (status envelopes, identity guards, parse), so the cache is inerted here:
+// its module-level L1 map otherwise leaks a successful fetch from one test
+// into the next, serving cached data where the test expects to observe a
+// 429 or a mismatch guard. Cache behaviour has its own suite
+// (massive-live-cache.test.ts).
+vi.mock('../provider-live-cache', () => ({
+  liveCacheGet: vi.fn(async () => null),
+  liveCacheSet: vi.fn(async () => undefined),
+}));
+
 // vi.mock must be at module-top; the mock factory is used by all tests.
 vi.mock('../snapshot-store', async (orig) => {
   const actual = await orig<typeof import('../snapshot-store')>();
