@@ -21,6 +21,13 @@ vi.mock('../provider-live-cache', () => ({
   liveCacheGet: h.cacheGet,
   liveCacheSet: h.cacheSet,
 }));
+// Inert the pacing bucket: it is real (45rpm) and would make this suite sleep
+// its way through every call. Pacing behaviour is asserted in
+// rate-limiter tests, not here.
+vi.mock('../rate-limiter', async (importOriginal) => ({
+  ...(await importOriginal<any>()),
+  getFinvizBucket: () => ({ acquire: async () => {} }),
+}));
 
 import {
   parseCsvLine,
@@ -28,6 +35,7 @@ import {
   parseFinvizEarnings,
   fetchFinvizScreener,
   getFinvizUniverseSnapshot,
+  __setFinvizThrottleForTesting,
 } from '../finviz';
 
 const fetchMock = vi.fn();
@@ -77,6 +85,12 @@ beforeEach(() => {
   process.env.FINVIZ_AUTH_TOKEN = 'test-token';
   h.cacheGet.mockResolvedValue(null);
   h.cacheSet.mockResolvedValue(undefined);
+  // The throttle cooldown is module-level state by design (it must outlive a
+  // single call to stop a scan from hammering a throttling upstream). That
+  // makes it leak between tests exactly like the provider-live-cache L1 did:
+  // the 429 case below would arm it and every later test would short-circuit
+  // before reaching its fetch mock. Reset it per test.
+  __setFinvizThrottleForTesting(0);
 });
 
 describe('CSV primitives', () => {
