@@ -37,6 +37,10 @@ const EVIDENCE: CamilloEvidence = {
     avgVolume: 2440,
   } as any,
   attention: { article: 'Crocs', yoyPct: 41, momPct: 12, recentDailyMean: 1200 },
+  googleTrends: {
+    available: true, keyword: 'Crocs Inc', timeframe: 'today 12-m', geo: 'US',
+    transport: 'serpapi' as const, points: [], recentVsBase: 8.4, reason: null, caveat: 'x',
+  },
   insiders: [{ date: '2026-08-01', owner: 'A Director', relationship: 'Director', transaction: 'Buy', valueUsd: 591000 }],
   news: [{ date: '2026-07-30', title: 'Crocs raises full-year guidance' }],
   nextEarnings: '2026-10-28',
@@ -117,5 +121,21 @@ describe('system prompt', () => {
   it('requires unverified in the output contract', () => {
     expect(SYSTEM_PROMPT).toMatch(/"unverified"/);
     expect(SYSTEM_PROMPT).toMatch(/REQUIRED, never empty/);
+  });
+});
+
+describe('google trends: present, displayed, unweighted', () => {
+  it('renders with an explicit no-weight caution', () => {
+    const b = renderEvidence(EVIDENCE);
+    expect(b).toMatch(/GOOGLE TRENDS/);
+    expect(b).toMatch(/UNWEIGHTED, CONTEXT ONLY/);
+    expect(b).toMatch(/NOT comparable/);
+    expect(b).toMatch(/carries NO weight/);
+  });
+
+  it('says WHY it is missing rather than omitting the section', () => {
+    const b = renderEvidence({ ...EVIDENCE, googleTrends: null });
+    expect(b).toMatch(/GOOGLE TRENDS/);
+    expect(b).toMatch(/unavailable/);
   });
 });

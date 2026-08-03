@@ -186,6 +186,13 @@
   to = "/.netlify/functions/camillo-research"
   status = 200
 
+# DIAG — does this Quiver plan include the SOCIAL datasets (WSB, twitter,
+# app ratings)? Read-only probe with known-good/known-gated controls.
+[[redirects]]
+  from = "/api/diag-quiver-social"
+  to = "/.netlify/functions/diag-quiver-social"
+  status = 200
+
 
 [[redirects]]
   from = "/api/ticker-info"

@@ -35,6 +35,7 @@ import { getNews, getUpcomingEarnings } from './data-provider';
 import { fetchFinvizInsiders, getFinvizUniverseSnapshot, type FinvizRow } from './finviz';
 import { getTickerName } from './ticker-reference';
 import { fetchPageviews, resolveArticle } from './trend-exposure';
+import { fetchTrends, trendsEnabled, type TrendsSeries } from './google-trends';
 import { logger } from './logger';
 
 const log = logger.child({ mod: 'camillo-research' });
@@ -53,6 +54,12 @@ export interface CamilloEvidence {
     momPct: number | null;
     recentDailyMean: number | null;
   } | null;
+  /**
+   * Google Trends. DISPLAY ONLY — never weighted. Present because it was
+   * asked for; unweighted because it failed this system's placebo test and
+   * its 0-100 index is not comparable across calls.
+   */
+  googleTrends: TrendsSeries | null;
   insiders: Array<{ date: string; owner: string; relationship: string; transaction: string; valueUsd: number | null }>;
   news: Array<{ date: string; title: string }>;
   nextEarnings: string | null;
@@ -125,12 +132,27 @@ export async function gatherEvidence(
 
   log.info('evidence', { ticker: t, hasFundamentals: !!fundamentals, insiders: insiders.length, news: news.length, gaps: gaps.length });
 
+  // Google Trends rides along on the resolved company name. Fetched last and
+  // never blocking: a failure is a gap, not an error.
+  let googleTrends: TrendsSeries | null = null;
+  if (trendsEnabled()) {
+    try {
+      googleTrends = await fetchTrends(resolvedName ?? t);
+      if (!googleTrends.available && googleTrends.reason) gaps.push(`google trends: ${googleTrends.reason}`);
+    } catch (e: any) {
+      gaps.push(`google trends: ${e?.message ?? e}`);
+    }
+  } else {
+    gaps.push('google trends: not configured (SERPAPI_KEY unset) — context only, nothing degrades');
+  }
+
   return {
     ticker: t,
     companyName: resolvedName,
     asOf: iso(),
     fundamentals,
     attention,
+    googleTrends,
     insiders: insiders.slice(0, 10).map((i: any) => ({
       date: i.date, owner: i.owner, relationship: i.relationship,
       transaction: i.transaction, valueUsd: i.valueUsd ?? null,
@@ -177,6 +199,17 @@ export function renderEvidence(e: CamilloEvidence): string {
     lines.push('descriptive colour, never as evidence that the stock will move.');
   } else {
     lines.push('(no attention data resolved)');
+  }
+
+  lines.push('');
+  lines.push('— GOOGLE TRENDS (source: Google via SerpApi) — UNWEIGHTED, CONTEXT ONLY —');
+  if (e.googleTrends?.available) {
+    lines.push(`keyword: ${e.googleTrends.keyword}   window: ${e.googleTrends.timeframe} (${e.googleTrends.geo})`);
+    lines.push(`last 4 weeks vs prior 12: ${e.googleTrends.recentVsBase == null ? 'unknown' : `${e.googleTrends.recentVsBase > 0 ? '+' : ''}${e.googleTrends.recentVsBase} index points`}`);
+    lines.push('CAUTION: a 0-100 index rescaled to the requested window, so NOT comparable');
+    lines.push('to any other lookup. It carries NO weight in this system.');
+  } else {
+    lines.push(`(unavailable: ${e.googleTrends?.reason ?? 'not configured'})`);
   }
 
   lines.push('');

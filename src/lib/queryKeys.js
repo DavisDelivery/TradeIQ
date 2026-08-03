@@ -90,6 +90,11 @@ export const queryKeys = {
   // TREND-1 — EDGAR filing-mention attribution. Server-parameterised by
   // phrase + form set + lookback window, so all three must be in the key
   // or switching forms/window is a cache no-op within staleTime.
+  // CAMILLO-1 — AI research pass, keyed by ticker + universe because the
+  // evidence differs per universe snapshot.
+  camilloResearch: (ticker, universe) =>
+    ['tradeiq', 'camilloResearch', ticker ?? '', universe ?? 'russell2k'],
+
   trendExposure: (phrase, forms, days) =>
     ['tradeiq', 'trendExposure', phrase ?? '', forms ?? '10-K', days ?? 730],
 
