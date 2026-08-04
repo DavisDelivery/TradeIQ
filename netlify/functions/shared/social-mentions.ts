@@ -228,6 +228,48 @@ export async function snapshotMentions(snap: MentionSnapshot): Promise<boolean> 
   return true;
 }
 
+/** Firestore: one doc per day of cumulative app-rating counts. */
+export const APP_RATING_COLLECTION = 'appRatingSnapshots';
+
+export interface AppRatingObservation {
+  ticker: string;
+  appId: number | null;
+  appName: string | null;
+  rating: number | null;
+  /** Lifetime cumulative — the whole reason this needs recording daily. */
+  ratingCount: number | null;
+}
+
+/**
+ * Persist one day of cumulative rating counts.
+ *
+ * `app-reviews.ts` gives review velocity immediately, so this is no longer the
+ * only route to a flow — but the two measure different things. Reviews are the
+ * subset of users who wrote something; the rating COUNT includes every silent
+ * one-tap rating from Apple's prompt, which is a much larger and less
+ * self-selected population. Its daily delta is the better demand proxy of the
+ * two, and it is only obtainable by differencing days we recorded ourselves.
+ *
+ * Rows with no ratingCount are dropped rather than stored as 0 — a fabricated
+ * zero here would show up months later as a demand collapse.
+ */
+export async function snapshotAppRatings(date: string, rows: AppRatingObservation[]): Promise<number> {
+  const usable = rows.filter((r) => r.ratingCount != null && r.appId != null);
+  if (!usable.length) {
+    log.warn('app_rating_snapshot_empty');
+    return 0;
+  }
+  const db = getAdminDb();
+  await db.collection(APP_RATING_COLLECTION).doc(date).set({
+    date,
+    fetchedAt: new Date().toISOString(),
+    count: usable.length,
+    rows: usable,
+  });
+  log.info('app_rating_snapshot_written', { date, rows: usable.length });
+  return usable.length;
+}
+
 /** Read a stored day back. Null when that day was never recorded. */
 export async function readMentionSnapshot(date: string, filter = 'all-stocks'): Promise<MentionSnapshot | null> {
   const db = getAdminDb();

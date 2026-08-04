@@ -39,6 +39,7 @@ import { fetchTrends, trendsEnabled, type TrendsSeries } from './google-trends';
 import { fetchOffExchange, type OffExchangeSignal } from './quiver-offexchange';
 import { fetchTickerMentions, type TickerMentions } from './social-mentions';
 import { fetchAppRating, type AppRating } from './app-ratings';
+import { WINDOW_DAYS as REVIEW_WINDOW_DAYS, fetchReviewVelocity, type ReviewVelocity } from './app-reviews';
 import { logger } from './logger';
 
 const log = logger.child({ mod: 'camillo-research' });
@@ -82,6 +83,13 @@ export interface CamilloEvidence {
    * only; the count is lifetime cumulative, so the level says little.
    */
   appRating: AppRating | null;
+  /**
+   * Review VELOCITY from Apple's dated review feed. The only leg in this whole
+   * evidence pack that is a genuine consumer-demand FLOW available on the
+   * first call — everything else here is a level, or needs months of
+   * accumulation before it says anything.
+   */
+  reviews: ReviewVelocity | null;
   insiders: Array<{ date: string; owner: string; relationship: string; transaction: string; valueUsd: number | null }>;
   news: Array<{ date: string; title: string }>;
   nextEarnings: string | null;
@@ -187,6 +195,18 @@ export async function gatherEvidence(
   if (mentions?.state === 'UNAVAILABLE' && mentions.reason) gaps.push(`retail mentions: ${mentions.reason}`);
   if (appRating && !appRating.available && appRating.reason) gaps.push(`app ratings: ${appRating.reason}`);
 
+  // Review velocity depends on having resolved a real app first, so it runs
+  // after rather than alongside. Skipped entirely on a LOW-confidence match:
+  // a demand flow computed off some other company's app is worse than none.
+  let reviews: ReviewVelocity | null = null;
+  if (appRating?.available && appRating.appId && appRating.matchConfidence === 'HIGH') {
+    reviews = await fetchReviewVelocity(appRating.appId)
+      .catch((e: any) => { gaps.push(`app reviews: ${e?.message ?? e}`); return null; });
+    if (reviews && !reviews.available && reviews.reason) gaps.push(`app reviews: ${reviews.reason}`);
+  } else if (appRating?.available) {
+    gaps.push(`app reviews: skipped — the app match for "${appRating.appName}" was only ${appRating.matchConfidence} confidence`);
+  }
+
   return {
     ticker: t,
     companyName: resolvedName,
@@ -197,6 +217,7 @@ export async function gatherEvidence(
     offExchange,
     mentions,
     appRating,
+    reviews,
     insiders: insiders.slice(0, 10).map((i: any) => ({
       date: i.date, owner: i.owner, relationship: i.relationship,
       transaction: i.transaction, valueUsd: i.valueUsd ?? null,
@@ -208,6 +229,8 @@ export async function gatherEvidence(
     gaps,
   };
 }
+
+const WINDOW_LABEL = `${REVIEW_WINDOW_DAYS} days`;
 
 const fmtM = (n: number | null | undefined) => (n == null ? 'unknown' : `${n.toFixed(1)}M`);
 const fmtPct = (n: number | null | undefined) => (n == null ? 'unknown' : `${n.toFixed(1)}%`);
@@ -301,11 +324,37 @@ export function renderEvidence(e: CamilloEvidence): string {
     lines.push(`current version: ${a.ratingCurrentVersion ?? 'unknown'} from ${a.ratingCountCurrentVersion?.toLocaleString() ?? 'unknown'}, released ${a.currentVersionReleaseDate ?? 'unknown'}`);
     if (a.matchConfidence === 'LOW') lines.push('WARNING: weak name match. This app may belong to a different company entirely.');
     lines.push('CAUTION: the count only ever rises, so its LEVEL just tells you the app is big — which');
-    lines.push('market cap already told you. Only the change over time would be a demand signal, and');
-    lines.push('this system has not been recording long enough to show you one.');
+    lines.push('market cap already told you. The flow is in the review-velocity block below.');
   } else {
     lines.push(`(unavailable: ${e.appRating?.reason ?? 'not fetched'})`);
     lines.push('A company with no consumer app is normal and is NOT a negative signal.');
+  }
+
+  lines.push('');
+  lines.push('— REVIEW VELOCITY (source: Apple US review feed, dated reviews) — UNWEIGHTED —');
+  if (e.reviews?.available) {
+    const v = e.reviews;
+    lines.push(`${v.count} reviews retrieved, spanning ${v.spanDays} days to ${v.newestReview}`);
+    lines.push(`recent ${WINDOW_LABEL}: ${v.recentPerDay} reviews/day`);
+    if (v.priorPerDay != null) {
+      lines.push(`prior ${WINDOW_LABEL}: ${v.priorPerDay} reviews/day`);
+      lines.push(`change: ${v.velocityPct == null ? 'not computable' : `${v.velocityPct > 0 ? '+' : ''}${v.velocityPct}%`}`);
+    } else {
+      lines.push(`prior period: NOT OBSERVED — ${v.reason}`);
+      lines.push('Do NOT read the absence of a comparison as a decline. The feed simply did not');
+      lines.push('reach back that far, which happens when an app is generating reviews FAST.');
+    }
+    lines.push(`stars in recent reviews: ${v.recentRating ?? 'n/a'}   prior: ${v.priorRating ?? 'n/a'}`);
+    lines.push(`distinct app versions in the recent window: ${v.versionsInWindow ?? 'n/a'}`);
+    lines.push('HOW TO READ IT: this is the ONLY consumer-demand FLOW in this evidence pack —');
+    lines.push('everything else is a level. But two traps.');
+    lines.push('(1) These stars are NOT comparable to the lifetime rating shown above.');
+    lines.push('People who WRITE reviews skew angry, so a 4.9-star app routinely shows ~2 stars');
+    lines.push('here. Compare recent to prior, never to the lifetime figure.');
+    lines.push('(2) More than one version in the window means a release may have prompted the reviews,');
+    lines.push('lifting the rate with no change in actual demand.');
+  } else {
+    lines.push(`(unavailable: ${e.reviews?.reason ?? 'no matched app to pull reviews for'})`);
   }
 
   lines.push('');
@@ -342,7 +391,7 @@ HARD RULES
 
 THE FOUR QUESTIONS, IN ORDER
 1. PRODUCT — what does this company actually sell to consumers? Name the specific product or brand. If the evidence does not say, say so plainly; that is a real finding, because a company whose product you cannot name from its own filings and news is not a social-arbitrage candidate.
-2. TREND — is there any sign in the evidence of a demand change? Sales growth and insider behaviour are the strongest legs here. News is weak. Attention is descriptive only.
+2. TREND — is there any sign in the evidence of a demand change? Sales growth and insider behaviour are the strongest legs here. App review VELOCITY is the only consumer-demand flow present and is worth weighing, but discount it when more than one app version appears in the window, since a release prompts reviews on its own. News is weak. Attention (wikipedia, trends) is descriptive only.
 3. MATERIALITY — this is the question that kills most of these trades. Would the trend, if real, be a large enough share of revenue to move the stock? Mattel's Barbie film grossed $1.44bn and was ~2.3% of Mattel revenue; the stock trailed the S&P by 32 percentage points that year. State explicitly whether the evidence lets you judge materiality. Usually it will not, because there is no segment revenue here.
 4. DISCOVERY — has the market already repriced it? Use institutional ownership, distance from the 52-week high, and short float. Off-exchange volume against its own baseline is a RETAIL-crowding gauge: a positive z means the crowd is already here, which argues against an undiscovered setup. Its absence means the data was not available, never that the crowd is absent. Retail mention counts work the same way: heavy chatter argues AGAINST an undiscovered thesis. A name below the tracking floor is quiet, which is the EXPECTED state for this setup — consistent with the thesis, never evidence for it.
 

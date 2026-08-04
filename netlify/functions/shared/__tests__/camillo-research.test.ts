@@ -56,6 +56,12 @@ const EVIDENCE: CamilloEvidence = {
     currentVersionReleaseDate: '2026-06-22', matchConfidence: 'HIGH', matchedOn: 'Crocs Inc',
     reason: null, caveat: 'no weight',
   },
+  reviews: {
+    available: true, appId: 1097106160, count: 100, spanDays: 72, truncated: false,
+    recentPerDay: 1.29, priorPerDay: 1, velocityPct: 29, recentRating: 1.72, priorRating: 1.96,
+    versionsInWindow: 2, newestReview: '2026-07-31', oldestReview: '2026-05-20',
+    reason: null, caveat: 'no weight',
+  },
   insiders: [{ date: '2026-08-01', owner: 'A Director', relationship: 'Director', transaction: 'Buy', valueUsd: 591000 }],
   news: [{ date: '2026-07-30', title: 'Crocs raises full-year guidance' }],
   nextEarnings: '2026-10-28',
@@ -268,6 +274,48 @@ describe('app ratings: behaviour, not curiosity', () => {
   it('says a missing app is NOT a negative signal', () => {
     const b = renderEvidence({ ...EVIDENCE, appRating: null });
     expect(b).toMatch(/no consumer app is normal and is NOT a negative signal/);
+  });
+});
+
+// The only genuine consumer-demand FLOW in the pack. Two traps get pinned
+// here because both would read as a dramatic finding if rendered plainly.
+describe('review velocity: the only flow', () => {
+  it('renders the rate and the change', () => {
+    const b = renderEvidence(EVIDENCE);
+    expect(b).toMatch(/REVIEW VELOCITY/);
+    expect(b).toMatch(/1\.29 reviews\/day/);
+    expect(b).toMatch(/\+29%/);
+  });
+
+  it('warns the stars are NOT comparable to the lifetime rating', () => {
+    // Wingstop: 4.91 lifetime vs 1.72 recent. Comparing them would look like
+    // a product catastrophe; it is a sampling difference.
+    expect(renderEvidence(EVIDENCE)).toMatch(/NOT comparable to the lifetime rating/);
+  });
+
+  it('flags that multiple versions may be driving the rate', () => {
+    expect(renderEvidence(EVIDENCE)).toMatch(/a release may have prompted the reviews/);
+  });
+
+  it('says a missing prior window is NOT a decline', () => {
+    // Dutch Bros produced exactly this: 200 reviews in 34 days.
+    const b = renderEvidence({
+      ...EVIDENCE,
+      reviews: { ...EVIDENCE.reviews!, truncated: true, priorPerDay: null, velocityPct: null, reason: 'feed covered only 34 days' },
+    });
+    expect(b).toMatch(/NOT OBSERVED/);
+    expect(b).toMatch(/Do NOT read the absence of a comparison as a decline/);
+    expect(b).toMatch(/generating reviews FAST/);
+  });
+
+  it('says so plainly when there is no matched app', () => {
+    const b = renderEvidence({ ...EVIDENCE, reviews: null });
+    expect(b).toMatch(/REVIEW VELOCITY/);
+    expect(b).toMatch(/unavailable/);
+  });
+
+  it('tells the model to discount a multi-version window', () => {
+    expect(SYSTEM_PROMPT).toMatch(/discount it when more than one app version/i);
   });
 });
 

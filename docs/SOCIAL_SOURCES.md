@@ -12,6 +12,7 @@ new one has to fit. Written 2026-08-03, Quiver section answered 2026-08-04.
 | Quiver off-exchange volume | **LIVE, UNWEIGHTED** | `shared/quiver-offexchange.ts`. On the $30/mo plan. Retail-crowding proxy. |
 | **WSB mentions (ApeWisdom)** | **LIVE, UNWEIGHTED** | `shared/social-mentions.ts`. Free, keyless. Replaces the gated Quiver dataset — see "what to do when the vendor won't sell it". |
 | **App ratings (Apple)** | **LIVE, UNWEIGHTED** | `shared/app-ratings.ts`. Free, keyless, official Apple. Replaces Quiver's $75/mo tier. |
+| **Review velocity (Apple)** | **LIVE, UNWEIGHTED** | `shared/app-reviews.ts`. Free. The only consumer-demand FLOW here, available on the first call — see below. |
 | Quiver WallStreetBets | **GATED (403)** | Not on any published tier. Routed around, not bought. |
 | Quiver Twitter followers | **GATED (403)** | Same. No free substitute — X is the one genuinely paywalled leg. |
 | Quiver app ratings | **GATED (403)** | On the Trader tier, $75/mo. Not worth buying — Apple serves it free. |
@@ -35,7 +36,51 @@ publisher serves it directly.
 | App-store ratings | Apple iTunes Search API, keyless and official | 2026-08-04 |
 | Twitter followers | none — X charges for this and there is no way around it | — |
 
-### The limitation both free sources share
+### Review velocity — a demand FLOW, available on the first call
+
+The claim that app ratings need months of accumulation was **too pessimistic**,
+and `shared/app-reviews.ts` is the correction.
+
+Apple's customer-reviews RSS feed returns **individual reviews, each with a
+timestamp, a star rating and the app version**. Counting them by date gives
+reviews-per-day directly. No waiting. This is the only genuine consumer-demand
+flow in the whole evidence pack — everything else is a level.
+
+Live, 2026-08-04:
+
+| Company | recent | prior | change | stars now/prior | versions |
+|---|---|---|---|---|---|
+| Texas Roadhouse | 1.93/d | 1.18/d | **+64%** | 4.67 / 4.30 | 1 |
+| Chewy | 1.00/d | 0.64/d | +56% | 3.96 / 2.83 | 5 ⚠ |
+| Wingstop | 1.29/d | 1.00/d | +29% | 1.72 / 1.96 | 2 |
+| CAVA | 1.86/d | 2.07/d | −10% | 3.63 / 3.59 | 3 |
+| Crocs | 0.36/d | 0.68/d | −47% | 1.00 / 2.05 | 1 |
+| Dutch Bros | 5.50/d | — | **not reported** | 4.69 / 4.61 | 2 |
+
+Texas Roadhouse is the cleanest read on that table: a large acceleration on a
+single app version, so a release did not manufacture it. Chewy's +56% across
+**five** versions probably did.
+
+**Three traps, each handled in code rather than left to the reader:**
+
+1. **The feed is a fixed COUNT, not a window.** It returns the most recent ~50
+   reviews per page. The time span they cover is an output, not an input. A
+   hot app burns through them fast — Dutch Bros used 200 reviews in 34 days, so
+   the prior 28-day window was never observed. Naively differencing would have
+   invented a demand collapse out of pure truncation. `truncated` is reported
+   and the comparison is **null rather than wrong**.
+2. **These stars are NOT the app's rating.** Wingstop shows 4.91★ lifetime but
+   1.72★ across recent reviews; Crocs 4.73★ versus 1.00★. Neither product
+   collapsed — the lifetime figure is dominated by silent one-tap ratings from
+   Apple's prompt, while people who bother to *write* skew heavily negative.
+   Recent-vs-prior is fair; recent-vs-lifetime is not, and the evidence block
+   says so in as many words.
+3. **A release prompts reviews on its own.** `versionsInWindow` travels with
+   the number so a release-driven spike is not read as demand.
+
+Also: **US store only.** This is a US-iOS sample, not global demand.
+
+### The limitation the other two free sources share
 
 **Neither has history.** ApeWisdom serves a live snapshot with no per-ticker
 time series. Apple's `userRatingCount` is lifetime cumulative, so its level
@@ -44,7 +89,21 @@ tells you the app is big — which market cap already told you.
 For both, **the signal is the daily change, and that series exists nowhere to
 be bought.** It only exists if something writes it down every day. That is
 what `netlify/functions/snapshot-social.ts` does (cron `10 21 * * *`), writing
-to Firestore `socialMentionSnapshots/{date}_{filter}`.
+to Firestore `socialMentionSnapshots/{date}_{filter}` and
+`appRatingSnapshots/{date}`.
+
+The rating-count series is still worth accumulating even now that review
+velocity exists, because they measure different populations: reviews are the
+subset who wrote something, while the rating count includes every silent
+one-tap rating. The latter is the larger and less self-selected sample, and
+its daily delta is the better demand proxy of the two.
+
+The app poll covers the **40 largest consumer names** in the Russell 2000,
+paced at 1.2s apart to stay inside Apple's throttle, and only
+**HIGH-confidence matches** are stored — a series built on the wrong company's
+app is worse than no series. A stable list matters more than a broad one: a
+watchlist that churns yields a panel where every ticker has two observations
+and none has a series.
 
 It runs **every day including weekends**, unlike every other cron here, because
 r/wallstreetbets peaks on Sunday nights and a market-closed guard would put a

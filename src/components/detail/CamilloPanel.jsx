@@ -177,6 +177,27 @@ export function CamilloPanel({ ticker, universe = 'russell2k' }) {
                     : null
                 }
               />
+              {/* The only DEMAND FLOW here — everything else on this strip is
+                  a level. Still unweighted, but it is the row that would earn
+                  weight first if the paper tracker ever validates one. */}
+              <ContextRow
+                name="review velocity"
+                value={
+                  ev.reviews?.available
+                    ? ev.reviews.velocityPct != null
+                      ? `${signed(ev.reviews.velocityPct)}% · ${ev.reviews.recentPerDay}/day`
+                      : `${ev.reviews.recentPerDay}/day · no prior window`
+                    : null
+                }
+                reason={ev.reviews?.reason ?? 'no matched app'}
+                note={
+                  ev.reviews?.available
+                    ? ev.reviews.versionsInWindow > 1
+                      ? `${ev.reviews.versionsInWindow} versions — may be release-driven`
+                      : `${ev.reviews.count} reviews / ${ev.reviews.spanDays}d`
+                    : null
+                }
+              />
               <ContextRow
                 name="app store rating"
                 value={

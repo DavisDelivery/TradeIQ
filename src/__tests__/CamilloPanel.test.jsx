@@ -33,6 +33,7 @@ const PAYLOAD = {
     },
     mentions: { state: 'TRACKED', mentions: 1, mentions24hAgo: null, rank: 399, universeSize: 757, floor: 1, reason: null },
     appRating: { available: true, appName: 'Crocs', rating: 4.73, ratingCount: 46441, matchConfidence: 'HIGH', reason: null },
+    reviews: { available: true, recentPerDay: 1.29, priorPerDay: 1, velocityPct: 29, recentRating: 1.72, priorRating: 1.96, versionsInWindow: 2, truncated: false, spanDays: 72, count: 100, reason: null },
     insiderCount: 1, newsCount: 4, nextEarnings: null, gaps: ['google trends: not configured'],
   },
 };
@@ -200,6 +201,29 @@ describe('CamilloPanel context strip', () => {
     }));
     await run();
     expect(screen.getByText(/weak match/i)).toBeInTheDocument();
+  });
+
+  it('shows review velocity — the only demand flow on the strip', async () => {
+    await run();
+    expect(screen.getByText(/review velocity/i)).toBeInTheDocument();
+    expect(screen.getByText(/\+29% · 1\.29\/day/)).toBeInTheDocument();
+  });
+
+  it('warns inline when multiple app versions could be driving the rate', async () => {
+    await run();
+    expect(screen.getByText(/2 versions — may be release-driven/i)).toBeInTheDocument();
+  });
+
+  it('shows the rate without a change when the prior window was never observed', async () => {
+    fetchMock.mockImplementation(() => ok({
+      ...PAYLOAD,
+      evidence: {
+        ...PAYLOAD.evidence,
+        reviews: { available: true, recentPerDay: 5.5, priorPerDay: null, velocityPct: null, versionsInWindow: 2, truncated: true, spanDays: 34, count: 200, reason: 'feed covered only 34 days' },
+      },
+    }));
+    await run();
+    expect(screen.getByText(/5\.5\/day · no prior window/)).toBeInTheDocument();
   });
 
   it('shows DPI recent AND baseline together — never a bare level', async () => {

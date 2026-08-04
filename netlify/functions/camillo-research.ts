@@ -151,6 +151,21 @@ export const handler: Handler = async (event) => {
               reason: evidence.appRating.reason,
             }
           : null,
+        reviews: evidence.reviews
+          ? {
+              available: evidence.reviews.available,
+              recentPerDay: evidence.reviews.recentPerDay,
+              priorPerDay: evidence.reviews.priorPerDay,
+              velocityPct: evidence.reviews.velocityPct,
+              recentRating: evidence.reviews.recentRating,
+              priorRating: evidence.reviews.priorRating,
+              versionsInWindow: evidence.reviews.versionsInWindow,
+              truncated: evidence.reviews.truncated,
+              spanDays: evidence.reviews.spanDays,
+              count: evidence.reviews.count,
+              reason: evidence.reviews.reason,
+            }
+          : null,
         insiderCount: evidence.insiders.length,
         newsCount: evidence.news.length,
         nextEarnings: evidence.nextEarnings,
