@@ -1,7 +1,7 @@
 # Wiring the rest of the socials
 
 Status of every consumer/social source, what it costs, and the exact shape a
-new one has to fit. Written 2026-08-03.
+new one has to fit. Written 2026-08-03, Quiver section answered 2026-08-04.
 
 ## Where things stand
 
@@ -9,7 +9,10 @@ new one has to fit. Written 2026-08-03.
 |---|---|---|
 | Wikipedia pageviews | **LIVE** | `shared/trend-exposure.ts`. Free, keyless, ABSOLUTE counts — the only attention series here that is comparable between two names. |
 | Google Trends | **LIVE, UNWEIGHTED** | `shared/google-trends.ts`. Needs `SERPAPI_KEY`. Display only — see below. |
-| Quiver: WSB / twitter / app ratings | **UNKNOWN** | Quiver sells them; this plan may not include them. `GET /api/diag-quiver-social` answers it. |
+| Quiver off-exchange volume | **LIVE, UNWEIGHTED** | `shared/quiver-offexchange.ts`. On the current plan. Retail-crowding proxy — the nearest thing to an investor-saturation leg we can actually buy. |
+| Quiver WallStreetBets | **GATED (403)** | Dataset exists; this plan does not include it, and it is not listed on any published tier. See below. |
+| Quiver Twitter followers | **GATED (403)** | Same. |
+| Quiver app ratings | **GATED (403)** | On the Trader tier, $75/mo. |
 | Reddit (direct) | absent | Official API. Free tier is non-commercial, 100 QPM per client id. |
 | StockTwits | absent | Public API deprecated; partner access only. |
 | TikTok | absent | The Research API is contractually academic/non-profit only. A retail trading signal fails eligibility. Licensed scraper (Apify) is the only compliant path. |
@@ -37,24 +40,71 @@ and Google's ToS prohibit automated access that violates it. Setting
 `GOOGLE_TRENDS_ALLOW_DIRECT=1` returns an explanation, not data — so nobody
 enables a compliance risk by flipping an env var they did not read.
 
-## Answer the Quiver question first
+## The Quiver question, answered 2026-08-04
+
+Probed with the live key against `api.quiverquant.com/beta`. **Controls
+behaved** — `lobbying` returned 200 with 13 rows, `/live/insiders` returned
+403 — so the verdicts below are about the plan, not about a broken key.
+
+| Dataset | Result |
+|---|---|
+| congresstrading, senatetrading, housetrading | **on plan** |
+| govcontracts, govcontractsall, lobbying | **on plan** |
+| **offexchange** | **on plan** — 1,209 daily rows for CROX back to 2021-01-11 |
+| wallstreetbets, twitter, appratings | gated (403) |
+| insiders, allpatents, sec13f, flights, politicalbeta, etfholdings | gated (403) |
+| wikipedia, spendingdata, institutions, pelositracker | no such path |
+
+That set of seven is exactly Quiver's **Hobbyist tier, $30/mo**. Upgrading to
+**Trader, $75/mo** buys insider trading, hedge-fund activity, ETF holdings,
+top shareholders, patents, exec comp and **app ratings**.
+
+**It does not buy WallStreetBets or Twitter.** Neither appears on any tier
+Quiver currently publishes, and both 403 here — so they are Commercial-only
+(custom pricing) or withdrawn from the API product. Do not budget for a
+Quiver upgrade expecting to get WSB mentions; ask them directly first.
+
+Reproduce either way:
 
 ```
-GET https://tradeiq-alpha.netlify.app/api/diag-quiver-social?ticker=GME
+QUIVER_API_KEY=... npx tsx scripts/quiver-social-probe.ts CROX   # the four social families + controls
+QUIVER_API_KEY=... npx tsx scripts/quiver-inventory.ts CROX      # every dataset, on-plan / gated / absent
+GET /api/diag-quiver-social?ticker=GME                            # same probe, from a deploy
 ```
 
-Probes `wallstreetbets`, `twitter`, `appratings`, `spendingdata`, plus two
-controls: `lobbying` (known-good, already wired) and `/live/insiders` (known
-403 on this plan per `data-provider.ts:1288`).
+Verdicts: `AVAILABLE` (already paid for, wire it) · `AVAILABLE_BUT_EMPTY`
+(covered, no rows for that ticker) · `SUBSCRIPTION_GATE` (exists, plan lacks
+it) · `NOT_FOUND` (path guess wrong — add candidates and re-probe).
 
-Read the controls first. If lobbying is not `AVAILABLE`, the key or base URL
-is broken and every other verdict is noise — the response says so in
-`summary.trustworthy`. Per-family verdicts:
+## What off-exchange volume replaces, and what it does not
 
-- `AVAILABLE` — wire it, it is already paid for
-- `AVAILABLE_BUT_EMPTY` — covered, but no rows for that ticker
-- `SUBSCRIPTION_GATE` — the dataset exists, this plan lacks it
-- `NOT_FOUND` — the path guess was wrong; add candidates and re-probe
+`offexchange` gives `OTC_Short`, `OTC_Total` and `DPI` daily. Retail
+marketable flow is overwhelmingly internalised by wholesalers, so **a surge in
+off-exchange volume for a name is a reasonable proxy for a surge in retail
+participation** — which is the investor-saturation leg WSB would have filled.
+In one respect it is better: it measures what retail money did, not what
+retail accounts said.
+
+Two confounds measured on a 14-name sample, 2026-08-04:
+
+1. **DPI level is not comparable across names.** Mega-caps sat at 0.29-0.52,
+   small/mid consumer names at 0.58-0.71. That spread is capitalisation and
+   liquidity, not accumulation. Only a name's move against its own baseline
+   means anything, so `dpiRecent` and `dpiBase` are always shown together and
+   never ranked cross-sectionally.
+2. **The move is not a market-wide drift.** 8 of 14 names sat above their own
+   baseline, mean delta +0.010 — so there is genuine name-specific variation.
+   Variation is not edge; it stays unweighted until the paper tracker says
+   otherwise.
+
+The folk reading that high DPI is bullish (a wholesaler filling a retail buy
+books its own side short) is **unverified here** and contaminated by real
+short selling and hedging. `quiver-offexchange.ts` reports DPI as a number and
+never as a direction.
+
+Note the sign convention in the Camillo frame: a **positive** volume z is a
+**discovery warning**. The crowd is already in the name. It argues against the
+setup, not for it.
 
 ## Adding a source: the shape it must fit
 
@@ -90,7 +140,14 @@ score and screen predicate.
 | TikTok / Instagram | Apify licensed actors | ~$50-150/mo |
 | X | pay-per-use post reads | ~$25/mo for 5k reads |
 | Google Trends | SerpApi Developer | $75/mo, 5k searches |
+| Quiver Trader tier | upgrade from Hobbyist | +$45/mo — buys app ratings, **not** WSB |
 
-Reddit is the highest value per dollar: it is the only one that gives an
-*investor*-saturation read (r/wallstreetbets) rather than another consumer
-attention series, and that is the leg with no source at all today.
+**Reddit direct is still the highest value per dollar**, and now for a sharper
+reason than before: Quiver will not sell WSB mentions on any published tier, so
+counting r/wallstreetbets yourself is the only route to that series short of a
+Commercial contract. It is free, and it is the one source that reads *investor*
+saturation rather than another consumer-attention series.
+
+Off-exchange volume now covers that leg approximately, so this is an
+improvement rather than a hole — but it is a flow proxy, not a mention count,
+and the two would fail differently. Having both is worth more than either.

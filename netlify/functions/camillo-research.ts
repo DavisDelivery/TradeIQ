@@ -108,6 +108,28 @@ export const handler: Handler = async (event) => {
         asOf: evidence.asOf,
         hasFundamentals: !!evidence.fundamentals,
         attention: evidence.attention,
+        // Unweighted context legs. Sent so the UI can show what the model
+        // actually saw — including when they were unavailable and why.
+        googleTrends: evidence.googleTrends
+          ? {
+              available: evidence.googleTrends.available,
+              keyword: evidence.googleTrends.keyword,
+              recentVsBase: evidence.googleTrends.recentVsBase,
+              reason: evidence.googleTrends.reason,
+            }
+          : null,
+        offExchange: evidence.offExchange
+          ? {
+              available: evidence.offExchange.available,
+              volumeZ: evidence.offExchange.volumeZ,
+              recentDailyVolume: evidence.offExchange.recentDailyVolume,
+              dpiRecent: evidence.offExchange.dpiRecent,
+              dpiBase: evidence.offExchange.dpiBase,
+              days: evidence.offExchange.days,
+              asOf: evidence.offExchange.asOf,
+              reason: evidence.offExchange.reason,
+            }
+          : null,
         insiderCount: evidence.insiders.length,
         newsCount: evidence.news.length,
         nextEarnings: evidence.nextEarnings,
