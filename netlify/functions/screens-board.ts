@@ -58,9 +58,23 @@ export const handler: Handler = async (event) => {
   const start = Date.now();
   const qs = event.queryStringParameters ?? {};
   const screenId = qs.screen;
-  const universeRaw = qs.universe ?? 'sp500';
 
   if (!screenId) return json(200, { ok: true, screens: catalog() });
+
+  // Resolve the SCREEN FIRST, because the universe default depends on it.
+  const screen = SCREENS_BY_ID.get(screenId);
+  if (!screen) {
+    return json(404, { ok: false, error: `unknown screen '${screenId}'`, screens: SCREENS.map((s) => s.id) });
+  }
+
+  // An omitted universe falls back to the screen's OWN preference, not a
+  // blanket 'sp500'. This endpoint published `preferredUniverse` in its
+  // catalog while ignoring it here, so `?screen=camillo-undiscovered` with no
+  // universe ran a <=250M-float, <=70%-institutional predicate against the
+  // S&P 500 and matched nothing — a correctly-built screen that looked broken
+  // to every non-UI caller, since the UI happens to pass the universe
+  // explicitly. Exactly the trap the comment in finviz-screens.ts warns about.
+  const universeRaw = qs.universe ?? screen.preferredUniverse ?? 'sp500';
 
   if (!(universeRaw in FINVIZ_UNIVERSE_FILTERS)) {
     return json(400, {
@@ -70,11 +84,6 @@ export const handler: Handler = async (event) => {
     });
   }
   const universe = universeRaw as FinvizUniverse;
-
-  const screen = SCREENS_BY_ID.get(screenId);
-  if (!screen) {
-    return json(404, { ok: false, error: `unknown screen '${screenId}'`, screens: SCREENS.map((s) => s.id) });
-  }
   if (!finvizEnabled()) {
     return json(503, { ok: false, enabled: false, error: 'FINVIZ_AUTH_TOKEN not configured' });
   }

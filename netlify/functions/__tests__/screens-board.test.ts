@@ -144,6 +144,31 @@ describe('failure contract', () => {
     expect(statusCode).toBe(400);
   });
 
+  // A screen declaring preferredUniverse was still being run against sp500
+  // when the caller omitted the param. camillo-undiscovered wants small-float
+  // russell2k names; against the S&P 500 its predicate matches ~nothing, so a
+  // correctly-built screen looked broken to every non-UI caller.
+  it('an omitted universe uses the SCREEN\'s preferred universe, not sp500', async () => {
+    h.getUniverse.mockResolvedValue({ rows: [], fetchedAt: new Date().toISOString(), source: 'cache' });
+    const { statusCode, body } = await call({ screen: 'camillo-undiscovered' });
+    expect(statusCode).toBe(200);
+    expect(body.universe).toBe('russell2k');
+    expect(h.getUniverse).toHaveBeenCalledWith('russell2k');
+  });
+
+  it('an explicit universe still overrides the screen preference', async () => {
+    h.getUniverse.mockResolvedValue({ rows: [], fetchedAt: new Date().toISOString(), source: 'cache' });
+    const { body } = await call({ screen: 'camillo-undiscovered', universe: 'sp500' });
+    expect(body.universe).toBe('sp500');
+    expect(h.getUniverse).toHaveBeenCalledWith('sp500');
+  });
+
+  it('a screen with NO preference still defaults to sp500', async () => {
+    h.getUniverse.mockResolvedValue({ rows: [], fetchedAt: new Date().toISOString(), source: 'cache' });
+    const { body } = await call({ screen: 'high52w' });
+    expect(body.universe).toBe('sp500');
+  });
+
   it('a thrown error is 500, not a silent empty board', async () => {
     h.getUniverse.mockRejectedValue(new Error('boom'));
     const { statusCode, body } = await call({ screen: 'high52w' });

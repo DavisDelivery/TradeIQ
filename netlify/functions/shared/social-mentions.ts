@@ -21,8 +21,13 @@
 //
 // So the series we will want in three months only exists if we start
 // recording it today. `snapshotMentions()` writes one Firestore doc per day
-// and `mentionHistory()` reads it back. That is the point of this file —
-// the fetch is the easy part.
+// and `readMentionSnapshot(date)` reads a day back. That is the point of this
+// file — the fetch is the easy part.
+//
+// NOTE: there is deliberately no `mentionHistory()` range reader yet. Nothing
+// needs one until enough days have accumulated to be worth reading, and a
+// range API written against an empty collection is a guess about a shape we
+// cannot see. Build it when there is a series to read.
 //
 // ---------------------------------------------------------------------------
 // ABSENCE IS NOT ZERO, AND IT IS NOT NOTHING
