@@ -269,3 +269,65 @@ def test_too_few_rows_is_also_refused():
 
     with pytest.raises(paper.DegradedScan):
         paper.open_run(scan_fn=tiny, run_date=RUN_DATE)
+
+
+# --- regression: the mark() self-deadlock -----------------------------------
+#
+# mark() used to hold one write connection open for its whole loop while
+# calling _series() inside it. In production _series -> prices.history ->
+# store.cache_put opens a SECOND connection to the same file and writes, so
+# SQLite raised "database is locked" on the very first ticker and every mark
+# run died there. The ledger sat at 4 positions / 0 marks for a day before
+# anyone ran it by hand.
+#
+# The existing fake_prices fixture patches paper._series wholesale, so it
+# never touches the cache and never reproduced the fault. This fixture keeps
+# the real write behaviour and is the reason the bug is now covered.
+
+@pytest.fixture
+def caching_prices(monkeypatch, tmp_path):
+    """A _series that writes to the cache DB, exactly as the real one does."""
+    from tradeiq import store as store_mod
+    monkeypatch.setattr(store_mod, "DB_PATH", tmp_path / "paper.db")
+    monkeypatch.setattr(store_mod, "_schema_ready", False)
+
+    def series(ticker, range_="2y"):
+        # The real path caches every fetch. This is the write that used to
+        # collide with mark()'s open transaction.
+        store_mod.cache_put(f"px:{ticker}", {"ticker": ticker})
+        if ticker in paper.BENCHMARKS:
+            return _flat_series()
+        return _flat_series(slope=1.0)
+
+    monkeypatch.setattr(paper, "_series", series)
+    return series
+
+
+def test_mark_does_not_deadlock_when_price_fetch_writes_to_the_db(caching_prices):
+    """mark() must not hold a write txn open across the price fetch."""
+    paper.open_run(scan_fn=_scan, run_date=RUN_DATE)
+    # Before the fix this raised sqlite3.OperationalError: database is locked.
+    res = paper.mark(today="2026-03-02")
+    assert res["filled"] > 0, "entries should be filled once prices resolve"
+    assert res["skipped"] == 0
+
+
+def test_mark_is_still_append_only_after_the_deadlock_fix(caching_prices):
+    """Splitting the read/write phases must not let a mark be written twice."""
+    paper.open_run(scan_fn=_scan, run_date=RUN_DATE)
+    first = paper.mark(today="2026-03-02")
+    second = paper.mark(today="2026-03-02")
+    assert second["marked"] == 0, "a second mark run must write nothing new"
+    assert first["marked"] >= 0
+
+
+def test_positions_read_before_prices_survive_as_plain_dicts(caching_prices):
+    """Rows are detached from the cursor, so closing the connection is safe.
+
+    sqlite3.Row is bound to its connection; mark() now closes that connection
+    before the price loop, so the rows must already be plain dicts or the
+    loop would fail on a closed cursor.
+    """
+    paper.open_run(scan_fn=_scan, run_date=RUN_DATE)
+    res = paper.mark(today="2026-03-02")
+    assert isinstance(res, dict)

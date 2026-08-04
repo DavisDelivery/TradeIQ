@@ -322,19 +322,35 @@ def mark(today=None, verbose=True):
     bench = {k: v for k, v in bench.items() if v is not None}
 
     filled, marked, skipped = 0, 0, 0
+
+    # READ the positions, then CLOSE the connection before fetching prices.
+    #
+    # This used to be one long `with _db()` block with `_series()` called
+    # inside the loop. That self-deadlocked: the outer connection holds a
+    # write transaction while `_series` -> prices.history -> cache_put opens a
+    # SECOND connection to the same file and tries to write, so SQLite raised
+    # "database is locked" on the first ticker. Every mark run died there —
+    # which is why the ledger had 4 positions and 0 marks.
+    #
+    # Price fetching is also the slow part (network). Holding a write lock
+    # across it would block any concurrent reader for the whole run even if
+    # the deadlock were solved another way.
     with _db() as c:
-        rows = c.execute("SELECT * FROM paper_positions").fetchall()
+        rows = [dict(r) for r in c.execute("SELECT * FROM paper_positions").fetchall()]
         existing = {
             (r["position_id"], r["horizon"])
             for r in c.execute("SELECT position_id, horizon FROM paper_marks").fetchall()
         }
 
-        px_cache = {}
+    # Fetch every series with NO database connection open.
+    px_cache = {}
+    for p in rows:
+        if p["ticker"] not in px_cache:
+            px_cache[p["ticker"]] = _series(p["ticker"])
+
+    with _db() as c:
         for p in rows:
-            tkr = p["ticker"]
-            if tkr not in px_cache:
-                px_cache[tkr] = _series(tkr)
-            close = px_cache[tkr]
+            close = px_cache[p["ticker"]]
             if close is None:
                 skipped += 1
                 continue

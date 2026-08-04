@@ -23,12 +23,31 @@ CREATE TABLE IF NOT EXISTS signals (
 """
 
 
+_schema_ready = False
+
+
 @contextmanager
 def conn():
-    c = sqlite3.connect(DB_PATH)
+    # busy_timeout: wait for a competing writer instead of failing instantly.
+    # Defence in depth only — the real fix for the mark() deadlock was to stop
+    # nesting connections (see paper.py mark). A timeout would have turned
+    # that bug into a 5-second stall per ticker rather than an error, which is
+    # worse: it would have looked like slowness, not breakage.
+    #
+    # WAL lets readers proceed while a writer is active, which matters because
+    # the price cache is written from inside read-heavy passes.
+    global _schema_ready
+    c = sqlite3.connect(DB_PATH, timeout=30.0)
     c.row_factory = sqlite3.Row
     try:
-        c.executescript(SCHEMA)
+        c.execute("PRAGMA busy_timeout=30000")
+        if not _schema_ready:
+            # executescript issues an implicit COMMIT and takes a write lock.
+            # Running it on EVERY connection made every read a would-be
+            # writer, which is what turned a nested read into a lock fight.
+            c.execute("PRAGMA journal_mode=WAL")
+            c.executescript(SCHEMA)
+            _schema_ready = True
         yield c
         c.commit()
     finally:
