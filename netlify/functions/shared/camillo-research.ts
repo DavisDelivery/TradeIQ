@@ -37,6 +37,8 @@ import { getTickerName } from './ticker-reference';
 import { fetchPageviews, resolveArticle } from './trend-exposure';
 import { fetchTrends, trendsEnabled, type TrendsSeries } from './google-trends';
 import { fetchOffExchange, type OffExchangeSignal } from './quiver-offexchange';
+import { fetchTickerMentions, type TickerMentions } from './social-mentions';
+import { fetchAppRating, type AppRating } from './app-ratings';
 import { logger } from './logger';
 
 const log = logger.child({ mod: 'camillo-research' });
@@ -68,6 +70,18 @@ export interface CamilloEvidence {
    * never weighted.
    */
   offExchange: OffExchangeSignal | null;
+  /**
+   * WallStreetBets-and-friends mention counts via ApeWisdom — the leg Quiver
+   * would not sell at any price. Live snapshot, no history; absence means
+   * BELOW the tracking floor, never zero. Display only.
+   */
+  mentions: TickerMentions | null;
+  /**
+   * Apple App Store ratings. The only leg here that measures BEHAVIOUR
+   * (someone downloaded and used the thing) rather than curiosity. Display
+   * only; the count is lifetime cumulative, so the level says little.
+   */
+  appRating: AppRating | null;
   insiders: Array<{ date: string; owner: string; relationship: string; transaction: string; valueUsd: number | null }>;
   news: Array<{ date: string; title: string }>;
   nextEarnings: string | null;
@@ -160,6 +174,19 @@ export async function gatherEvidence(
     gaps.push('google trends: not configured (SERPAPI_KEY unset) — context only, nothing degrades');
   }
 
+  // Retail mentions and app ratings. Both keyless and free; both fetched last
+  // and never blocking. App ratings need the resolved company name — a ticker
+  // string finds nothing useful in an app store.
+  const [mentions, appRating] = await Promise.all([
+    fetchTickerMentions(t).catch((e: any) => { gaps.push(`retail mentions: ${e?.message ?? e}`); return null; }),
+    resolvedName
+      ? fetchAppRating(resolvedName).catch((e: any) => { gaps.push(`app ratings: ${e?.message ?? e}`); return null; })
+      : Promise.resolve(null),
+  ]);
+  if (!resolvedName) gaps.push('app ratings: skipped — no company name resolved to search an app store with');
+  if (mentions?.state === 'UNAVAILABLE' && mentions.reason) gaps.push(`retail mentions: ${mentions.reason}`);
+  if (appRating && !appRating.available && appRating.reason) gaps.push(`app ratings: ${appRating.reason}`);
+
   return {
     ticker: t,
     companyName: resolvedName,
@@ -168,6 +195,8 @@ export async function gatherEvidence(
     attention,
     googleTrends,
     offExchange,
+    mentions,
+    appRating,
     insiders: insiders.slice(0, 10).map((i: any) => ({
       date: i.date, owner: i.owner, relationship: i.relationship,
       transaction: i.transaction, valueUsd: i.valueUsd ?? null,
@@ -247,6 +276,39 @@ export function renderEvidence(e: CamilloEvidence): string {
   }
 
   lines.push('');
+  lines.push('— RETAIL CHATTER (source: ApeWisdom / r-wallstreetbets and related) — UNWEIGHTED —');
+  if (e.mentions?.state === 'TRACKED') {
+    const m = e.mentions;
+    lines.push(`mentions today: ${m.mentions}   rank ${m.rank} of ${m.universeSize} tracked tickers`);
+    lines.push(`mentions 24h ago: ${m.mentions24hAgo ?? 'no prior observation'}`);
+    lines.push('READ IT AS SATURATION: chatter means the crowd has arrived. In this frame that is a');
+    lines.push('reason to be MORE sceptical of an "undiscovered" thesis, not less.');
+  } else if (e.mentions?.state === 'BELOW_FLOOR') {
+    lines.push(`NOT among the ${e.mentions.universeSize} tracked tickers — fewer than ${e.mentions.floor} mentions.`);
+    lines.push('This is a real observation, not missing data: retail is not talking about it. For an');
+    lines.push('undiscovered-consumer setup that is the EXPECTED state, so treat it as consistent');
+    lines.push('with the thesis rather than as evidence for it.');
+  } else {
+    lines.push(`(unavailable: ${e.mentions?.reason ?? 'not fetched'})`);
+  }
+
+  lines.push('');
+  lines.push('— APP-STORE RATINGS (source: Apple iTunes Search API) — UNWEIGHTED —');
+  if (e.appRating?.available) {
+    const a = e.appRating;
+    lines.push(`app: ${a.appName} (${a.seller ?? 'unknown seller'})   match confidence: ${a.matchConfidence}`);
+    lines.push(`rating: ${a.rating ?? 'unknown'} from ${a.ratingCount?.toLocaleString() ?? 'unknown'} ratings (LIFETIME cumulative)`);
+    lines.push(`current version: ${a.ratingCurrentVersion ?? 'unknown'} from ${a.ratingCountCurrentVersion?.toLocaleString() ?? 'unknown'}, released ${a.currentVersionReleaseDate ?? 'unknown'}`);
+    if (a.matchConfidence === 'LOW') lines.push('WARNING: weak name match. This app may belong to a different company entirely.');
+    lines.push('CAUTION: the count only ever rises, so its LEVEL just tells you the app is big — which');
+    lines.push('market cap already told you. Only the change over time would be a demand signal, and');
+    lines.push('this system has not been recording long enough to show you one.');
+  } else {
+    lines.push(`(unavailable: ${e.appRating?.reason ?? 'not fetched'})`);
+    lines.push('A company with no consumer app is normal and is NOT a negative signal.');
+  }
+
+  lines.push('');
   lines.push('— INSIDER TRANSACTIONS (source: Finviz / SEC Form 4) —');
   lines.push(e.insiders.length
     ? e.insiders.map((i) => `${i.date}  ${i.transaction.padEnd(5)}  ${i.owner} (${i.relationship})  ${i.valueUsd == null ? '' : `$${i.valueUsd.toLocaleString()}`}`).join('\n')
@@ -282,7 +344,7 @@ THE FOUR QUESTIONS, IN ORDER
 1. PRODUCT — what does this company actually sell to consumers? Name the specific product or brand. If the evidence does not say, say so plainly; that is a real finding, because a company whose product you cannot name from its own filings and news is not a social-arbitrage candidate.
 2. TREND — is there any sign in the evidence of a demand change? Sales growth and insider behaviour are the strongest legs here. News is weak. Attention is descriptive only.
 3. MATERIALITY — this is the question that kills most of these trades. Would the trend, if real, be a large enough share of revenue to move the stock? Mattel's Barbie film grossed $1.44bn and was ~2.3% of Mattel revenue; the stock trailed the S&P by 32 percentage points that year. State explicitly whether the evidence lets you judge materiality. Usually it will not, because there is no segment revenue here.
-4. DISCOVERY — has the market already repriced it? Use institutional ownership, distance from the 52-week high, and short float. Off-exchange volume against its own baseline is a RETAIL-crowding gauge: a positive z means the crowd is already here, which argues against an undiscovered setup. Its absence means the data was not available, never that the crowd is absent.
+4. DISCOVERY — has the market already repriced it? Use institutional ownership, distance from the 52-week high, and short float. Off-exchange volume against its own baseline is a RETAIL-crowding gauge: a positive z means the crowd is already here, which argues against an undiscovered setup. Its absence means the data was not available, never that the crowd is absent. Retail mention counts work the same way: heavy chatter argues AGAINST an undiscovered thesis. A name below the tracking floor is quiet, which is the EXPECTED state for this setup — consistent with the thesis, never evidence for it.
 
 Then give the falsifier: the single observation that would most cleanly prove this thesis wrong.
 

@@ -7,16 +7,94 @@ new one has to fit. Written 2026-08-03, Quiver section answered 2026-08-04.
 
 | Source | State | Notes |
 |---|---|---|
-| Wikipedia pageviews | **LIVE** | `shared/trend-exposure.ts`. Free, keyless, ABSOLUTE counts — the only attention series here that is comparable between two names. |
-| Google Trends | **LIVE, UNWEIGHTED** | `shared/google-trends.ts`. Needs `SERPAPI_KEY`. Display only — see below. |
-| Quiver off-exchange volume | **LIVE, UNWEIGHTED** | `shared/quiver-offexchange.ts`. On the current plan. Retail-crowding proxy — the nearest thing to an investor-saturation leg we can actually buy. |
-| Quiver WallStreetBets | **GATED (403)** | Dataset exists; this plan does not include it, and it is not listed on any published tier. See below. |
-| Quiver Twitter followers | **GATED (403)** | Same. |
-| Quiver app ratings | **GATED (403)** | On the Trader tier, $75/mo. |
-| Reddit (direct) | absent | Official API. Free tier is non-commercial, 100 QPM per client id. |
+| Wikipedia pageviews | **LIVE** | `shared/trend-exposure.ts`. Free, keyless, ABSOLUTE counts — the only attention series here comparable between two names. |
+| Google Trends | **LIVE, UNWEIGHTED** | `shared/google-trends.ts`. Needs `SERPAPI_KEY` ($75/mo). Display only — see below. |
+| Quiver off-exchange volume | **LIVE, UNWEIGHTED** | `shared/quiver-offexchange.ts`. On the $30/mo plan. Retail-crowding proxy. |
+| **WSB mentions (ApeWisdom)** | **LIVE, UNWEIGHTED** | `shared/social-mentions.ts`. Free, keyless. Replaces the gated Quiver dataset — see "what to do when the vendor won't sell it". |
+| **App ratings (Apple)** | **LIVE, UNWEIGHTED** | `shared/app-ratings.ts`. Free, keyless, official Apple. Replaces Quiver's $75/mo tier. |
+| Quiver WallStreetBets | **GATED (403)** | Not on any published tier. Routed around, not bought. |
+| Quiver Twitter followers | **GATED (403)** | Same. No free substitute — X is the one genuinely paywalled leg. |
+| Quiver app ratings | **GATED (403)** | On the Trader tier, $75/mo. Not worth buying — Apple serves it free. |
+| Reddit (direct, official API) | not wired | The licensed upgrade path from ApeWisdom. Free tier, OAuth, 100 QPM, non-commercial. |
+| Google Play ratings | not wired | No official API. Android-side ratings need a scraper; Apple alone is a US-skewed sample. |
 | StockTwits | absent | Public API deprecated; partner access only. |
-| TikTok | absent | The Research API is contractually academic/non-profit only. A retail trading signal fails eligibility. Licensed scraper (Apify) is the only compliant path. |
-| X / Twitter | absent | Paid tiers only; no free tier for new apps. |
+| TikTok | absent | Research API is contractually academic/non-profit only. Licensed scraper (Apify) is the only compliant path. |
+| X / Twitter | absent | Paid tiers only, ~$200/mo for meaningful volume. The one leg with no free route. |
+
+## What to do when the vendor won't sell it
+
+Quiver gates WallStreetBets, Twitter and app ratings. Two of those three turned
+out to be **freely available at the source**, which is the general lesson:
+a data vendor's product is usually aggregation and convenience, not exclusive
+access. Before paying for a tier upgrade, check whether the underlying
+publisher serves it directly.
+
+| Gated at Quiver | Free route found | Verified |
+|---|---|---|
+| WallStreetBets mentions | ApeWisdom API, keyless — 757 tickers, mentions + 24h-ago | 2026-08-04 |
+| App-store ratings | Apple iTunes Search API, keyless and official | 2026-08-04 |
+| Twitter followers | none — X charges for this and there is no way around it | — |
+
+### The limitation both free sources share
+
+**Neither has history.** ApeWisdom serves a live snapshot with no per-ticker
+time series. Apple's `userRatingCount` is lifetime cumulative, so its level
+tells you the app is big — which market cap already told you.
+
+For both, **the signal is the daily change, and that series exists nowhere to
+be bought.** It only exists if something writes it down every day. That is
+what `netlify/functions/snapshot-social.ts` does (cron `10 21 * * *`), writing
+to Firestore `socialMentionSnapshots/{date}_{filter}`.
+
+It runs **every day including weekends**, unlike every other cron here, because
+r/wallstreetbets peaks on Sunday nights and a market-closed guard would put a
+systematic hole in the most informative observations.
+
+Nothing reads that history yet. In ninety days it is the only reason there will
+be anything to measure.
+
+### Absence is not zero
+
+A ticker missing from ApeWisdom's list has mentions **below the tracking
+floor**, not zero mentions. `social-mentions.ts` models three distinct states —
+`TRACKED`, `BELOW_FLOOR`, `UNAVAILABLE` — and `mentions` is `null` for the
+latter two, never `0`. Collapsing them would repeat the `None`→`0.0` coercion
+that manufactured this project's fake +16.2% backtest result.
+
+`BELOW_FLOOR` is a real finding and renders as a value, not as greyed-out
+missing data. For an undiscovered-consumer setup, quiet is the expected state:
+**consistent with the thesis, never evidence for it.**
+
+### Source risk on ApeWisdom, stated plainly
+
+ApeWisdom publishes **no terms of service, no rate limits and no commercial-use
+statement** (checked 2026-08-04). That is fine for personal research and not
+fine as the backbone of something you charge for. Two consequences:
+
+1. Every call is best-effort; nothing hard-depends on it.
+2. If TradeIQ goes commercial, swap to the official Reddit API (OAuth, free
+   tier, 100 QPM, non-commercial) or get written permission. The adapter
+   boundary is one file wide precisely so that swap is cheap.
+
+### Apple's matcher is the risky part, not the fetch
+
+Matching a company to its app by name is where a silent wrong attribution
+creeps in. Three rules were added only after live testing broke the naive
+version:
+
+- Searching the **legal name demotes the real app** — "Dutch Bros Inc" returned
+  "Dutch Bros U" (67 ratings) while the genuine app (862,554) fell out of the
+  top five. `searchTerm()` strips the corporate suffix before querying.
+- A trailing descriptor only counts as a match **behind a delimiter** or from a
+  generic allowlist. The first draft scored "Crocs Wallpapers HD" as a HIGH
+  match for CROX.
+- **A zero-rating app is refused even on an exact name match.** "Celsius
+  Holdings" resolves to an app literally called "Celsius" with 0 ratings — a
+  common-word collision with an unrelated product.
+
+Live results across 12 names: 6 HIGH, 2 LOW (flagged, shown with a warning),
+4 refused. A high refusal rate is correct — most listed companies have no
+consumer app, and saying so beats attributing a stranger's.
 
 ## Why Google Trends carries no weight
 
@@ -134,20 +212,29 @@ score and screen predicate.
 
 ## Cost, if you want the missing three
 
-| Source | Path | Rough cost |
-|---|---|---|
-| Reddit | official OAuth app | free, non-commercial |
-| TikTok / Instagram | Apify licensed actors | ~$50-150/mo |
-| X | pay-per-use post reads | ~$25/mo for 5k reads |
-| Google Trends | SerpApi Developer | $75/mo, 5k searches |
-| Quiver Trader tier | upgrade from Hobbyist | +$45/mo — buys app ratings, **not** WSB |
+| Source | Path | Rough cost | Verdict |
+|---|---|---|---|
+| WSB mentions | ApeWisdom | **free** | wired |
+| App ratings | Apple Search API | **free** | wired |
+| Off-exchange volume | Quiver Hobbyist | already paying $30/mo | wired |
+| Reddit | official OAuth app | free, non-commercial | the licensed upgrade from ApeWisdom |
+| Google Play ratings | Apify / scraper | ~$30-50/mo | only if the US-iOS skew starts to matter |
+| TikTok / Instagram | Apify licensed actors | ~$50-150/mo | the real gap — where consumer trends now start |
+| X | pay-per-use post reads | ~$200/mo for useful volume | skip; worst value here |
+| Google Trends | SerpApi Developer | $75/mo | already wired, measured NO_EDGE |
+| Quiver Trader tier | upgrade from Hobbyist | +$45/mo | **do not buy** — Apple serves the ratings free |
 
-**Reddit direct is still the highest value per dollar**, and now for a sharper
-reason than before: Quiver will not sell WSB mentions on any published tier, so
-counting r/wallstreetbets yourself is the only route to that series short of a
-Commercial contract. It is free, and it is the one source that reads *investor*
-saturation rather than another consumer-attention series.
+**Nothing on this list is worth buying next.** The two gated datasets that
+mattered turned out to be free at the source, and the paid options that remain
+are either poor value (X) or duplicate something already wired (Quiver Trader).
 
-Off-exchange volume now covers that leg approximately, so this is an
-improvement rather than a hole — but it is a flow proxy, not a mention count,
-and the two would fail differently. Having both is worth more than either.
+The highest-value next move costs nothing: **let `snapshot-social.ts` run.**
+Every source above is a level, and levels are nearly uninformative — a big app
+has many ratings, a meme stock has many mentions, and market cap told you both.
+The differences are where any signal lives, and no vendor sells those
+differences for these sources at any price. Ninety days of a free daily cron
+buys something $500/mo of subscriptions cannot.
+
+If a budget does get spent later, spend it on **TikTok/Instagram via a licensed
+scraper**, not on another finance-data vendor. Consumer trends now start there
+and every source wired here is downstream of that.

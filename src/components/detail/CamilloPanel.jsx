@@ -158,6 +158,39 @@ export function CamilloPanel({ ticker, universe = 'russell2k' }) {
                 reason={ev.googleTrends?.reason ?? 'not configured'}
                 note={ev.googleTrends?.keyword}
               />
+              {/* BELOW_FLOOR is a real observation, not missing data — it
+                  gets a value, not a reason. Rendering "quiet" in the grey
+                  missing-data style would throw away the finding. */}
+              <ContextRow
+                name="wsb mentions"
+                value={
+                  ev.mentions?.state === 'TRACKED'
+                    ? `${ev.mentions.mentions} today, rank ${ev.mentions.rank}/${ev.mentions.universeSize}`
+                    : ev.mentions?.state === 'BELOW_FLOOR'
+                      ? `quiet — under ${ev.mentions.floor} mentions`
+                      : null
+                }
+                reason={ev.mentions?.reason ?? 'not fetched'}
+                note={
+                  ev.mentions?.state === 'TRACKED' && ev.mentions.mentions24hAgo != null
+                    ? `was ${ev.mentions.mentions24hAgo} 24h ago`
+                    : null
+                }
+              />
+              <ContextRow
+                name="app store rating"
+                value={
+                  ev.appRating?.available && ev.appRating.ratingCount != null
+                    ? `${ev.appRating.rating?.toFixed(2)}★ · ${ev.appRating.ratingCount.toLocaleString()}`
+                    : null
+                }
+                reason={ev.appRating?.reason ?? 'not fetched'}
+                note={
+                  ev.appRating?.available
+                    ? `${ev.appRating.appName}${ev.appRating.matchConfidence === 'LOW' ? ' (weak match)' : ''}`
+                    : null
+                }
+              />
               <ContextRow
                 name="off-exchange volume"
                 value={
@@ -169,9 +202,10 @@ export function CamilloPanel({ ticker, universe = 'russell2k' }) {
                 note={ev.offExchange?.dpiRecent != null ? `DPI ${ev.offExchange.dpiRecent} vs ${ev.offExchange.dpiBase}` : null}
               />
               <p className="text-[10px] text-neutral-600 mt-2 leading-snug">
-                A positive off-exchange z means retail is already here — in this frame that argues
-                against an undiscovered name, not for it. DPI levels are not comparable between
-                companies. WallStreetBets mentions are not on this Quiver plan.
+                Chatter and off-exchange volume both read as saturation: if retail is already here,
+                that argues against an undiscovered name, not for it. "Quiet" is the expected state
+                for this setup. DPI levels are not comparable between companies, and the app rating
+                count is lifetime cumulative — only its change over time would mean anything.
               </p>
             </div>
           )}

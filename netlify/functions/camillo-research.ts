@@ -130,6 +130,27 @@ export const handler: Handler = async (event) => {
               reason: evidence.offExchange.reason,
             }
           : null,
+        mentions: evidence.mentions
+          ? {
+              state: evidence.mentions.state,
+              mentions: evidence.mentions.mentions,
+              mentions24hAgo: evidence.mentions.mentions24hAgo,
+              rank: evidence.mentions.rank,
+              universeSize: evidence.mentions.universeSize,
+              floor: evidence.mentions.floor,
+              reason: evidence.mentions.reason,
+            }
+          : null,
+        appRating: evidence.appRating
+          ? {
+              available: evidence.appRating.available,
+              appName: evidence.appRating.appName,
+              rating: evidence.appRating.rating,
+              ratingCount: evidence.appRating.ratingCount,
+              matchConfidence: evidence.appRating.matchConfidence,
+              reason: evidence.appRating.reason,
+            }
+          : null,
         insiderCount: evidence.insiders.length,
         newsCount: evidence.news.length,
         nextEarnings: evidence.nextEarnings,

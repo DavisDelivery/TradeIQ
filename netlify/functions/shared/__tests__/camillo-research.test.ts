@@ -46,6 +46,16 @@ const EVIDENCE: CamilloEvidence = {
     volumeZ: 0.3, recentDailyVolume: 458685, dpiRecent: 0.698, dpiBase: 0.584,
     reason: null, caveat: 'no weight in any score',
   },
+  mentions: {
+    ticker: 'CROX', state: 'TRACKED', mentions: 1, mentions24hAgo: null, rank: 399,
+    universeSize: 757, floor: 1, date: '2026-08-04', reason: null, caveat: 'no weight',
+  },
+  appRating: {
+    available: true, appId: 1097106160, appName: 'Crocs', seller: 'Crocs Inc',
+    rating: 4.73, ratingCount: 46441, ratingCurrentVersion: 4.73, ratingCountCurrentVersion: 46441,
+    currentVersionReleaseDate: '2026-06-22', matchConfidence: 'HIGH', matchedOn: 'Crocs Inc',
+    reason: null, caveat: 'no weight',
+  },
   insiders: [{ date: '2026-08-01', owner: 'A Director', relationship: 'Director', transaction: 'Buy', valueUsd: 591000 }],
   news: [{ date: '2026-07-30', title: 'Crocs raises full-year guidance' }],
   nextEarnings: '2026-10-28',
@@ -194,6 +204,70 @@ describe('off-exchange: the crowding leg', () => {
       },
     });
     expect(b).toMatch(/unavailable: Quiver off-exchange request failed/);
+  });
+});
+
+// The WSB leg Quiver would not sell. The rendering hazard is the opposite of
+// the usual one: here a MISSING ticker is a real finding, so it must not be
+// printed as though the lookup failed.
+describe('retail chatter: quiet is a finding, not a gap', () => {
+  it('renders a tracked name with its rank and universe size', () => {
+    const b = renderEvidence(EVIDENCE);
+    expect(b).toMatch(/RETAIL CHATTER/);
+    expect(b).toMatch(/rank 399 of 757 tracked/);
+    expect(b).toMatch(/UNWEIGHTED/);
+  });
+
+  it('states the saturation direction for a tracked name', () => {
+    expect(renderEvidence(EVIDENCE)).toMatch(/reason to be MORE sceptical/);
+  });
+
+  it('renders BELOW_FLOOR as an observation, never as missing data', () => {
+    const b = renderEvidence({
+      ...EVIDENCE,
+      mentions: { ...EVIDENCE.mentions!, state: 'BELOW_FLOOR', mentions: null, rank: null, reason: 'not tracked' },
+    });
+    expect(b).toMatch(/NOT among the 757 tracked tickers/);
+    expect(b).toMatch(/real observation, not missing data/);
+    expect(b).toMatch(/EXPECTED state/);
+    // The trap: quiet must not be sold as bullish confirmation.
+    expect(b).toMatch(/rather than as evidence for it/);
+  });
+
+  it('distinguishes UNAVAILABLE from quiet', () => {
+    const b = renderEvidence({
+      ...EVIDENCE,
+      mentions: { ...EVIDENCE.mentions!, state: 'UNAVAILABLE', mentions: null, reason: 'HTTP 503' },
+    });
+    expect(b).toMatch(/unavailable: HTTP 503/);
+    expect(b).not.toMatch(/NOT among/);
+  });
+
+  it('tells the model quiet is consistent-with, not evidence-for', () => {
+    expect(SYSTEM_PROMPT).toMatch(/consistent with the thesis, never evidence for it/i);
+  });
+});
+
+describe('app ratings: behaviour, not curiosity', () => {
+  it('renders the app with its match confidence and the cumulative warning', () => {
+    const b = renderEvidence(EVIDENCE);
+    expect(b).toMatch(/APP-STORE RATINGS/);
+    expect(b).toMatch(/Crocs/);
+    expect(b).toMatch(/LIFETIME cumulative/);
+    expect(b).toMatch(/only ever rises/);
+  });
+
+  it('warns loudly on a weak name match', () => {
+    const b = renderEvidence({
+      ...EVIDENCE,
+      appRating: { ...EVIDENCE.appRating!, matchConfidence: 'LOW', appName: 'Skiing Yeti Mountain' },
+    });
+    expect(b).toMatch(/may belong to a different company/);
+  });
+
+  it('says a missing app is NOT a negative signal', () => {
+    const b = renderEvidence({ ...EVIDENCE, appRating: null });
+    expect(b).toMatch(/no consumer app is normal and is NOT a negative signal/);
   });
 });
 

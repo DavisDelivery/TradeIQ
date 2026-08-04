@@ -31,6 +31,8 @@ const PAYLOAD = {
       available: true, volumeZ: 0.3, recentDailyVolume: 458685,
       dpiRecent: 0.698, dpiBase: 0.584, days: 1209, asOf: '2026-08-03', reason: null,
     },
+    mentions: { state: 'TRACKED', mentions: 1, mentions24hAgo: null, rank: 399, universeSize: 757, floor: 1, reason: null },
+    appRating: { available: true, appName: 'Crocs', rating: 4.73, ratingCount: 46441, matchConfidence: 'HIGH', reason: null },
     insiderCount: 1, newsCount: 4, nextEarnings: null, gaps: ['google trends: not configured'],
   },
 };
@@ -121,11 +123,14 @@ describe('CamilloPanel context strip', () => {
     expect(screen.getByText(/\+8\.4 idx pts/)).toBeInTheDocument();
   });
 
-  it('shows all three sources side by side', async () => {
+  it('shows every attention source side by side', async () => {
     await run();
-    expect(screen.getByText(/wikipedia \(absolute\)/i)).toBeInTheDocument();
-    expect(screen.getByText(/google trends \(index\)/i)).toBeInTheDocument();
-    expect(screen.getByText(/off-exchange volume/i)).toBeInTheDocument();
+    for (const name of [/wikipedia \(absolute\)/i, /google trends \(index\)/i, /wsb mentions/i, /app store rating/i]) {
+      expect(screen.getByText(name)).toBeInTheDocument();
+    }
+    // "off-exchange volume" also appears in the footnote prose, so scope to
+    // the row label rather than asserting a unique match.
+    expect(screen.getAllByText(/off-exchange volume/i).length).toBeGreaterThan(0);
   });
 
   it('says "zero weight" in the heading, so no row can be read as a signal', async () => {
@@ -138,9 +143,15 @@ describe('CamilloPanel context strip', () => {
     expect(screen.getByText(/argues against an undiscovered name, not for it/i)).toBeInTheDocument();
   });
 
-  it('says WSB is not on the plan, so its absence is not read as quiet', async () => {
+  it('states that quiet is the EXPECTED state, not a bullish tell', async () => {
     await run();
-    expect(screen.getByText(/WallStreetBets mentions are not on this Quiver plan/i)).toBeInTheDocument();
+    expect(screen.getByText(/argues against an undiscovered name, not for it/i)).toBeInTheDocument();
+    expect(screen.getByText(/"Quiet" is the expected state/i)).toBeInTheDocument();
+  });
+
+  it('warns that the app rating count is cumulative', async () => {
+    await run();
+    expect(screen.getByText(/lifetime cumulative/i)).toBeInTheDocument();
   });
 
   it('prints the REASON a source is missing, never a dash that reads as zero', async () => {
@@ -155,6 +166,40 @@ describe('CamilloPanel context strip', () => {
     await run();
     expect(screen.getByText('SERPAPI_KEY unset')).toBeInTheDocument();
     expect(screen.getByText('Quiver request failed')).toBeInTheDocument();
+  });
+
+  it('shows WSB mentions — the leg Quiver would not sell', async () => {
+    await run();
+    expect(screen.getByText(/wsb mentions/i)).toBeInTheDocument();
+    expect(screen.getByText(/1 today, rank 399\/757/)).toBeInTheDocument();
+  });
+
+  it('renders "quiet" as a VALUE, not as greyed-out missing data', async () => {
+    // A ticker below the tracking floor is a real observation. If it rendered
+    // in the missing-data style the finding would be thrown away.
+    fetchMock.mockImplementation(() => ok({
+      ...PAYLOAD,
+      evidence: {
+        ...PAYLOAD.evidence,
+        mentions: { state: 'BELOW_FLOOR', mentions: null, rank: null, universeSize: 757, floor: 1, reason: 'not tracked' },
+      },
+    }));
+    await run();
+    const el = screen.getByText(/quiet — under 1 mentions/);
+    expect(el).toBeInTheDocument();
+    expect(el.className).not.toMatch(/italic/);
+  });
+
+  it('shows the app rating and flags a weak match', async () => {
+    fetchMock.mockImplementation(() => ok({
+      ...PAYLOAD,
+      evidence: {
+        ...PAYLOAD.evidence,
+        appRating: { available: true, appName: 'Skiing Yeti Mountain', rating: 4.82, ratingCount: 4956, matchConfidence: 'LOW', reason: null },
+      },
+    }));
+    await run();
+    expect(screen.getByText(/weak match/i)).toBeInTheDocument();
   });
 
   it('shows DPI recent AND baseline together — never a bare level', async () => {
