@@ -41,6 +41,24 @@ const Field = ({ label, children }) => (
   </div>
 );
 
+const signed = (n, unit = '') => (n == null ? null : `${n > 0 ? '+' : ''}${n}${unit}`);
+
+// One row of the context strip. `value` null means the source did not answer;
+// we print WHY rather than a dash, because a silent dash reads as "zero".
+const ContextRow = ({ name, value, reason, note }) => (
+  <div className="flex items-baseline justify-between gap-3 py-1 border-b border-neutral-800/60 last:border-0">
+    <span className="text-[11px] text-neutral-400 font-mono shrink-0">{name}</span>
+    {value != null ? (
+      <span className="text-[11px] text-neutral-200 font-mono text-right">
+        {value}
+        {note && <span className="text-neutral-600"> · {note}</span>}
+      </span>
+    ) : (
+      <span className="text-[11px] text-neutral-600 text-right italic">{reason || 'not available'}</span>
+    )}
+  </div>
+);
+
 export function CamilloPanel({ ticker, universe = 'russell2k' }) {
   const [asked, setAsked] = useState(false);
   const { data, error, isLoading, isFetching } = useCamilloResearch(ticker, { universe, enabled: asked });
@@ -115,6 +133,49 @@ export function CamilloPanel({ ticker, universe = 'russell2k' }) {
             </div>
           )}
 
+          {/* CONTEXT STRIP — every attention source, shown but explicitly
+              unweighted. Requested visible; unweighted because none of them
+              has measured an edge in this system. The heading says so once,
+              so no individual row can be read as a signal. */}
+          {ev && (
+            <div className="border border-neutral-800 rounded p-3 mb-3">
+              <div className="text-[10px] uppercase tracking-[0.18em] text-neutral-500 font-mono mb-2">
+                Attention &amp; crowding — context only, zero weight
+              </div>
+              <ContextRow
+                name="wikipedia (absolute)"
+                value={ev.attention?.momPct == null ? null : `${signed(Math.round(ev.attention.momPct))}% vs prior 28d`}
+                reason={ev.attention ? 'no pageview record' : 'no article resolved'}
+                note={ev.attention?.recentDailyMean ? `${ev.attention.recentDailyMean}/day` : null}
+              />
+              <ContextRow
+                name="google trends (index)"
+                value={
+                  ev.googleTrends?.available && ev.googleTrends.recentVsBase != null
+                    ? `${signed(ev.googleTrends.recentVsBase)} idx pts, 4w vs 12w`
+                    : null
+                }
+                reason={ev.googleTrends?.reason ?? 'not configured'}
+                note={ev.googleTrends?.keyword}
+              />
+              <ContextRow
+                name="off-exchange volume"
+                value={
+                  ev.offExchange?.available && ev.offExchange.volumeZ != null
+                    ? `${signed(ev.offExchange.volumeZ)} sd vs 60d`
+                    : null
+                }
+                reason={ev.offExchange?.reason ?? 'not fetched'}
+                note={ev.offExchange?.dpiRecent != null ? `DPI ${ev.offExchange.dpiRecent} vs ${ev.offExchange.dpiBase}` : null}
+              />
+              <p className="text-[10px] text-neutral-600 mt-2 leading-snug">
+                A positive off-exchange z means retail is already here — in this frame that argues
+                against an undiscovered name, not for it. DPI levels are not comparable between
+                companies. WallStreetBets mentions are not on this Quiver plan.
+              </p>
+            </div>
+          )}
+
           {/* Never collapsed, never a footnote — see the header comment. */}
           <div className="border border-amber-500/30 bg-amber-500/5 rounded p-3">
             <div className="text-[10px] uppercase tracking-[0.18em] text-amber-300/90 font-mono mb-1">
@@ -128,8 +189,8 @@ export function CamilloPanel({ ticker, universe = 'russell2k' }) {
           {ev && (
             <div className="mt-3 text-[11px] text-neutral-600 font-mono">
               evidence {ev.asOf} · {ev.hasFundamentals ? 'screener ✓' : 'no screener row'} ·{' '}
-              {ev.newsCount} news · {ev.insiderCount} insider ·{' '}
-              {ev.attention ? `wiki ${ev.attention.momPct == null ? '—' : `${ev.attention.momPct > 0 ? '+' : ''}${Math.round(ev.attention.momPct)}% 28d`}` : 'no wiki'}
+              {ev.newsCount} news · {ev.insiderCount} insider
+              {ev.offExchange?.days ? <> · {ev.offExchange.days}d OTC</> : null}
               {ev.gaps?.length > 0 && <> · {ev.gaps.length} gap{ev.gaps.length === 1 ? '' : 's'}</>}
             </div>
           )}

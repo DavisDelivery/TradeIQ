@@ -36,6 +36,7 @@ import { fetchFinvizInsiders, getFinvizUniverseSnapshot, type FinvizRow } from '
 import { getTickerName } from './ticker-reference';
 import { fetchPageviews, resolveArticle } from './trend-exposure';
 import { fetchTrends, trendsEnabled, type TrendsSeries } from './google-trends';
+import { fetchOffExchange, type OffExchangeSignal } from './quiver-offexchange';
 import { logger } from './logger';
 
 const log = logger.child({ mod: 'camillo-research' });
@@ -60,6 +61,13 @@ export interface CamilloEvidence {
    * its 0-100 index is not comparable across calls.
    */
   googleTrends: TrendsSeries | null;
+  /**
+   * Off-exchange (retail-internalised) volume from Quiver. The closest thing
+   * to an INVESTOR-SATURATION leg this plan can buy — WallStreetBets and
+   * Twitter both 403 on the Hobbyist tier (probed 2026-08-04). Display only,
+   * never weighted.
+   */
+  offExchange: OffExchangeSignal | null;
   insiders: Array<{ date: string; owner: string; relationship: string; transaction: string; valueUsd: number | null }>;
   news: Array<{ date: string; title: string }>;
   nextEarnings: string | null;
@@ -83,7 +91,7 @@ export async function gatherEvidence(
   const t = ticker.toUpperCase();
   const gaps: string[] = [];
 
-  const [fundamentals, insiders, news, nextEarnings] = await Promise.all([
+  const [fundamentals, insiders, news, nextEarnings, offExchange] = await Promise.all([
     getFinvizUniverseSnapshot(universe)
       .then((snap) => snap?.rows?.find((r: FinvizRow) => r.ticker === t) ?? null)
       .catch((e) => { gaps.push(`finviz snapshot: ${e?.message ?? e}`); return null; }),
@@ -94,7 +102,13 @@ export async function gatherEvidence(
       .catch((e) => { gaps.push(`news: ${e?.message ?? e}`); return []; }),
     getUpcomingEarnings(t)
       .catch((e) => { gaps.push(`earnings date: ${e?.message ?? e}`); return null; }),
+    fetchOffExchange(t)
+      .catch((e) => { gaps.push(`off-exchange volume: ${e?.message ?? e}`); return null; }),
   ]);
+
+  if (offExchange && !offExchange.available && offExchange.reason) {
+    gaps.push(`off-exchange volume: ${offExchange.reason}`);
+  }
 
   if (!fundamentals) gaps.push(`${t} is not in the ${universe} snapshot — no float or ownership data`);
 
@@ -153,6 +167,7 @@ export async function gatherEvidence(
     fundamentals,
     attention,
     googleTrends,
+    offExchange,
     insiders: insiders.slice(0, 10).map((i: any) => ({
       date: i.date, owner: i.owner, relationship: i.relationship,
       transaction: i.transaction, valueUsd: i.valueUsd ?? null,
@@ -213,6 +228,25 @@ export function renderEvidence(e: CamilloEvidence): string {
   }
 
   lines.push('');
+  lines.push('— INVESTOR CROWDING (source: Quiver off-exchange / FINRA OTC prints) — UNWEIGHTED —');
+  if (e.offExchange?.available) {
+    const oe = e.offExchange;
+    lines.push(`off-exchange volume, last 5 days: ${oe.recentDailyVolume?.toLocaleString() ?? 'unknown'} shares/day`);
+    lines.push(`vs its own 60-day baseline: ${oe.volumeZ == null ? 'not enough history' : `${oe.volumeZ > 0 ? '+' : ''}${oe.volumeZ} sd`}`);
+    lines.push(`short share of off-exchange volume (DPI): ${oe.dpiRecent ?? 'unknown'} recent vs ${oe.dpiBase ?? 'unknown'} baseline`);
+    lines.push(`series depth: ${oe.days} trading days through ${oe.asOf}`);
+    lines.push('HOW TO READ IT: retail marketable flow is mostly internalised off-exchange, so a');
+    lines.push('positive volume z means retail participation in THIS name has picked up — which in');
+    lines.push('the Camillo frame is a DISCOVERY warning, not a buy signal. The DPI level is not');
+    lines.push('comparable between companies (it tracks market cap); only its move vs its own');
+    lines.push('baseline is meaningful, and its direction is unverified folk wisdom. No weight.');
+  } else {
+    lines.push(`(unavailable: ${e.offExchange?.reason ?? 'not fetched'})`);
+    lines.push('NOTE: WallStreetBets and Twitter mention counts are NOT available on this Quiver');
+    lines.push('plan (403). Do not assume anything about retail crowding from their absence.');
+  }
+
+  lines.push('');
   lines.push('— INSIDER TRANSACTIONS (source: Finviz / SEC Form 4) —');
   lines.push(e.insiders.length
     ? e.insiders.map((i) => `${i.date}  ${i.transaction.padEnd(5)}  ${i.owner} (${i.relationship})  ${i.valueUsd == null ? '' : `$${i.valueUsd.toLocaleString()}`}`).join('\n')
@@ -240,7 +274,7 @@ You are given ONLY the evidence block. You have no browsing and no memory of thi
 HARD RULES
 - Never invent a fact. If the evidence does not contain something, say so and list it under unverified.
 - Never output a score, a rank, a price target, or a probability. This app's convention is that a fluent paragraph must never outrank a measured backtest.
-- The Wikipedia attention series measured NO predictive edge in this system's own study. You may describe it. You may not treat it as evidence the stock will move.
+- The Wikipedia attention series measured NO predictive edge in this system's own study. You may describe it. You may not treat it as evidence the stock will move. The same applies to Google Trends and to off-exchange volume: describe, never predict from them.
 - Institutional ownership is the discovery gauge. High means the gap has likely closed.
 - Be brief. Short sentences. No preamble, no restating the question.
 
@@ -248,7 +282,7 @@ THE FOUR QUESTIONS, IN ORDER
 1. PRODUCT — what does this company actually sell to consumers? Name the specific product or brand. If the evidence does not say, say so plainly; that is a real finding, because a company whose product you cannot name from its own filings and news is not a social-arbitrage candidate.
 2. TREND — is there any sign in the evidence of a demand change? Sales growth and insider behaviour are the strongest legs here. News is weak. Attention is descriptive only.
 3. MATERIALITY — this is the question that kills most of these trades. Would the trend, if real, be a large enough share of revenue to move the stock? Mattel's Barbie film grossed $1.44bn and was ~2.3% of Mattel revenue; the stock trailed the S&P by 32 percentage points that year. State explicitly whether the evidence lets you judge materiality. Usually it will not, because there is no segment revenue here.
-4. DISCOVERY — has the market already repriced it? Use institutional ownership, distance from the 52-week high, and short float.
+4. DISCOVERY — has the market already repriced it? Use institutional ownership, distance from the 52-week high, and short float. Off-exchange volume against its own baseline is a RETAIL-crowding gauge: a positive z means the crowd is already here, which argues against an undiscovered setup. Its absence means the data was not available, never that the crowd is absent.
 
 Then give the falsifier: the single observation that would most cleanly prove this thesis wrong.
 

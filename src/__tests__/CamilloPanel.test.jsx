@@ -24,7 +24,15 @@ const PAYLOAD = {
     nextChecks: ['Read the 10-K segment note'],
     unverified: ['segment revenue', 'whether a trend exists at all'],
   },
-  evidence: { asOf: '2026-08-03', hasFundamentals: true, attention: { momPct: 12 }, insiderCount: 1, newsCount: 4, nextEarnings: null, gaps: ['google trends: not configured'] },
+  evidence: {
+    asOf: '2026-08-03', hasFundamentals: true, attention: { momPct: 12, recentDailyMean: 1200 },
+    googleTrends: { available: true, keyword: 'Crocs Inc', recentVsBase: 8.4, reason: null },
+    offExchange: {
+      available: true, volumeZ: 0.3, recentDailyVolume: 458685,
+      dpiRecent: 0.698, dpiBase: 0.584, days: 1209, asOf: '2026-08-03', reason: null,
+    },
+    insiderCount: 1, newsCount: 4, nextEarnings: null, gaps: ['google trends: not configured'],
+  },
 };
 
 const ok = (b) => Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(b) });
@@ -93,5 +101,66 @@ describe('CamilloPanel', () => {
     fireEvent.click(screen.getByRole('button', { name: /run the read/i }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalled());
     expect(String(fetchMock.mock.calls[0][0])).toContain('/api/camillo-research?ticker=CROX');
+  });
+});
+
+// The context strip carries three attention sources that were asked to be
+// VISIBLE and are deliberately UNWEIGHTED. The risk it manages is that a
+// number on screen reads as a signal — so the heading, not the reader,
+// has to carry the disclaimer.
+describe('CamilloPanel context strip', () => {
+  const run = async () => {
+    renderPanel();
+    fireEvent.click(screen.getByRole('button', { name: /run the read/i }));
+    await waitFor(() => expect(screen.getByText(/Attention & crowding/i)).toBeInTheDocument());
+  };
+
+  it('shows Google Trends even though it has no weight', async () => {
+    await run();
+    expect(screen.getByText(/google trends \(index\)/i)).toBeInTheDocument();
+    expect(screen.getByText(/\+8\.4 idx pts/)).toBeInTheDocument();
+  });
+
+  it('shows all three sources side by side', async () => {
+    await run();
+    expect(screen.getByText(/wikipedia \(absolute\)/i)).toBeInTheDocument();
+    expect(screen.getByText(/google trends \(index\)/i)).toBeInTheDocument();
+    expect(screen.getByText(/off-exchange volume/i)).toBeInTheDocument();
+  });
+
+  it('says "zero weight" in the heading, so no row can be read as a signal', async () => {
+    await run();
+    expect(screen.getByText(/context only, zero weight/i)).toBeInTheDocument();
+  });
+
+  it('states the sign convention: retail already here argues AGAINST the setup', async () => {
+    await run();
+    expect(screen.getByText(/argues against an undiscovered name, not for it/i)).toBeInTheDocument();
+  });
+
+  it('says WSB is not on the plan, so its absence is not read as quiet', async () => {
+    await run();
+    expect(screen.getByText(/WallStreetBets mentions are not on this Quiver plan/i)).toBeInTheDocument();
+  });
+
+  it('prints the REASON a source is missing, never a dash that reads as zero', async () => {
+    fetchMock.mockImplementation(() => ok({
+      ...PAYLOAD,
+      evidence: {
+        ...PAYLOAD.evidence,
+        googleTrends: { available: false, keyword: 'Crocs Inc', recentVsBase: null, reason: 'SERPAPI_KEY unset' },
+        offExchange: { available: false, volumeZ: null, days: 0, reason: 'Quiver request failed' },
+      },
+    }));
+    await run();
+    expect(screen.getByText('SERPAPI_KEY unset')).toBeInTheDocument();
+    expect(screen.getByText('Quiver request failed')).toBeInTheDocument();
+  });
+
+  it('shows DPI recent AND baseline together — never a bare level', async () => {
+    await run();
+    // A single DPI number invites cross-company comparison; the level tracks
+    // market cap, so the pair is the only honest presentation.
+    expect(screen.getByText(/DPI 0\.698 vs 0\.584/)).toBeInTheDocument();
   });
 });
