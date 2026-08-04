@@ -16,7 +16,7 @@ new one has to fit. Written 2026-08-03, Quiver section answered 2026-08-04.
 | Quiver WallStreetBets | **GATED (403)** | Not on any published tier. Routed around, not bought. |
 | Quiver Twitter followers | **GATED (403)** | Same. No free substitute — X is the one genuinely paywalled leg. |
 | Quiver app ratings | **GATED (403)** | On the Trader tier, $75/mo. Not worth buying — Apple serves it free. |
-| Reddit (direct, official API) | not wired | The licensed upgrade path from ApeWisdom. Free tier, OAuth, 100 QPM, non-commercial. |
+| Reddit (direct, official API) | **built, DORMANT** | `shared/reddit-client.ts` + `shared/reddit-mentions.ts`. Set `REDDIT_CLIENT_ID` / `REDDIT_CLIENT_SECRET` to activate. Needs Reddit approval — see below. |
 | Google Play ratings | not wired | No official API. Android-side ratings need a scraper; Apple alone is a US-skewed sample. |
 | StockTwits | absent | Public API deprecated; partner access only. |
 | TikTok | absent | Research API is contractually academic/non-profit only. Licensed scraper (Apify) is the only compliant path. |
@@ -123,6 +123,47 @@ that manufactured this project's fake +16.2% backtest result.
 `BELOW_FLOOR` is a real finding and renders as a value, not as greyed-out
 missing data. For an undiscovered-consumer setup, quiet is the expected state:
 **consistent with the thesis, never evidence for it.**
+
+### Reddit direct — the licensed route, built but dormant
+
+`reddit-client.ts` and `reddit-mentions.ts` count the same mentions from the
+source under Reddit's own terms. **Dormant until `REDDIT_CLIENT_ID` and
+`REDDIT_CLIENT_SECRET` are set**, so it ships safely before approval lands and
+nothing degrades while it is off.
+
+Getting credentials (verified 2026-08-04):
+
+1. **`https://old.reddit.com/prefs/apps`** — the Reddit redesign and the mobile
+   app do not render this page. `old.reddit.com` does.
+2. "create an app" → type **script** → redirect uri `http://localhost:8080`.
+3. Client id is the short string under the app name; secret is beside it.
+4. **Then follow the "register to use the API" link on that same form.** Since
+   the late-2025 Responsible Builder Policy, creating the app does NOT by
+   itself grant a working token — approval is a separate step. Reddit's own
+   create-app page says so: *"You must also register to use the API."*
+
+Because the credentials are issued at creation but the TOKEN is gated, a
+missing approval surfaces one step later than people expect — as a bare 401
+from `/api/v1/access_token`. `reddit-client.ts` catches that specific case and
+says so in the error rather than leaving you to guess.
+
+**Licence boundary:** the free tier is 100 QPM and is **non-commercial**.
+Reddit treats any revenue-generating project as commercial. Swapping ApeWisdom
+for Reddit removes the no-terms risk; it does not remove the obligation.
+
+**Counting tickers in free text is the hard part, not the HTTP.** The matcher
+requires a cashtag (`$GME`) or a bare all-caps standalone token, and refuses an
+ambiguity list — `IT`, `ON`, `DD`, `CEO`, `ATH`, `YOLO` and friends are real
+symbols or jargon that would otherwise turn the board into a word-frequency
+table. A cashtag overrides the ambiguity list, since `$IT` is unmistakable.
+
+This **deliberately undercounts**: "bought some crocs today" is not counted for
+CROX. That is the safe direction for a saturation gauge — undercounting makes a
+name look quieter, and quiet is the state that argues *for* a setup, so the
+error works against the thesis rather than flattering it.
+
+One mention is counted **per post**, not per occurrence, so a single ranting
+post repeating a ticker nine times cannot dominate the board.
 
 ### Source risk on ApeWisdom, stated plainly
 
