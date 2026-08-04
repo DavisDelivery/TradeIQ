@@ -36,6 +36,7 @@ import { CatalystsFeed } from './CatalystsFeed.jsx';
 import { RiskCallouts } from './RiskCallouts.jsx';
 import { ScoreBreakdown } from './ScoreBreakdown.jsx';
 import { ResearchPanel } from '../ResearchPanel.jsx';
+import { CamilloPanel } from './CamilloPanel.jsx';
 import { TradeTakenButton } from '../TradeTakenButton.jsx';
 
 export function StockDetailPanel({ board, ticker, row }) {
@@ -86,6 +87,12 @@ export function StockDetailPanel({ board, ticker, row }) {
 
       {/* One-tap execution log — captures live price + timestamp at tap. */}
       <TradeTakenButton ticker={ticker} />
+
+      {/* CAMILLO-1 — the judgment pass. Mounted here rather than in
+          ScreensView so it appears on a Screens row AND on every other
+          ticker detail from one component. It fires nothing until clicked;
+          the endpoint spends Anthropic budget per call. */}
+      <CamilloPanel ticker={ticker} universe={board === 'screens' ? 'russell2k' : 'sp500'} />
 
       {isVector ? null : isGeneric ? (
         // Generic ticker: on-demand AI brief in place of a board thesis.
