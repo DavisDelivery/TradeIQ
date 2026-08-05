@@ -24,6 +24,7 @@
 
 import { createHash } from 'node:crypto';
 import { getAdminDb } from './firebase-admin';
+import { finvizBarsEnabled } from './finviz-bars';
 import type { Firestore } from 'firebase-admin/firestore';
 
 export type PitDataClass =
@@ -82,10 +83,11 @@ const COLLECTION = 'pitCache';
  * reinterpreted.
  */
 export function barsSourceEpoch(): string {
-  const finvizOn =
-    Boolean(process.env.FINVIZ_AUTH_TOKEN) &&
-    (process.env.FINVIZ_BARS ?? 'on').toLowerCase() !== 'off';
-  return finvizOn ? 'finviz' : 'polygon';
+  // Imported, not re-derived. This predicate previously duplicated the env
+  // logic in finviz-bars.ts, so renaming the switch there would have left
+  // the cache epoch silently disagreeing with the actual bar source — the
+  // exact class of drift the epoch exists to prevent.
+  return finvizBarsEnabled() ? 'finviz' : 'polygon';
 }
 
 /** Stable hash over the key — sorted-key JSON → sha1 → hex. */

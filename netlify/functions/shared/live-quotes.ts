@@ -16,6 +16,19 @@
 
 import { fetchFinvizQuotes, finvizEnabled } from './finviz';
 
+/**
+ * Quote-path kill switch. The bar path has had FINVIZ_BARS=off since FVZ-4,
+ * but quotes had NO off lever at all — if Finviz started returning bad
+ * prices, the only remedy was a code change, on the highest-frequency and
+ * most user-visible path in the app (every board's price overlay, and the
+ * price stamped into the trade journal). FINVIZ_QUOTES=off reverts to
+ * Polygon instantly.
+ */
+function finvizQuotesEnabled(): boolean {
+  if (!finvizEnabled()) return false;
+  return (process.env.FINVIZ_QUOTES ?? 'on').toLowerCase() !== 'off';
+}
+
 const POLYGON = 'https://api.polygon.io';
 
 export interface LiveQuote {
@@ -51,7 +64,7 @@ export async function getLiveQuotes(tickers: string[]): Promise<Record<string, L
   // Whatever Finviz misses (an uncovered symbol, a throttle) falls through
   // to Polygon below, so a partial answer degrades instead of blanking the
   // price overlay.
-  if (finvizEnabled()) {
+  if (finvizQuotesEnabled()) {
     try {
       const quotes = await fetchFinvizQuotes(uniq);
       if (quotes) {
