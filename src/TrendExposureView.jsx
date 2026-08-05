@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { TickerDetailModal } from './components/detail/TickerDetailModal.jsx';
 import { Search, FileText, AlertTriangle, ExternalLink, Info } from 'lucide-react';
 import { useTrendExposure } from './hooks/useTrendExposure.js';
 import { VerdictChip } from './components/VerdictChip.jsx';
@@ -66,6 +67,7 @@ const Sparkline = ({ points }) => {
 
 export const TrendExposureView = () => {
   const [input, setInput] = useState('');
+  const [selected, setSelected] = useState(null);
   const [phrase, setPhrase] = useState('');
   const [forms, setForms] = useState('10-K');
   const [days, setDays] = useState(730);
@@ -84,6 +86,12 @@ export const TrendExposureView = () => {
 
   return (
     <div className="px-3 py-4 sm:p-6 max-w-[1400px] mx-auto pb-20 sm:pb-6">
+      <TickerDetailModal
+        ticker={selected?.ticker}
+        row={selected}
+        board="trend"
+        onClose={() => setSelected(null)}
+      />
       <header className="mb-5">
         <div className="text-[10px] uppercase tracking-[0.2em] text-neutral-500 font-mono mb-2">
           Trend Exposure
@@ -260,7 +268,13 @@ export const TrendExposureView = () => {
                       <td className="px-3 py-2">
                         <span className="text-neutral-200">{f.name}</span>
                         {f.ticker && (
-                          <span className="ml-2 font-mono text-[11px] text-sky-300">{f.ticker}</span>
+                          <button
+                            onClick={(e) => { e.stopPropagation(); setSelected({ ticker: f.ticker }); }}
+                            title={`Open ${f.ticker} full profile`}
+                            className="ml-2 font-mono text-[11px] text-sky-300 hover:text-sky-200 transition-colors"
+                          >
+                            {f.ticker}
+                          </button>
                         )}
                         {!f.ticker && (
                           <span className="ml-2 text-[11px] text-neutral-600">not listed</span>

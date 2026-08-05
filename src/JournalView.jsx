@@ -9,6 +9,7 @@ import { useResearch } from './hooks/useResearch.js';
 import { queryKeys } from './lib/queryKeys.js';
 import { fetchWithRetry } from './lib/validateResponse.js';
 import { FundamentalsStrip } from './components/detail/FundamentalsStrip.jsx';
+import { TickerDetailModal } from './components/detail/TickerDetailModal.jsx';
 import { TradeQueuePanel } from './components/TradeQueuePanel.jsx';
 
 const SOURCE_META = {
@@ -43,6 +44,9 @@ const WINDOWS = [
 export const JournalView = () => {
   const [log, setLog] = useState([]);
   const [expandedId, setExpandedId] = useState(null);
+  // Logged trades are the tickers you actually own or tracked — they opened
+  // no company profile (audit 2026-08-04).
+  const [selected, setSelected] = useState(null);
   const [sourceFilter, setSourceFilter] = useState('all');
   const [cloudState, setCloudState] = useState(cloudSyncState());
 
@@ -148,6 +152,12 @@ export const JournalView = () => {
 
   return (
     <div className="px-3 py-4 sm:p-6 max-w-[1600px] mx-auto pb-20 sm:pb-6">
+      <TickerDetailModal
+        ticker={selected?.ticker}
+        row={selected}
+        board="journal"
+        onClose={() => setSelected(null)}
+      />
       {/* Agentic order queue (runbook Phase 2) — fills land below as journal
           entries, so the loop closes on this page. Hidden while empty. */}
       <TradeQueuePanel />
@@ -238,7 +248,13 @@ export const JournalView = () => {
                           <SourceIcon className="h-2.5 w-2.5" />
                           {source.label}
                         </span>
-                        <span className="font-serif font-bold text-lg text-neutral-100">{t.ticker}</span>
+                        <button
+                          onClick={(e) => { e.stopPropagation(); setSelected(t); }}
+                          title={`Open ${t.ticker} full profile`}
+                          className="font-serif font-bold text-lg text-neutral-100 hover:text-emerald-300 transition-colors"
+                        >
+                          {t.ticker}
+                        </button>
                         {t.side && (
                           <span className={`px-1.5 py-0.5 text-[9px] font-mono uppercase tracking-wider border ${
                             t.side === 'buy'
