@@ -46,11 +46,23 @@ function FableCard({ row, rank, onOpen }) {
   const d = row.diagnostics || {};
   return (
     <div className="rounded-xl border border-neutral-800 bg-neutral-900/60 p-3">
-      <button className="flex w-full items-center gap-3 text-left" onClick={() => setOpen(!open)}>
+      <div
+        role="button"
+        tabIndex={0}
+        className="flex w-full cursor-pointer items-center gap-3 text-left"
+        onClick={() => setOpen(!open)}
+        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setOpen(!open); } }}
+      >
         <span className="w-6 shrink-0 text-xs text-neutral-500">#{rank}</span>
         <div className="min-w-0 flex-1">
           <div className="flex items-baseline gap-2">
-            <span className="font-semibold text-neutral-100">{row.ticker}</span>
+            <button
+              onClick={(e) => { e.stopPropagation(); onOpen?.(row); }}
+              title={`Open ${row.ticker} full profile`}
+              className="font-semibold text-neutral-100 hover:text-emerald-300 transition-colors"
+            >
+              {row.ticker}
+            </button>
             <span className="truncate text-xs text-neutral-500">{row.name}</span>
           </div>
           <div className="mt-0.5 text-[11px] text-neutral-500">
@@ -72,7 +84,7 @@ function FableCard({ row, rank, onOpen }) {
           <div className="text-lg font-bold text-neutral-100">{row.percentile?.toFixed(0)}</div>
           <div className="text-[10px] uppercase tracking-wide text-neutral-500">pctile</div>
         </div>
-      </button>
+      </div>
       {open && (
         <div className="mt-3 space-y-2 border-t border-neutral-800 pt-3">
           {PILLARS.map(([key, label, help]) => (

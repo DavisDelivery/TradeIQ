@@ -7,6 +7,8 @@ import { useEarnings } from './hooks/useEarnings.js';
 import { useLiveRows } from './hooks/useLiveQuotes.js';
 import { readLog, logTrade } from './tradeLog.js';
 import { FundamentalsStrip } from './components/detail/FundamentalsStrip.jsx';
+import { MasterDetail } from './layout/MasterDetail.jsx';
+import { StockDetailPanel } from './components/detail/StockDetailPanel.jsx';
 
 const DetailStat = ({ label, value, color }) => (
   <div>
@@ -55,6 +57,9 @@ export const EarningsPlaysView = () => {
   });
   const [filter, setFilter] = useState('all');
   const [expandedKey, setExpandedKey] = useState(null);
+  // Earnings setups are tradeable tickers that opened no company profile
+  // (audit 2026-08-04).
+  const [selected, setSelected] = useState(null);
   const [loggedIds, setLoggedIds] = useState(() => new Set(readLog().filter((t) => t.source === 'earnings').map((t) => t.ticker + '|' + t.reportDate)));
 
   const { sortKey, sortDir, sortBy, sortRows } = useSortable('composite', 'desc');
@@ -81,7 +86,7 @@ export const EarningsPlaysView = () => {
   // the snapshot's. No snapshot prices anywhere.
   const sorted = useLiveRows(sortedRaw);
 
-  return (
+  const list = (
     <div className="p-4 sm:p-6 max-w-[1400px] mx-auto">
       <div className="mb-6 flex items-start justify-between gap-3 flex-wrap">
         <div>
@@ -232,7 +237,15 @@ export const EarningsPlaysView = () => {
                       onClick={() => setExpandedKey(isOpen ? null : cardKey)}
                       className={`border-t border-neutral-800/60 cursor-pointer transition-colors ${isOpen ? 'bg-neutral-900/40' : 'hover:bg-neutral-900/20'}`}
                     >
-                      <td className="px-3 py-2.5 font-serif font-bold text-neutral-100 text-[13px]">{e.ticker}</td>
+                      <td className="px-3 py-2.5">
+                        <button
+                          onClick={(ev) => { ev.stopPropagation(); setSelected(e); }}
+                          title={`Open ${e.ticker} full profile`}
+                          className="font-serif font-bold text-neutral-100 text-[13px] hover:text-emerald-300 transition-colors"
+                        >
+                          {e.ticker}
+                        </button>
+                      </td>
                       <td className="px-3 py-2.5 text-right tabular-nums font-bold" style={{ color: compColor }}>{e.composite ?? '—'}</td>
                       <td className="px-3 py-2.5 text-right tabular-nums text-neutral-300">
                         {Number.isFinite(e.daysUntil) ? (e.daysUntil < 0 ? `${Math.abs(e.daysUntil)}d ago` : `${e.daysUntil}d`) : '—'}
@@ -315,6 +328,20 @@ export const EarningsPlaysView = () => {
         </div>
       </div>
     </div>
+  );
+
+  return (
+    <MasterDetail
+      selected={selected}
+      onClose={() => setSelected(null)}
+      list={list}
+      detail={
+        selected ? (
+          <StockDetailPanel board="earnings" ticker={selected.ticker} row={selected} />
+        ) : null
+      }
+      closeLabel="Close detail"
+    />
   );
 };
 
