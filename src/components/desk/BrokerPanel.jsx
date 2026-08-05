@@ -1,4 +1,5 @@
-import React from 'react';
+import React, { useState } from 'react';
+import { TickerDetailModal } from '../detail/TickerDetailModal.jsx';
 import { useQuery } from '@tanstack/react-query';
 import { Landmark } from 'lucide-react';
 import { queryKeys } from '../../lib/queryKeys.js';
@@ -22,6 +23,9 @@ const fmtAgo = (iso) => {
 };
 
 export function BrokerPanel() {
+  // Open positions in the live account — clicking one to see its profile is
+  // the most natural gesture on this panel, and it did nothing.
+  const [selected, setSelected] = useState(null);
   const { data } = useQuery({
     queryKey: [...queryKeys.all, 'brokerSnapshot'],
     queryFn: async ({ signal }) => {
@@ -39,6 +43,12 @@ export function BrokerPanel() {
 
   return (
     <div className="border border-neutral-800" data-testid="broker-panel">
+      <TickerDetailModal
+        ticker={selected?.ticker}
+        row={selected}
+        board="broker"
+        onClose={() => setSelected(null)}
+      />
       <div className="px-4 py-2.5 border-b border-neutral-800/60 flex items-center gap-2 text-[10px] font-mono uppercase tracking-widest text-neutral-500 flex-wrap">
         <Landmark className="h-3.5 w-3.5" /> Agentic account {data.accountMasked}
         <span className="ml-auto text-neutral-600" title={data.syncedAt}>synced {fmtAgo(data.syncedAt)} · {data.source}</span>
@@ -75,7 +85,15 @@ export function BrokerPanel() {
             <tbody>
               {positions.map((p) => (
                 <tr key={p.symbol} className="border-b border-neutral-900/50">
-                  <td className="px-3 py-1.5 font-semibold text-neutral-200">{p.symbol}</td>
+                  <td className="px-3 py-1.5">
+                    <button
+                      onClick={(e) => { e.stopPropagation(); setSelected({ ticker: p.symbol, ...p }); }}
+                      title={`Open ${p.symbol} full profile`}
+                      className="font-semibold text-neutral-200 hover:text-emerald-300 transition-colors"
+                    >
+                      {p.symbol}
+                    </button>
+                  </td>
                   <td className="px-3 py-1.5 text-right tabular-nums text-neutral-300">{p.qty ?? '—'}</td>
                   <td className="px-3 py-1.5 text-right tabular-nums text-neutral-400">{p.avgCost != null ? `$${p.avgCost}` : '—'}</td>
                   <td className="px-3 py-1.5 text-right tabular-nums text-neutral-200">{fmtUsd(p.marketValue)}</td>
