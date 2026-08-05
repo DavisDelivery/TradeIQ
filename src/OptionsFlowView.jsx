@@ -2,9 +2,14 @@ import React, { useState } from 'react';
 import { CircleX, Info, AlertTriangle } from 'lucide-react';
 import { useOptionsFlow } from './hooks/useOptionsFlow.js';
 import { FundamentalsStrip } from './components/detail/FundamentalsStrip.jsx';
+import { MasterDetail } from './layout/MasterDetail.jsx';
+import { StockDetailPanel } from './components/detail/StockDetailPanel.jsx';
 
 export const OptionsFlowView = () => {
   const [filter, setFilter] = useState('all');
+  // Flow candidates are tradeable tickers but had no route to the company
+  // profile — clicking one did nothing (audit 2026-08-04).
+  const [selected, setSelected] = useState(null);
   const { data, error, isLoading: loading, refetch } = useOptionsFlow();
 
   const candidates = data?.candidates || [];
@@ -14,7 +19,7 @@ export const OptionsFlowView = () => {
       || (filter === 'bearish' && o.direction === 'bearish'))
     .sort((a, b) => b.score - a.score);
 
-  return (
+  const list = (
     <div className="p-4 sm:p-6 max-w-[1400px] mx-auto">
       <div className="mb-6 flex items-start justify-between gap-3">
         <div>
@@ -97,7 +102,15 @@ export const OptionsFlowView = () => {
             : o.direction === 'bearish' ? '#ff5577'
             : '#b0b4c0';
           return (
-            <div key={o.ticker} className="border border-neutral-800 hover:border-neutral-700 p-4 sm:p-5">
+            <div
+              key={o.ticker}
+              onClick={() => setSelected(o)}
+              className={`border p-4 sm:p-5 cursor-pointer transition-colors ${
+                selected?.ticker === o.ticker
+                  ? 'border-emerald-600/60 bg-emerald-500/[0.04]'
+                  : 'border-neutral-800 hover:border-neutral-700'
+              }`}
+            >
               <div className="flex items-start justify-between mb-3 gap-3">
                 <div>
                   <div className="flex items-baseline gap-3 flex-wrap">
@@ -169,5 +182,19 @@ export const OptionsFlowView = () => {
         </div>
       </div>
     </div>
+  );
+
+  return (
+    <MasterDetail
+      selected={selected}
+      onClose={() => setSelected(null)}
+      list={list}
+      detail={
+        selected ? (
+          <StockDetailPanel board="options-flow" ticker={selected.ticker} row={selected} />
+        ) : null
+      }
+      closeLabel="Close detail"
+    />
   );
 };
