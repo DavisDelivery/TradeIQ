@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import { Activity } from 'lucide-react';
 import { DirectionPill } from './components/Badges.jsx';
 import { useTargetBoard } from './hooks/useTargetBoard.js';
@@ -8,8 +8,11 @@ import { useRegime } from './hooks/useRegime.js';
 import { useCrosses } from './hooks/useCrosses.js';
 import { NEW_CROSS_MAX_BARS_AGO, formatCrossDate } from './CrossesView.jsx';
 import { FundamentalsStrip } from './components/detail/FundamentalsStrip.jsx';
+import { MasterDetail } from './layout/MasterDetail.jsx';
+import { StockDetailPanel } from './components/detail/StockDetailPanel.jsx';
 
 export const AlertsView = () => {
+  const [selected, setSelected] = useState(null);
   // AlertsView is a *derived* surface: it reads the four upstream boards
   // and emits a sorted alert feed. Each underlying query lives in shared
   // cache, so opening this view warms the same cache the dedicated
@@ -131,7 +134,7 @@ export const AlertsView = () => {
     Cross: 'text-violet-300 border-violet-500/40 bg-violet-500/5',
   }[s] || 'text-neutral-400 border-neutral-700 bg-neutral-900/40');
 
-  return (
+  const list = (
     <div className="px-3 py-4 sm:p-6 max-w-[1600px] mx-auto">
       <div className="mb-6 flex items-start justify-between gap-4">
         <div>
@@ -208,7 +211,15 @@ export const AlertsView = () => {
             <tbody>
               {alerts.map(a => (
                 <React.Fragment key={a.id}>
-                <tr className="border-b border-neutral-800/60 hover:bg-neutral-900/40">
+                // The alert feed aggregates tickers from every board — the
+                // one place a user is most likely to tap through — and opened
+                // nothing at all (audit 2026-08-04).
+                <tr
+                  onClick={() => setSelected(a)}
+                  className={`border-b border-neutral-800/60 cursor-pointer transition-colors ${
+                    selected?.ticker === a.ticker ? 'bg-emerald-500/[0.07]' : 'hover:bg-neutral-900/40'
+                  }`}
+                >
                   <td className="px-4 py-3">
                     <span className={`inline-flex items-center px-2 py-0.5 text-[10px] font-mono uppercase tracking-wider border ${sourceColor(a.source)}`}>
                       {a.source}
@@ -241,5 +252,19 @@ export const AlertsView = () => {
         </div>
       )}
     </div>
+  );
+
+  return (
+    <MasterDetail
+      selected={selected}
+      onClose={() => setSelected(null)}
+      list={list}
+      detail={
+        selected ? (
+          <StockDetailPanel board="alerts" ticker={selected.ticker} row={selected} />
+        ) : null
+      }
+      closeLabel="Close detail"
+    />
   );
 };
