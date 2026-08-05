@@ -107,14 +107,25 @@ describe('CatalystView (data loaded)', () => {
     expect(strip.closest('button')).toBeNull();
   });
 
-  it('row toggle button still expands the detail panel', () => {
+  it('row body still expands the inline breakdown', () => {
     renderWith({ picks: [makePick('NVDA')] });
-    // The row header (ticker) lives inside the toggle button.
-    const toggle = screen.getByText('NVDA').closest('button');
-    expect(toggle).not.toBeNull();
-    fireEvent.click(toggle);
-    // CatalystDetail renders the per-component breakdown sections.
+    // The ticker is now its own button (it opens the full company profile),
+    // so the accordion toggle is the surrounding row container. Clicking the
+    // body must still expand the Catalyst-specific breakdown.
+    const row = screen.getByText('NVDA').closest('[role="button"]');
+    expect(row).not.toBeNull();
+    fireEvent.click(row);
     expect(screen.getByText('Insider')).toBeInTheDocument();
     expect(screen.getByText('Patents')).toBeInTheDocument();
+  });
+
+  it('the ticker itself is a button — the route to the company profile', () => {
+    // Before the 2026-08-04 audit, reaching the full profile from Catalyst
+    // took two taps through a button that was invisible until the row was
+    // expanded. The ticker is now a direct, one-tap route.
+    renderWith({ picks: [makePick('NVDA')] });
+    const ticker = screen.getByRole('button', { name: 'NVDA' });
+    expect(ticker).toBeInTheDocument();
+    expect(ticker.getAttribute('title')).toMatch(/full profile/i);
   });
 });

@@ -160,7 +160,13 @@ const CatalystRow = ({ pick, expanded, onToggle, onOpen }) => {
           left-padded to stay aligned with the content column (w-12 score
           column + gap-3 = 60px). */}
       <div className="p-3 sm:p-4">
-        <button onClick={onToggle} className="w-full text-left flex items-start gap-3">
+        <div
+          role="button"
+          tabIndex={0}
+          onClick={onToggle}
+          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onToggle(); } }}
+          className="w-full text-left flex items-start gap-3 cursor-pointer"
+        >
           <div className="flex-shrink-0 w-12 flex flex-col items-center">
             <div className={`text-xl font-bold ${dirColor}`}>{pick.composite}</div>
             <div className="text-[9px] text-neutral-500 uppercase tracking-wider mt-0.5">{pick.conviction}</div>
@@ -168,7 +174,13 @@ const CatalystRow = ({ pick, expanded, onToggle, onOpen }) => {
           <div className="flex-1 min-w-0">
             <div className="flex items-baseline justify-between gap-3 mb-1">
               <div className="flex items-baseline gap-2 min-w-0">
-                <span className="text-[15px] font-bold text-neutral-100">{pick.ticker}</span>
+                <button
+                  onClick={(e) => { e.stopPropagation(); onOpen?.(pick); }}
+                  title={`Open ${pick.ticker} full profile`}
+                  className="text-[15px] font-bold text-neutral-100 hover:text-emerald-300 transition-colors"
+                >
+                  {pick.ticker}
+                </button>
                 <span className="text-[11px] text-neutral-500 truncate">{pick.name}</span>
               </div>
               <div className="text-right flex-shrink-0">
@@ -181,7 +193,7 @@ const CatalystRow = ({ pick, expanded, onToggle, onOpen }) => {
             <div className="mb-1.5"><CatalystBadges catalyst={pick} max={5} /></div>
             <p className="text-[11px] text-neutral-400 leading-relaxed line-clamp-2">{pick.rationale}</p>
           </div>
-        </button>
+        </div>
         {/* Phase 6 PR-G — fundamentals strip inline beneath the row content.
             Same hook as everywhere else; lazy-fetched via intersection
             observer. */}

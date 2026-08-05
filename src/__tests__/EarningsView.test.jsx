@@ -81,8 +81,10 @@ describe('EarningsView log-trade path', () => {
   it('clicking "+ Log Trade" logs the trade and flips the button (regression: missing logTrade import)', () => {
     renderWith([makeSetup('DE')]);
 
-    // Expand the row, then log.
-    fireEvent.click(screen.getByText('DE'));
+    // Expand the row, then log. The ticker itself is now a button that opens
+    // the company profile (audit 2026-08-04) and stops propagation, so the
+    // accordion is driven by the row, not the ticker cell.
+    fireEvent.click(screen.getByText('DE').closest('tr'));
     fireEvent.click(screen.getByText('+ Log Trade'));
 
     expect(screen.getByText('✓ Logged')).toBeInTheDocument();
@@ -92,5 +94,12 @@ describe('EarningsView log-trade path', () => {
     expect(logged[0].ticker).toBe('DE');
     expect(logged[0].reportDate).toBe('2026-06-15');
     expect(logged[0].loggedPrice).toBe(100);
+  });
+
+  it('the ticker is a button that opens the company profile', () => {
+    // Earnings setups previously had no route to the full profile at all.
+    renderWith([makeSetup('DE')]);
+    const ticker = screen.getByRole('button', { name: 'DE' });
+    expect(ticker.getAttribute('title')).toMatch(/full profile/i);
   });
 });
