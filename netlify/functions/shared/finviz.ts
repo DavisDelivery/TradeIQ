@@ -301,6 +301,58 @@ export type FinvizFetchOutcome =
   | { ok: false; reason: FinvizFailReason };
 
 /**
+ * Per-container failure tally by reason.
+ *
+ * The typed reason above existed from day one but NOTHING in production read
+ * it — every call site collapsed the outcome to null, so an expired token
+ * ("auth") was indistinguishable from a rate-limit ("throttled") or a
+ * network blip. That matters most for `auth`: a rejected token silently
+ * degrades every Finviz path back to Polygon at full cost, forever, with no
+ * signal anywhere. Counting them here is the minimum that makes the
+ * distinction observable.
+ */
+const failureCounts: Record<FinvizFailReason, number> = {
+  disabled: 0,
+  throttled: 0,
+  auth: 0,
+  http: 0,
+  transport: 0,
+  empty: 0,
+};
+
+function noteFinvizFailure(reason: FinvizFailReason): void {
+  failureCounts[reason] += 1;
+  if (reason === 'auth' && failureCounts.auth === 1) {
+    // Once per container: loud, because it means the subscription or token
+    // is broken and every board is quietly running on the fallback.
+    console.error(
+      '[finviz] auth rejected — Finviz returned its login page. Every Finviz ' +
+        'path is now degrading to Polygon. Check FINVIZ_AUTH_TOKEN.',
+    );
+  }
+}
+
+export function finvizFailureCounts(): Record<FinvizFailReason, number> {
+  return { ...failureCounts };
+}
+
+/** Warnings a scan can attach so a degraded Finviz is visible in snapshots. */
+export function finvizFailureWarnings(): string[] {
+  const out: string[] = [];
+  if (failureCounts.auth > 0) {
+    out.push(`finviz auth rejected ${failureCounts.auth}× — token expired or subscription lapsed`);
+  }
+  if (failureCounts.throttled > 0) {
+    out.push(`finviz throttled ${failureCounts.throttled}× — results may be partial`);
+  }
+  return out;
+}
+
+export function __resetFinvizFailureCountsForTesting(): void {
+  for (const k of Object.keys(failureCounts) as FinvizFailReason[]) failureCounts[k] = 0;
+}
+
+/**
  * Single entry point for every Finviz export path. Callers get a typed
  * failure reason instead of a bare null so telemetry can distinguish
  * "subscription lapsed" from "we hammered it" — they mean opposite things
@@ -332,22 +384,29 @@ export async function finvizRequest(
       if (!res.ok) {
         // A real 429 counts as a throttle trip too.
         if (res.status === 429) throttledUntil = Date.now() + THROTTLE_COOLDOWN_MS;
-        return { ok: false, reason: res.status === 429 ? 'throttled' : 'http' };
+        const reason: FinvizFailReason = res.status === 429 ? 'throttled' : 'http';
+        noteFinvizFailure(reason);
+        return { ok: false, reason };
       }
       text = await res.text();
     } finally {
       clearTimeout(timer);
     }
   } catch {
+    noteFinvizFailure('transport');
     return { ok: false, reason: 'transport' };
   }
 
   if (isFinvizThrottleBody(text)) {
     throttledUntil = Date.now() + THROTTLE_COOLDOWN_MS;
+    noteFinvizFailure('throttled');
     return { ok: false, reason: 'throttled' };
   }
   // Auth failures render the SPA/login page as HTML at HTTP 200.
-  if (/^\s*<(!doctype|html)/i.test(text)) return { ok: false, reason: 'auth' };
+  if (/^\s*<(!doctype|html)/i.test(text)) {
+    noteFinvizFailure('auth');
+    return { ok: false, reason: 'auth' };
+  }
   if (text.trim() === '') return { ok: false, reason: 'empty' };
   return { ok: true, text };
 }
