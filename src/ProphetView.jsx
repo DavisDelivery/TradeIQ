@@ -12,6 +12,8 @@ import { SieveCoverageStrip } from './components/SieveCoverageStrip.jsx';
 import { useProphet } from './hooks/useProphet.js';
 import { useLiveRows } from './hooks/useLiveQuotes.js';
 import { useRegime } from './hooks/useRegime.js';
+import { MasterDetail } from './layout/MasterDetail.jsx';
+import { StockDetailPanel } from './components/detail/StockDetailPanel.jsx';
 import { useGenerateNarrative } from './hooks/useGenerateNarrative.js';
 import { FundamentalsStrip } from './components/detail/FundamentalsStrip.jsx';
 
@@ -41,6 +43,11 @@ export const ProphetView = () => {
   const [universe, setUniverse] = useState('largecap');
   const [minConviction, setMinConviction] = useState('low');
   const [expandedTicker, setExpandedTicker] = useState(null);
+  // Prophet had NO route to the company profile at all: the card accordion
+  // shows entry/stop/targets and the narrative, but never the chart + AI
+  // thesis + fundamentals panel every other board reaches. The accordion
+  // stays (it is Prophet-specific); the ticker now opens the full profile.
+  const [selected, setSelected] = useState(null);
   const { data, error, isLoading: loading, isFetching, forceRescan } =
     useProphet(universe, minConviction);
   // The prophet-picks snapshot intentionally carries no macro regime (it
@@ -53,7 +60,7 @@ export const ProphetView = () => {
   // prophet snapshot is hours old.
   const livePicks = useLiveRows(data?.picks);
 
-  return (
+  const list = (
     <div className="px-3 py-4 sm:p-6 max-w-[1400px] mx-auto pb-20 sm:pb-6">
       <header className="mb-4">
         <div className="flex items-baseline gap-3 mb-2 flex-wrap">
@@ -183,11 +190,26 @@ export const ProphetView = () => {
               pick={p}
               expanded={expandedTicker === p.ticker}
               onToggle={() => setExpandedTicker(expandedTicker === p.ticker ? null : p.ticker)}
+              onOpen={() => setSelected(p)}
             />
           ))}
         </div>
       )}
     </div>
+  );
+
+  return (
+    <MasterDetail
+      selected={selected}
+      onClose={() => setSelected(null)}
+      list={list}
+      detail={
+        selected ? (
+          <StockDetailPanel board="prophet" ticker={selected.ticker} row={selected} />
+        ) : null
+      }
+      closeLabel="Close detail"
+    />
   );
 };
 
@@ -211,7 +233,7 @@ const FilterRow = ({ label, options, value, onChange }) => (
   </div>
 );
 
-const ProphetRow = ({ pick, expanded, onToggle }) => {
+const ProphetRow = ({ pick, expanded, onToggle, onOpen }) => {
   const convictionColor =
     pick.conviction === 'HIGH' ? 'text-emerald-400 border-emerald-500/50 bg-emerald-500/10' :
     pick.conviction === 'MEDIUM' ? 'text-amber-400 border-amber-500/40 bg-amber-500/5' :
@@ -220,7 +242,16 @@ const ProphetRow = ({ pick, expanded, onToggle }) => {
 
   return (
     <div className={`border bg-neutral-950/40 transition-colors ${expanded ? 'border-neutral-600' : 'border-neutral-800 hover:border-neutral-700'}`}>
-      <button onClick={onToggle} className="w-full text-left p-3 sm:p-4">
+      {/* A div, not a button: the ticker inside must itself be a button and
+          nesting buttons is invalid HTML. Keyboard users get the ticker
+          button plus the chevron; the card body toggles the breakdown. */}
+      <div
+        role="button"
+        tabIndex={0}
+        onClick={onToggle}
+        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onToggle(); } }}
+        className="w-full text-left p-3 sm:p-4 cursor-pointer"
+      >
         <div className="flex items-start gap-3">
           <div className="flex-shrink-0 w-14 flex flex-col items-center">
             <div className="text-2xl font-bold text-emerald-400">{pick.composite}</div>
@@ -229,7 +260,13 @@ const ProphetRow = ({ pick, expanded, onToggle }) => {
           <div className="flex-1 min-w-0">
             <div className="flex items-baseline justify-between gap-3 mb-1 flex-wrap">
               <div className="flex items-baseline gap-2 min-w-0">
-                <span className="text-[16px] font-serif font-bold text-neutral-100">{pick.ticker}</span>
+                <button
+                  onClick={(e) => { e.stopPropagation(); onOpen?.(); }}
+                  title={`Open ${pick.ticker} full profile`}
+                  className="text-[16px] font-serif font-bold text-neutral-100 hover:text-emerald-300 transition-colors"
+                >
+                  {pick.ticker}
+                </button>
                 <span className="text-[11px] text-neutral-500 truncate">{pick.name}</span>
                 <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 text-[9px] font-mono uppercase tracking-wider border ${convictionColor}`}>
                   <Zap className="h-2.5 w-2.5" />
@@ -333,10 +370,11 @@ const ProphetRow = ({ pick, expanded, onToggle }) => {
             )}
           </div>
         </div>
-      </button>
-      {/* Phase 6 PR-G — fundamentals strip beneath the prophet pick card */}
+      </div>
+      {/* Fundamentals strip — now an entry point to the full profile too,
+          matching WilliamsView/LynchView which pass onExpand. */}
       <div className="px-3 py-1.5 border-t border-neutral-800/60 bg-neutral-950/40">
-        <FundamentalsStrip ticker={pick.ticker} showExpandIcon={false} />
+        <FundamentalsStrip ticker={pick.ticker} showExpandIcon onExpand={() => onOpen?.()} />
       </div>
       {expanded && <ProphetDetail pick={pick} />}
     </div>
