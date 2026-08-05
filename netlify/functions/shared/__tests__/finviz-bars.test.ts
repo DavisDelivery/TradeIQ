@@ -34,6 +34,8 @@ vi.mock('../finviz', async (importOriginal) => {
 
 import {
   getFinvizDailyBars,
+  finvizBarsWarnings,
+  barsDepthShortfalls,
   sliceBars,
   sessionDateToMs,
   finvizBarsEnabled,
@@ -157,5 +159,56 @@ describe('kill switch', () => {
     // branch via the env switch the module actually owns.
     process.env.FINVIZ_BARS = 'off';
     expect(finvizBarsEnabled()).toBe(false);
+  });
+});
+
+describe('history-depth truncation (audit 2026-08-04)', () => {
+  // Finviz retains ~10y. sliceBars clips silently, and getDailyBars
+  // short-circuits on ANY non-null answer — so a window reaching back
+  // further used to return a SHORT series with nothing saying so, and
+  // Polygon (which has the rest) was never asked. PIT callers then cached
+  // that truncated array forever, since pitCache has no TTL by design.
+  it('DECLINES a window starting before the covered range, so Polygon is used', async () => {
+    h.fetchBars.mockResolvedValue(HISTORY); // earliest session 2024-01-02
+    const bars = await getFinvizDailyBars('AAPL', '2000-01-01', '2025-12-31');
+    expect(bars).toBeNull();
+  });
+
+  it('records the shortfall so a scan can report it', async () => {
+    h.fetchBars.mockResolvedValue(HISTORY);
+    await getFinvizDailyBars('AAPL', '2000-01-01', '2025-12-31');
+    expect(barsDepthShortfalls()).toEqual(['AAPL']);
+    expect(finvizBarsWarnings().join(' ')).toMatch(/depth shortfall/i);
+  });
+
+  it('still serves a window fully INSIDE the covered range', async () => {
+    h.fetchBars.mockResolvedValue(HISTORY);
+    const bars = await getFinvizDailyBars('AAPL', '2024-01-02', '2024-12-31');
+    expect(bars!.map((b) => b.c)).toEqual([100, 101, 120]);
+  });
+
+  it('declines on the CACHED path too, not just the fetch path', async () => {
+    h.fetchBars.mockResolvedValue(HISTORY);
+    await getFinvizDailyBars('AAPL', '2024-01-02', '2024-12-31');
+    const stored = h.cacheSet.mock.calls[0][1];
+    h.cacheGet.mockResolvedValue(stored);
+    expect(await getFinvizDailyBars('AAPL', '1999-01-01', '2025-12-31')).toBeNull();
+  });
+
+  it('does NOT decline for a young ticker whose history simply starts late', async () => {
+    // The naive rule ("window starts before our earliest bar") would decline
+    // here and pay for a redundant Polygon call on every recent listing —
+    // Polygon has no pre-IPO bars either. Only the RETENTION wall matters.
+    h.fetchBars.mockResolvedValue(HISTORY); // starts 2024-01-02
+    const bars = await getFinvizDailyBars('NEWCO', '2023-06-01', '2024-12-31');
+    expect(bars).not.toBeNull();
+    expect(bars!.map((b) => b.c)).toEqual([100, 101, 120]);
+    expect(barsDepthShortfalls()).toEqual([]);
+  });
+
+  it('coverage gaps surface as a survivorship warning', async () => {
+    h.fetchBars.mockResolvedValue([]);
+    await getFinvizDailyBars('TWTR', '2020-01-01', '2022-12-31');
+    expect(finvizBarsWarnings().join(' ')).toMatch(/coverage gap.*survivor-only/i);
   });
 });

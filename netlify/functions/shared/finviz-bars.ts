@@ -65,17 +65,62 @@ export function finvizBarsEnabled(): boolean {
 // ---------------------------------------------------------------------------
 
 const coverageGaps = new Set<string>();
+const depthShortfalls = new Set<string>();
 
 /**
  * Tickers this container asked Finviz for and got no coverage on. A scan or
- * backtest can attach this to its warnings so a survivor-only run is
- * self-declaring rather than silently short.
+ * backtest attaches this to its warnings so a survivor-only run is
+ * self-declaring rather than silently short — see `finvizBarsWarnings()`,
+ * which is what production actually calls.
  */
 export function barsCoverageGaps(): string[] {
   return [...coverageGaps].sort();
 }
-export function __resetBarsCoverageForTesting(): void {
+
+/** Tickers whose requested window reached back past Finviz's retention. */
+export function barsDepthShortfalls(): string[] {
+  return [...depthShortfalls].sort();
+}
+
+/**
+ * Human-readable warnings for the current run, or [] when nothing notable
+ * happened. This is the piece the first version was missing: the sets above
+ * were populated but nothing ever read them, so the "survivorship is
+ * declared, not hidden" promise in this file's header was unimplemented.
+ *
+ * Coverage gaps are the load-bearing one. With Polygon deconfigured a
+ * delisted name silently vanishes from a backtest universe, which is
+ * survivorship bias — the owner has accepted that trade, but accepting it
+ * is not the same as being unable to see it.
+ */
+export function finvizBarsWarnings(): string[] {
+  const out: string[] = [];
+  const gaps = barsCoverageGaps();
+  if (gaps.length > 0) {
+    out.push(
+      `finviz bar coverage gap: ${gaps.length} ticker(s) had no history ` +
+        `(${gaps.slice(0, 8).join(', ')}${gaps.length > 8 ? ', …' : ''}) — ` +
+        `if Polygon did not backfill them, results are survivor-only`,
+    );
+  }
+  const short = barsDepthShortfalls();
+  if (short.length > 0) {
+    out.push(
+      `finviz history depth shortfall: ${short.length} ticker(s) needed bars ` +
+        `older than Finviz retains (${short.slice(0, 8).join(', ')}` +
+        `${short.length > 8 ? ', …' : ''}) — served from Polygon instead`,
+    );
+  }
+  return out;
+}
+
+/** Reset per-run counters. Call at scan/backtest entry, not per ticker. */
+export function resetFinvizBarsTelemetry(): void {
   coverageGaps.clear();
+  depthShortfalls.clear();
+}
+export function __resetBarsCoverageForTesting(): void {
+  resetFinvizBarsTelemetry();
 }
 
 // ---------------------------------------------------------------------------
@@ -146,14 +191,26 @@ export function sliceBars(cached: CachedBars, from: string, to: string): Bar[] {
 /**
  * Daily bars for [from, to] from Finviz.
  *
- * Returns null for BOTH "the call failed" and "Finviz has no coverage for
- * this ticker" — in either case the caller must try Polygon, because the
- * alternative is reporting a live company as having never traded. The two
- * cases are distinguished in telemetry (`barsCoverageGaps`) even though
- * they share a return value.
+ * Returns null for "the call failed", "Finviz has no coverage for this
+ * ticker", AND — critically — "the requested window starts before Finviz's
+ * retention". In every one of those cases the caller must try Polygon.
  *
- * Returns an empty array only when the ticker IS covered and genuinely has
- * no sessions inside the requested window (e.g. a range predating its IPO).
+ * THE DEPTH TRAP (audit 2026-08-04). Finviz's /export/stock carries only
+ * ~10y (~2,500 sessions) and `sliceBars` silently clips to whatever is
+ * cached. The first version of this function returned that clipped slice,
+ * and `getDailyBars` short-circuits on any non-null answer — so a request
+ * for 2000→today came back starting in 2016 with NOTHING indicating it had
+ * been truncated, and Polygon (which has the rest) was never asked. Worse,
+ * PIT callers wrap this in `pitCacheWrap`, which has no TTL by design, so a
+ * truncated series would have been cached permanently and silently shortened
+ * every backtest that touched it.
+ *
+ * The rule: only trust an in-range answer. If `from` precedes the earliest
+ * session we hold, we cannot know what Finviz is missing, so we decline and
+ * let Polygon serve the whole window from one consistent source.
+ *
+ * Returns an empty array only when the ticker IS covered, the window lies
+ * INSIDE the covered range, and there genuinely are no sessions in it.
  */
 export async function getFinvizDailyBars(
   ticker: string,
@@ -168,7 +225,7 @@ export async function getFinvizDailyBars(
   ).catch(() => null);
   if (isCachedBars(hit)) {
     if (hit.d.length === 0) return null; // cached "no coverage"
-    return sliceBars(hit, from, to);
+    return sliceWithinCoverage(hit, ticker, from, to);
   }
 
   const fetched = await fetchFinvizBars(ticker, 'd');
@@ -185,7 +242,43 @@ export async function getFinvizDailyBars(
 
   const encoded = encode(fetched);
   await liveCacheSet(key, encoded).catch(() => {});
-  return sliceBars(encoded, from, to);
+  return sliceWithinCoverage(encoded, ticker, from, to);
+}
+
+/**
+ * Finviz's retention wall, conservatively. Measured 2026-08-03: AAPL daily
+ * went back ~10.05y (2,522 sessions to 2016-07). 9.5y leaves margin.
+ *
+ * This is the RIGHT discriminator, and the naive one ("earlier than our
+ * earliest session") is wrong: a ticker that listed in 2021 legitimately has
+ * no bars before 2021, and Polygon has none either, so declining there would
+ * throw away a perfectly good answer and pay for a redundant Polygon call on
+ * every young company. What we cannot answer is a window reaching past the
+ * RETENTION boundary, where Finviz's silence means "aged out", not "never
+ * traded" — and Polygon does have that history.
+ */
+const RETENTION_YEARS = 9.5;
+
+function retentionHorizon(now = Date.now()): string {
+  return new Date(now - RETENTION_YEARS * 365.25 * 86_400_000).toISOString().slice(0, 10);
+}
+
+/**
+ * Slice, unless the requested window reaches past Finviz's retention — in
+ * which case DECLINE (null) so Polygon serves the whole window from one
+ * consistent source, rather than returning a silently shortened series.
+ */
+function sliceWithinCoverage(
+  cached: CachedBars,
+  ticker: string,
+  from: string,
+  to: string,
+): Bar[] | null {
+  if (from < retentionHorizon()) {
+    depthShortfalls.add(ticker.toUpperCase());
+    return null;
+  }
+  return sliceBars(cached, from, to);
 }
 
 /** Most recent completed session for one ticker, or null if uncovered. */

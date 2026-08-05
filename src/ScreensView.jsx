@@ -257,14 +257,25 @@ export const ScreensView = () => {
             </thead>
             <tbody>
               {rows.map((r, i) => (
+                // The WHOLE row opens the profile. Previously only the ticker
+                // glyph was a button, so tapping anywhere else on a phone just
+                // lit the hover state and did nothing — the row looked
+                // interactive and wasn't.
                 <tr
                   key={r.ticker}
-                  className="border-b border-neutral-900 hover:bg-neutral-900/40 transition-colors"
+                  onClick={() => setSelected(r)}
+                  className={`border-b border-neutral-900 cursor-pointer transition-colors ${
+                    selected?.ticker === r.ticker
+                      ? 'bg-amber-500/[0.07]'
+                      : 'hover:bg-neutral-900/40'
+                  }`}
                 >
                   <td className="px-3 py-2 text-[11px] font-mono text-neutral-600 tabular-nums">
                     {i + 1}
                   </td>
                   <td className="px-3 py-2">
+                    {/* Kept as a button for keyboard/screen-reader access; the
+                        click bubbles to the row, which opens the same panel. */}
                     <button
                       onClick={() => setSelected(r)}
                       className="font-serif font-bold text-neutral-100 hover:text-amber-300 transition-colors"

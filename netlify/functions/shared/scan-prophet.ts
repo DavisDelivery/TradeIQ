@@ -21,6 +21,7 @@ import { getPoliticalActivity } from './political-provider';
 import { getGovContractActivity } from './govcontracts-provider';
 import { getPatentActivity } from './patent-provider';
 import { computeRegime } from './regime';
+import { finvizBarsWarnings, resetFinvizBarsTelemetry } from './finviz-bars';
 import {
   layerStructure,
   layerMomentum,
@@ -122,6 +123,9 @@ export async function runProphetScan(
   const log = opts.logger;
   const start = Date.now();
   const warnings: string[] = [];
+  // Per-run counters, so the warnings below describe THIS scan rather than
+  // everything a warm container has seen since it booted.
+  resetFinvizBarsTelemetry();
 
   const all = resolveProphetUniverse(opts.universe);
   // 4c-2: if explicitTickers is provided (sieve Stage 3), filter the
@@ -238,6 +242,15 @@ export async function runProphetScan(
   );
 
   picks.sort((a, b) => b.composite - a.composite);
+
+  // FVZ-7 — surface Finviz bar coverage gaps and depth shortfalls in the
+  // snapshot warnings. These were recorded but never read, so a scan that
+  // silently lost delisted names to a survivor-only bar feed looked
+  // identical to a complete one.
+  for (const w of finvizBarsWarnings()) {
+    warnings.push(w);
+    log?.warn('finviz_bars_coverage', { universe: opts.universe, warning: w });
+  }
 
   if (degraded.catalystInputNullTickers > 0) {
     warnings.push(
