@@ -182,7 +182,15 @@ export const CrossesView = () => {
               {rows.map((r) => {
                 const isNew = r.barsAgo <= NEW_CROSS_MAX_BARS_AGO;
                 return (
-                  <tr key={`${r.ticker}-${r.date}-${r.type}`} className="border-b border-neutral-800/60 hover:bg-neutral-900/40">
+                  // Whole row is the tap target — the ticker glyph alone is
+                  // far too small to hit on a phone (audit 2026-08-04).
+                  <tr
+                    key={`${r.ticker}-${r.date}-${r.type}`}
+                    onClick={() => setSelected(r)}
+                    className={`border-b border-neutral-800/60 cursor-pointer transition-colors ${
+                      selected?.ticker === r.ticker ? 'bg-emerald-500/[0.07]' : 'hover:bg-neutral-900/40'
+                    }`}
+                  >
                     <td className="px-4 py-2.5 font-mono text-[12px] text-neutral-300 whitespace-nowrap">
                       {formatCrossDate(r.date)}
                       {isNew && (

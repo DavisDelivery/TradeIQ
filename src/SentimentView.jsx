@@ -121,7 +121,18 @@ export const SentimentView = ({ universe = 'sp500' }) => {
       {rows.length > 0 && (
         <div className="space-y-2">
           {rows.map((r, i) => (
-            <div key={r.ticker} className="border border-neutral-800 bg-neutral-950/40 hover:border-neutral-700 transition-colors">
+            // The whole card opens the profile; the nested ticker button and
+            // the headline links stopPropagation so they keep their own
+            // behaviour (audit 2026-08-04).
+            <div
+              key={r.ticker}
+              onClick={() => setSelected(r)}
+              className={`border bg-neutral-950/40 cursor-pointer transition-colors ${
+                selected?.ticker === r.ticker
+                  ? 'border-emerald-600/60 bg-emerald-500/[0.04]'
+                  : 'border-neutral-800 hover:border-neutral-700'
+              }`}
+            >
               <div className="p-3 sm:p-4">
                 <div className="flex items-start gap-3">
                   <span className="w-6 shrink-0 text-xs text-neutral-600 font-mono pt-1">#{i + 1}</span>
