@@ -200,6 +200,15 @@ export async function edgarFetch(url: string): Promise<Response> {
  * RECORDED by returning `clampedFrom` so callers can surface it — a
  * shortened series is a fact, never a silent substitution.
  */
+/**
+ * DELIBERATELY Polygon-direct, not routed through the Finviz seam in
+ * data-provider.getDailyBars (audit 2026-08-04 flagged it; this is the
+ * answer). Every caller is a VECTOR backfill/validation path requesting
+ * 2015->2025, which is far past Finviz's ~10y retention — the seam would
+ * decline all of it and fall through to Polygon anyway, having paid for a
+ * wasted cache lookup per ticker. The 403 floor-clamp below is also
+ * Polygon-entitlement-specific and has no Finviz analogue.
+ */
 export async function getDailyBarsClamped(
   ticker: string,
   from: string,
