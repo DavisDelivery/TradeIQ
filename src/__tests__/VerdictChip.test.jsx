@@ -15,17 +15,17 @@ describe('VerdictChip', () => {
     expect(chip.getAttribute('title')).toContain('bt_20260519014409_zsxtsq');
   });
 
-  it('lynch renders IC + pp figures', () => {
+  it('lynch renders IC + pp figures (AUDIT-1 corrected attribution)', () => {
     render(<VerdictChip board="lynch" />);
     expect(screen.getByTestId('verdict-chip-lynch').textContent).toBe(
-      'NO VALIDATED EDGE (IC 0.0011, −1.3pp vs SPY)',
+      'NO VALIDATED EDGE (IC -0.0612, −101pp vs SPY)',
     );
   });
 
-  it('prophet renders MIXED with both benchmarks', () => {
+  it('prophet renders PENDING — the prior +80.9pp figure was not a measurement', () => {
     render(<VerdictChip board="prophet" />);
     expect(screen.getByTestId('verdict-chip-prophet').textContent).toBe(
-      'MIXED (+80.9pp vs SPY, −58pp vs QQQ, 4/8 windows)',
+      'EDGE PENDING VALIDATION',
     );
   });
 

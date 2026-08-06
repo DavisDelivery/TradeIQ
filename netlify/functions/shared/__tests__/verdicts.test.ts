@@ -18,20 +18,29 @@ describe('BOARD_VERDICTS — seeded standing verdicts', () => {
     expect(v.runId).toBe('bt_20260519014409_zsxtsq');
   });
 
-  it('lynch: NO_EDGE with IC 0.0011 / −1.3pp vs SPY (bt_20260608015737)', () => {
+  it('lynch: NO_EDGE at −101.0pp on the full-window run (AUDIT-1 correction)', () => {
+    // The previous row cited a truncated runId that resolves to "run not
+    // found" and quoted a 2018–2021 run as if it covered 2018–2024 — the
+    // friendliest of three available measurements. This pins the corrected
+    // attribution so it cannot silently regress to the flattering one.
     const v = BOARD_VERDICTS.lynch;
     expect(v.status).toBe('NO_EDGE');
-    expect(v.ic).toBe(0.0011);
-    expect(v.excessVsSPYPp).toBe(-1.3);
-    expect(v.runId).toBe('bt_20260608015737');
+    expect(v.ic).toBe(-0.0612);
+    expect(v.excessVsSPYPp).toBe(-101.0);
+    expect(v.runId).toBe('bt_20260519014419_litbxp');
+    expect(v.note).toMatch(/t8uk0v/); // the misquoted run stays named
   });
 
-  it('prophet: MIXED — +80.9pp vs SPY full-window, −58pp vs QQQ, 4/8 rolling windows', () => {
+  it('prophet: PENDING — the +80.9pp figure was not a measurement (AUDIT-1)', () => {
+    // The prior MIXED row had runId null and rested on a run that bought one
+    // basket on day one and never traded again (a single snapshot served all
+    // 418 rebalance dates), with an all-cash year counted as a rolling win.
+    // PENDING until a ranked-engine run with real per-date snapshots lands.
     const v = BOARD_VERDICTS.prophet;
-    expect(v.status).toBe('MIXED');
-    expect(v.excessVsSPYPp).toBe(80.9);
-    expect(v.excessVsQQQPp).toBe(-58);
-    expect(v.rollingWindowsWon).toBe('4/8');
+    expect(v.status).toBe('PENDING');
+    expect(v.excessVsSPYPp).toBeNull();
+    expect(v.rollingWindowsWon).toBeNull();
+    expect(v.note).toMatch(/never rebalanced|traded once|day one/);
   });
 
   it('target: NO_EDGE after the FIX-1 W3 sp500 run (−74.2pp vs SPY, negative IC)', () => {
@@ -53,10 +62,10 @@ describe('verdictLabel — the chip must carry the measured number, not just a w
     expect(verdictLabel(BOARD_VERDICTS.williams)).toBe('NO VALIDATED EDGE (−73.4pp vs SPY)');
   });
   it('lynch label includes IC and pp-vs-SPY', () => {
-    expect(verdictLabel(BOARD_VERDICTS.lynch)).toBe('NO VALIDATED EDGE (IC 0.0011, −1.3pp vs SPY)');
+    expect(verdictLabel(BOARD_VERDICTS.lynch)).toBe('NO VALIDATED EDGE (IC -0.0612, −101pp vs SPY)');
   });
-  it('prophet label carries both benchmarks and rolling consistency', () => {
-    expect(verdictLabel(BOARD_VERDICTS.prophet)).toBe('MIXED (+80.9pp vs SPY, −58pp vs QQQ, 4/8 windows)');
+  it('prophet label says pending — no number exists to carry', () => {
+    expect(verdictLabel(BOARD_VERDICTS.prophet)).toBe('EDGE PENDING VALIDATION');
   });
   it('target label carries IC and pp-vs-SPY (NO_EDGE after W3)', () => {
     expect(verdictLabel(BOARD_VERDICTS.target)).toBe('NO VALIDATED EDGE (IC -0.0105, −74.2pp vs SPY)');

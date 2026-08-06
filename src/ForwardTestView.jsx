@@ -3,6 +3,7 @@ import { Trophy, ChevronLeft, TrendingUp, TrendingDown } from 'lucide-react';
 import { useForwardLeague, useForwardPicks } from './hooks/useForwardTest.js';
 import { MasterDetail } from './layout/MasterDetail.jsx';
 import { StockDetailPanel } from './components/detail/StockDetailPanel.jsx';
+import { Ticker } from './components/Ticker.jsx';
 
 // FORWARD TEST — the boards' live track record. Every night, each board's
 // top-20 entrants are logged at that day's official close; returns freeze at
@@ -162,16 +163,25 @@ const PickLog = ({ board, picks, onBack, onOpenTicker }) => {
       )}
       <div className="space-y-2">
         {rows.map((p) => (
-          <div key={`${p.ticker}-${p.entryDate}`} className="border border-neutral-800 bg-neutral-950/40 p-3">
+          // The whole card opens the profile, not just the symbol. This card
+          // used to make ONLY the ~40px ticker text tappable, with no
+          // affordance saying so — on a phone that is indistinguishable from
+          // a dead ticker, which is exactly how it was reported.
+          <div
+            key={`${p.ticker}-${p.entryDate}`}
+            role="button"
+            tabIndex={0}
+            onClick={() => onOpenTicker(p)}
+            onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpenTicker(p); } }}
+            className="border border-neutral-800 bg-neutral-950/40 p-3 cursor-pointer hover:border-neutral-700 hover:bg-neutral-900/40 transition-colors"
+          >
             <div className="flex items-baseline gap-2 flex-wrap">
-              <button
-                type="button"
-                onClick={() => onOpenTicker(p)}
-                className="font-serif font-bold text-[14px] text-neutral-100 hover:text-emerald-300 transition-colors"
-                title="Open full detail"
-              >
-                {p.ticker}
-              </button>
+              <Ticker
+                symbol={p.ticker}
+                row={p}
+                board="forward"
+                className="font-serif font-bold text-[14px] text-neutral-100"
+              />
               <span className="text-[10px] font-mono text-neutral-500">
                 in {fmtDate(p.entryDate)} @ ${p.entryPrice?.toFixed(2)} · rank #{p.rankAtEntry} · {p.daysOnBoard}d on board
               </span>

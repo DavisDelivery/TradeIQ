@@ -1,0 +1,531 @@
+<title>TradeIQ — Research Roadmap</title>
+<style>
+:root{
+  --paper:#E9EBEE; --card:#F4F5F7; --ink:#12181F; --ink-2:#4A5561; --ink-3:#6E7883;
+  --rule:#C7CCD3; --rule-soft:#D9DDE2;
+  --signal:#0E6B63; --caution:#8A5F10; --reject:#8C2F36;
+  --signal-bg:#0E6B6314; --caution-bg:#8A5F1014; --reject-bg:#8C2F3612;
+}
+@media (prefers-color-scheme:dark){
+  :root{
+    --paper:#0F141A; --card:#161D25; --ink:#DEE4EA; --ink-2:#98A4B0; --ink-3:#77838F;
+    --rule:#2A333D; --rule-soft:#222A33;
+    --signal:#46A99E; --caution:#C79A3E; --reject:#CE757A;
+    --signal-bg:#46A99E1A; --caution-bg:#C79A3E1A; --reject-bg:#CE757A16;
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#0F141A; --card:#161D25; --ink:#DEE4EA; --ink-2:#98A4B0; --ink-3:#77838F;
+  --rule:#2A333D; --rule-soft:#222A33;
+  --signal:#46A99E; --caution:#C79A3E; --reject:#CE757A;
+  --signal-bg:#46A99E1A; --caution-bg:#C79A3E1A; --reject-bg:#CE757A16;
+}
+:root[data-theme="light"]{
+  --paper:#E9EBEE; --card:#F4F5F7; --ink:#12181F; --ink-2:#4A5561; --ink-3:#6E7883;
+  --rule:#C7CCD3; --rule-soft:#D9DDE2;
+  --signal:#0E6B63; --caution:#8A5F10; --reject:#8C2F36;
+  --signal-bg:#0E6B6314; --caution-bg:#8A5F1014; --reject-bg:#8C2F3612;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--paper);color:var(--ink);
+  font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  font-size:16px;line-height:1.6;-webkit-text-size-adjust:100%}
+.wrap{max-width:60rem;margin:0 auto;padding:2.5rem 1.15rem 5rem;display:flex;flex-direction:column;gap:3rem}
+h1,h2,h3{font-family:ui-serif,Georgia,"Times New Roman",serif;text-wrap:balance;margin:0;font-weight:600}
+h1{font-size:clamp(1.9rem,5.2vw,2.9rem);line-height:1.12;letter-spacing:-.015em}
+h2{font-size:1.32rem;letter-spacing:-.01em}
+h3{font-size:1.06rem;line-height:1.35}
+p{margin:0}
+.eyebrow{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.7rem;
+  text-transform:uppercase;letter-spacing:.16em;color:var(--ink-3)}
+header{display:flex;flex-direction:column;gap:.85rem;border-bottom:2px solid var(--ink);padding-bottom:1.5rem}
+.lede{font-size:1.06rem;color:var(--ink-2);max-width:62ch}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(7.5rem,1fr));gap:1px;
+  background:var(--rule);border:1px solid var(--rule)}
+.stat{background:var(--card);padding:.85rem .9rem;display:flex;flex-direction:column;gap:.15rem}
+.stat b{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:1.5rem;
+  font-variant-numeric:tabular-nums;line-height:1;font-weight:600}
+.stat span{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.64rem;
+  text-transform:uppercase;letter-spacing:.1em;color:var(--ink-3)}
+section{display:flex;flex-direction:column;gap:1.15rem}
+.sec-head{display:flex;flex-direction:column;gap:.3rem;border-bottom:1px solid var(--rule);padding-bottom:.6rem}
+.sec-note{font-size:.92rem;color:var(--ink-2);max-width:64ch}
+.item{display:grid;grid-template-columns:2.6rem 1fr;gap:.9rem;background:var(--card);
+  border:1px solid var(--rule-soft);border-left:3px solid var(--ink-3);padding:1rem .95rem}
+.item.t-do-now{border-left-color:var(--signal)}
+.item.t-do-next{border-left-color:var(--caution)}
+.item.t-consider{border-left-color:var(--ink-3)}
+.item-rank{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:1.05rem;
+  font-variant-numeric:tabular-nums;color:var(--ink-3);padding-top:.1rem}
+.item-body{display:flex;flex-direction:column;gap:.55rem;min-width:0}
+.chips{display:flex;flex-wrap:wrap;gap:.35rem}
+.chip,.badge{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.63rem;
+  text-transform:uppercase;letter-spacing:.08em;padding:.16rem .45rem;border:1px solid var(--rule);
+  color:var(--ink-2);white-space:nowrap}
+.chip.tier{color:var(--ink);border-color:var(--ink-3)}
+.badge.shipped{color:var(--signal);border-color:var(--signal);background:var(--signal-bg)}
+.badge.await{color:var(--caution);border-color:var(--caution);background:var(--caution-bg);
+  text-transform:none;letter-spacing:.02em}
+.why{font-size:.92rem;color:var(--ink-2)}
+.what{font-size:.89rem;color:var(--ink-2)}
+.lbl{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.6rem;text-transform:uppercase;
+  letter-spacing:.12em;color:var(--ink-3);display:block;margin-bottom:.2rem}
+.crit{background:var(--card);border:1px solid var(--rule-soft);padding:.95rem;
+  display:flex;flex-direction:column;gap:.5rem;border-left:3px solid var(--caution)}
+.crit.sound{border-left-color:var(--signal)}
+.crit-head{display:flex;align-items:center;gap:.55rem;flex-wrap:wrap;font-size:.95rem}
+.crit-head strong{font-family:ui-serif,Georgia,serif;font-weight:600}
+.chip.challenged{color:var(--caution);border-color:var(--caution);background:var(--caution-bg)}
+.chip.sound{color:var(--signal);border-color:var(--signal);background:var(--signal-bg)}
+.crit p{font-size:.89rem;color:var(--ink-2)}
+.cheaper{border-top:1px dashed var(--rule);padding-top:.5rem}
+ul.rej{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:1px;
+  background:var(--rule);border:1px solid var(--rule)}
+ul.rej li{background:var(--card);padding:.8rem .9rem;display:flex;flex-direction:column;gap:.25rem;
+  border-left:3px solid var(--reject)}
+ul.rej strong{font-family:ui-serif,Georgia,serif;font-size:.98rem;font-weight:600}
+ul.rej span{font-size:.87rem;color:var(--ink-2)}
+.callout{background:var(--signal-bg);border:1px solid var(--signal);padding:1rem;
+  display:flex;flex-direction:column;gap:.4rem}
+.callout h2{color:var(--signal)}
+footer{border-top:1px solid var(--rule);padding-top:1.1rem;font-size:.82rem;color:var(--ink-3)}
+@media (max-width:480px){
+  .item{grid-template-columns:1fr;gap:.5rem}
+  .item-rank{padding-top:0}
+}
+</style>
+<div class="wrap">
+
+<header>
+  <p class="eyebrow">TradeIQ · research pass · 6 Aug 2026</p>
+  <h1>What to build next, and what to refuse to build</h1>
+  <p class="lede">23 agents across six benchmark tracks, five code audits and three integration studies produced 164 findings. Every top recommendation was then handed to a skeptical engineer told to disprove it. <strong>All eight were challenged</strong> — which is the most useful result in here.</p>
+</header>
+
+<div class="stats">
+  <div class="stat"><b>164</b><span>findings</span></div>
+  <div class="stat"><b>24</b><span>ranked</span></div>
+  <div class="stat"><b>11</b><span>rejected</span></div>
+  <div class="stat"><b>8/8</b><span>challenged</span></div>
+  <div class="stat"><b>3</b><span>already shipped</span></div>
+</div>
+
+<div class="callout">
+  <p class="eyebrow">The headline</p>
+  <h2>Three verified defects outranked every feature idea</h2>
+  <p>Real broker fills wrote a journal schema no client reader understood, so Positions and Base&nbsp;Rates were blank for every trade actually placed. ChartView fired a Claude call on tab open, violating the on-demand rule. And <em>light</em> — the default theme, not the "hardcoded dark" I briefed the researchers with — renders gains below WCAG&nbsp;AA.</p>
+  <p>Fix those, then make the phone usable, <strong>before adding a single new signal, board or vendor.</strong></p>
+</div>
+
+<section>
+  <div class="sec-head">
+    <h2>Ranked roadmap</h2>
+    <p class="sec-note">Ordered by value to one solo trader on an iPhone with 25 working boards — not by how interesting the idea is. Effort is honest: an XL/medium ranks below an S/high.</p>
+  </div>
+<article class="item t-do-now">
+  <div class="item-rank">01</div>
+  <div class="item-body">
+    <h3>Stop the price chart fighting the iPhone — and rebuilding itself every 15 seconds</h3>
+    <div class="chips">
+      <span class="chip tier">do-now</span>
+      <span class="chip">effort S</span>
+      <span class="chip">transformative</span>
+      <span class="badge shipped">shipped · PR #186</span>
+    </div>
+    <p class="why">AdvancedPriceChart is the single component behind StockDetailPanel on 11 boards, the Desk focus pane, Trident, Prophet and Target. It has three compounding touch defects and one performance defect, all fixable in under an hour, and it is the surface the owner touches most on the device he actually uses.</p>
+    <p class="what"><span class="lbl">Scope</span>In AdvancedPriceChart.jsx: (a) pass handleScroll:{vertTouchDrag:false, horzTouchDrag:true} to createChart so vertical drags fall through to the page scroller instead of being eaten by lightweight-charts — today the chart is a scroll trap inside a long modal; (b) pass trackingMode:{exitMode:TrackingModeExitMode.OnNextTap} so the OHLCV legend survives lifting your thumb; (c) hoist a module-level EMPTY=[] for the priceLines…</p>
+  </div>
+</article>
+<article class="item t-do-now">
+  <div class="item-rank">02</div>
+  <div class="item-body">
+    <h3>Freeze the ticker column and pin the header across all 19 tables</h3>
+    <div class="chips">
+      <span class="chip tier">do-now</span>
+      <span class="chip">effort S</span>
+      <span class="chip">transformative</span>
+      <span class="badge await">needs scoping: which 6 columns on mobile?</span>
+    </div>
+    <p class="why">Verified: zero occurrences of `sticky left-0` and zero responsive column-hiding classes in all of src/. TargetBoardView and LynchView render 16 columns, WilliamsView 15, six more at 10+, every one inside a bare overflow-x-auto div. On a 390pt phone, scrolling to the RSI column loses the ticker entirely. This is the highest value-to-effort ratio in the entire research set precisely because mobile is first-class here.</p>
+    <p class="what"><span class="lbl">Scope</span>Fix centrally, not per view. SortableTh in src/lib/useSortable.jsx already owns header markup — add the sticky/opaque-bg classes there so all 19 tables inherit. Add `sticky left-0 z-20` to the ticker th/td pair plus a right-edge shadow, and `sticky top-0 z-20` to thead with an OPAQUE background (not bg-neutral-950/60 as ScreensView uses, or rows bleed through). Tag low-value columns per board with a `hidden md:table-cell`…</p>
+  </div>
+</article>
+<article class="item t-do-now">
+  <div class="item-rank">03</div>
+  <div class="item-body">
+    <h3>Repair the broker→journal contract and make a sell close its buy</h3>
+    <div class="chips">
+      <span class="chip tier">do-now</span>
+      <span class="chip">effort M</span>
+      <span class="chip">transformative</span>
+      <span class="badge shipped">shipped · PR #185</span>
+    </div>
+    <p class="why">Verified defect, not a feature request. broker-execute.ts:141-146 writes {price, entry, qty, stopPrice, notes}. PositionsPanel.jsx:29 reads t.loggedPrice; baseRates.js:24 reads loggedPrice ?? entryPrice; JournalView reads loggedPrice. Zero overlap. So every real Robinhood buy shows entry &#x27;—&#x27;, renders null Unrl%/$-per-share/R in Positions, and is silently excluded from Base Rates. Separately, grep finds exactly ONE…</p>
+    <p class="what"><span class="lbl">Scope</span>Two parts. (1) Add normalizeTrade() in tradeLog.js applied in mergeRemote and readLocal, preferring loggedPrice ?? price ?? entry, shares ?? qty, stop ?? stopPrice, note ?? notes — this repairs docs already sitting in Firestore, which a writer-side-only fix cannot. Then also write the canonical keys going forward from broker-execute.ts and trade-queue.ts. Do not double-count: normalizer wins. (2) Add closeOpenLot(ticker,…</p>
+  </div>
+</article>
+<article class="item t-do-now">
+  <div class="item-rank">04</div>
+  <div class="item-body">
+    <h3>Plug the live background-Claude leak in ChartView</h3>
+    <div class="chips">
+      <span class="chip tier">do-now</span>
+      <span class="chip">effort S</span>
+      <span class="chip">high</span>
+      <span class="badge shipped">shipped · PR #184</span>
+    </div>
+    <p class="why">The 2026-08-06 rule says no cron and no page load calls Claude. ChartView.jsx:21 calls useChartAnalysis(ticker, 180) unconditionally on mount, and the hook&#x27;s own comment says &#x27;the expensive variant — only fired when the user explicitly asks for it&#x27;. Opening the Chart tab IS the page load. This is spending money today, every time that tab is touched.</p>
+    <p class="what"><span class="lbl">Scope</span>Immediate one-line stopgap: append `&amp;skipAi=1` in useChartAnalysis.js:14 and add an explicit Generate button that refetches without it, matching the ProphetView pattern. Then do the real fix: ChartView hand-rolls PricePanel/VolumePanel/RsiPanel/MacdPanel in recharts — line charts, no candles, no MA warmup, no crosshair legend, no log scale — all of which AdvancedPriceChart already does better. Gut the four panels, drop in…</p>
+  </div>
+</article>
+<article class="item t-do-now">
+  <div class="item-rank">05</div>
+  <div class="item-body">
+    <h3>The DEFAULT theme is light, and it is measurably broken — flagging this as a premise deviation</h3>
+    <div class="chips">
+      <span class="chip tier">do-now</span>
+      <span class="chip">effort S</span>
+      <span class="chip">high</span>
+      <span class="badge await">needs your call: light or dark?</span>
+    </div>
+    <p class="why">The brief states &#x27;hardcoded dark theme&#x27;. src/lib/theme.js:12-14 returns &#x27;light&#x27; on both the invalid-value and the no-value path, with a comment saying the owner asked for a non-dark UI. Light is what actually loads. In it, gains render at 3.48:1 (below WCAG AA) while losses sit at 5.81:1 — so the app is literally harder to read when you are winning. The override layer is a 114-line enumeration that misses every…</p>
+    <p class="what"><span class="lbl">Scope</span>Three edits in src/index.css, cheapest first. (1) `html.theme-light .text-emerald-400 { color:#047857 }` — one line, 5.07:1, uses a hex already in your palette, instantly fixes all 225 emerald sites including ScreensView Chg/1Y, ForwardTestView pctTone, league alpha chips and Positions P/L. Check Sidebar/MobileDrawer, which lean on emerald-300 vs -400 to differentiate the active pill. (2) Add the ~11 missing…</p>
+  </div>
+</article>
+<article class="item t-do-now">
+  <div class="item-rank">06</div>
+  <div class="item-body">
+    <h3>Hash routing + PWA manifest + safe-area insets — the unlock everything else waits on</h3>
+    <div class="chips">
+      <span class="chip tier">do-now</span>
+      <span class="chip">effort S</span>
+      <span class="chip">transformative</span>
+      
+    </div>
+    <p class="why">Verified: no react-router, no pushState, no location.hash anywhere in src/; no public/ directory; index.html has no manifest and viewport lacks viewport-fit=cover. Consequence on the primary device: iOS Safari backgrounds the tab, you return, and a reload dumps you on Desk with every board&#x27;s sort and selection reset. The edge-swipe closes the app instead of the detail panel. And nothing — not a Telegram button, not…</p>
+    <p class="what"><span class="lbl">Scope</span>(1) A ~40-line useHashRoute() hook in src/hooks/: parse `#/desk?t=NVDA` on mount, validate the view id against the VIEWS array (App.jsx:414-442 has no fallback branch, so a stale `#vector` bookmark white-screens today), pushState on setActiveView and on MasterDetail select/close, popstate listener to restore. Keep v1 to `#/&lt;viewId&gt;` plus optional `?t=&lt;ticker&gt;` and stop — do not route every modal. (2)…</p>
+  </div>
+</article>
+<article class="item t-do-now">
+  <div class="item-rank">07</div>
+  <div class="item-body">
+    <h3>Watch the stops you already record, and point the earnings radar at what you actually hold</h3>
+    <div class="chips">
+      <span class="chip tier">do-now</span>
+      <span class="chip">effort S</span>
+      <span class="chip">high</span>
+      
+    </div>
+    <p class="why">PositionsPanel stores `stop` and computes an R-multiple against it, then buries the value in a title tooltip — nothing anywhere evaluates last &lt;= stop. Meanwhile DeskView.jsx:78 passes watchTickers to useEarningsRadar while the very next line correctly unions watchTickers with openTickers for quotes, so a name you HOLD but never watchlisted can report tomorrow with no signal anywhere in the app. Both are pure…</p>
+    <p class="what"><span class="lbl">Scope</span>(1) In buildPositionRows add stopBreached (entry, stop and last all present and last &lt;= stop) and nearStop (within 1×ATR), render the row in rose with a STOP HIT chip and a one-tap &#x27;Record exit @ last&#x27; reusing the existing confirmClose path. Label it &#x27;stop breached on last quote&#x27;, not &#x27;stopped out&#x27;, and gate on the last completed poll so a transient does not flicker. (2) Change useEarningsRadar(watchTickers) to…</p>
+  </div>
+</article>
+<article class="item t-do-now">
+  <div class="item-rank">08</div>
+  <div class="item-body">
+    <h3>Put the verdict next to the Buy button, and derive the Unvalidated section from measured verdicts</h3>
+    <div class="chips">
+      <span class="chip tier">do-now</span>
+      <span class="chip">effort S</span>
+      <span class="chip">high</span>
+      
+    </div>
+    <p class="why">OrderButtons places a real Robinhood order from StockDetailHero. VerdictChip only ever renders via ThesisParagraph or ResearchPanel, so on boards showing neither you can tap Buy with no reminder that the board is graded NO_EDGE. Worse, catalyst, trident and screens are not even registered in shared/verdicts.ts, so their headers carry no edge statement at all — while FABLE, which carries a measured NO_EDGE, sits…</p>
+    <p class="what"><span class="lbl">Scope</span>Four small changes. (1) Add an UNMEASURED status and register catalyst/trident/screens in verdicts.ts so every board header renders a chip. (2) Render &lt;VerdictChip board={board}/&gt; in StockDetailHero next to the score badge, above the Buy row. (3) Derive `section` at render time in Sidebar.jsx/MobileDrawer.jsx from BOARD_VERDICTS — any board whose status is NO_EDGE drops below the divider, which moves fable automatically. Key…</p>
+  </div>
+</article>
+<article class="item t-do-now">
+  <div class="item-rank">09</div>
+  <div class="item-body">
+    <h3>Add a watch star to the detail hero — `addToWatchlist` has exactly one call site in the entire app</h3>
+    <div class="chips">
+      <span class="chip tier">do-now</span>
+      <span class="chip">effort S</span>
+      <span class="chip">high</span>
+      
+    </div>
+    <p class="why">Verified: the only caller is WatchlistPanel.jsx:118, behind the Desk&#x27;s typed ADD input. So the discover→watch bridge does not exist. You find a name on Trident, and the only way to track it is to remember the symbol, navigate to Desk, and retype it. One component in one place fixes this for every board that opens StockDetailPanel.</p>
+    <p class="what"><span class="lbl">Scope</span>A WatchStar component reading isWatched from watchlist.js and toggling add/remove, mounted in StockDetailHero next to LogButton and in the DossierTabs action row. That single placement covers Alerts, Forward, Screens, Williams, Lynch, Trident, Fable and Journal at once. DeskView&#x27;s watchTickers already re-reads on the watchlist:change event, so the Desk updates with no extra wiring. Skipping WatchlistPanel&#x27;s /api/ticker-info…</p>
+  </div>
+</article>
+<article class="item t-do-next">
+  <div class="item-rank">10</div>
+  <div class="item-body">
+    <h3>TradePlanCard: the boards compute entry/stop/target and the detail panel throws them away</h3>
+    <div class="chips">
+      <span class="chip tier">do-next</span>
+      <span class="chip">effort M</span>
+      <span class="chip">transformative</span>
+      
+    </div>
+    <p class="why">WilliamsView normalises entry/stop/target/atr/riskPerShare onto every row and shows them in the table — then discards them the instant you open the panel. riskPerShare is never rendered anywhere in the app. Prophet has entry/stop/targets/invalidation buried in an accordion. So the one screen where you press a real Buy button is the one screen with no trade plan on it. Every number already exists on the row; this is…</p>
+    <p class="what"><span class="lbl">Scope</span>A TradePlanCard between the hero and the chart in StockDetailPanel, rendering per board: williams row.entry/stop/target/riskPerShare, lynch fairValueLow/High as a band, prophet pick.entry/stop/targets/invalidation, trident/fable row.entry.pivot/stop. Show shares = floor(500/price) and dollar risk = shares × (entry − stop) against the ~$500 cap. Also extend StockDetailPanel.jsx:118-127 to pass those levels as priceLines for…</p>
+  </div>
+</article>
+<article class="item t-do-next">
+  <div class="item-rank">11</div>
+  <div class="item-body">
+    <h3>Make the order ticket show the cap, the risk, and your record before your thumb lands</h3>
+    <div class="chips">
+      <span class="chip tier">do-next</span>
+      <span class="chip">effort M</span>
+      <span class="chip">high</span>
+      
+    </div>
+    <p class="why">OrderTicket opens with an empty qty text input; the ~$500 cap is enforced only server-side, so you learn you exceeded it from a red error after tapping Buy. Every input for a proper pre-trade strip is already loaded elsewhere in the app: atr() from src/lib/indicators.js, buying power from /api/broker-sync, tickerRecord() from baseRates.js (already rendered in DossierTabs), regime from useRegime, earnings from…</p>
+    <p class="what"><span class="lbl">Scope</span>Above the qty field: size chips ($100/$250/$500/max) dividing by price into whole shares, a live &#x27;est $X of $500&#x27; meter, and submit disabled past the cap as a CLIENT MIRROR of the server guard, never a replacement. Add ATR risk sizing — stop = price − 2×ATR14, qty = floor(riskDollars/(price−stop)), clamped by min(cap, buying power, risk budget), and say which constraint bound (&#x27;risk-bound: 7 sh&#x27; vs &#x27;cap-bound: 12 sh&#x27;);…</p>
+  </div>
+</article>
+<article class="item t-do-next">
+  <div class="item-rank">12</div>
+  <div class="item-body">
+    <h3>Build an alertEvents ledger — AlertsView is a re-render calling itself an alert feed</h3>
+    <div class="chips">
+      <span class="chip tier">do-next</span>
+      <span class="chip">effort M</span>
+      <span class="chip">high</span>
+      
+    </div>
+    <p class="why">AlertsView.jsx:50 computes firedAt = new Date().toISOString() inside the useMemo, so &#x27;Last scan&#x27; is the last render and &#x27;N alerts firing&#x27; describes nothing that fired. Refresh and the whole feed evaporates. Nothing is new, nothing can be acknowledged, nothing survives a reload. This is the prerequisite for every notification channel — build a delivery path on top of this and you will be pushing a leaderboard…</p>
+    <p class="what"><span class="lbl">Scope</span>netlify/functions/alerts-sweep.ts using the existing listSnapshots/getSnapshotById helpers that shared/forward-test.ts already uses: diff the newest snapshot against the prior one per board+universe and write deduped docs to a Firestore `alertEvents` collection — {eventKey: board:universe:ticker:kind, kind: new_entrant|exit|rank_jump|tier_upgrade|cross, ticker, score, prevScore, firedAt (the SNAPSHOT&#x27;s timestamp, not now),…</p>
+  </div>
+</article>
+<article class="item t-do-next">
+  <div class="item-rank">13</div>
+  <div class="item-body">
+    <h3>Scan-health watcher + Telegram as the notification channel — before any PWA push work</h3>
+    <div class="chips">
+      <span class="chip tier">do-next</span>
+      <span class="chip">effort S</span>
+      <span class="chip">high</span>
+      
+    </div>
+    <p class="why">netlify/functions/health.ts ALREADY computes per-board snapshot ages against FRESHNESS_BUDGETS_MS and flips to degraded at 2× budget, and the file&#x27;s own comment records that a prior mismatch masked real outages. Nobody is ever told. A dead scan does not just blank a board — forward-test-nightly freezes top-20 from whatever snapshot exists, so a silent outage poisons the league, which is the app&#x27;s honesty mechanism.…</p>
+    <p class="what"><span class="lbl">Scope</span>(1) shared/notify.ts exporting sendTelegram(text, buttons?) — plain fetch, no new dependency, TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID as env vars (single user means chat_id is a constant, so no subscriber table). Inline URL buttons deep-link via the hash routes from item 6. (2) health-watch.ts on schedule(&#x27;0 2 * * *&#x27;) plus one intraday weekday check, sending ONE message listing degraded board+universe+age when status !== &#x27;ok&#x27;,…</p>
+  </div>
+</article>
+<article class="item t-do-next">
+  <div class="item-rank">14</div>
+  <div class="item-body">
+    <h3>Rank the league on ONE horizon, draw the best-of-25 noise band, and name the 14 screen cohorts</h3>
+    <div class="chips">
+      <span class="chip tier">do-next</span>
+      <span class="chip">effort S</span>
+      <span class="chip">high</span>
+      
+    </div>
+    <p class="why">The league currently ranks each cohort on whatever horizon happens to look best for it, presents point estimates with no sense of how big &#x27;lucky&#x27; is across 25 simultaneous trials, and renders all fourteen screen cohorts as the undifferentiated word &#x27;Screens&#x27;. The drill-down is worse than cosmetic: PickLog calls /api/forward-test?board=screens and gets picks from all fourteen screens mixed together, so every screen…</p>
+    <p class="what"><span class="lbl">Scope</span>(1) A horizon segmented control in the ForwardTestView header (HORIZON_LABELS already exists), default 3M, sorting strictly on the selected horizon; cohorts with insufficient n at that horizon go into a visually demoted &#x27;not yet measurable at 3M&#x27; group rather than being interleaved with provisional scores. Keep the five per-row pills so dispersion stays visible. (2) In buildLeague compute cross-cohort SD of rankScore and…</p>
+  </div>
+</article>
+<article class="item t-do-next">
+  <div class="item-rank">15</div>
+  <div class="item-body">
+    <h3>Beta-adjust the league&#x27;s alpha and give each cohort its own benchmark</h3>
+    <div class="chips">
+      <span class="chip tier">do-next</span>
+      <span class="chip">effort M</span>
+      <span class="chip">high</span>
+      
+    </div>
+    <p class="why">Current &#x27;alpha&#x27; is raw excess return vs SPY — beta implicitly 1.0. That is precisely the error the trend verdict was killed for, now embedded in the mechanism that grades every other board. A tiny-titans cohort at avg beta 1.5 measured against SPY is a size-and-beta bet being scored as skill, and it is the cohort most likely to top the league for exactly that reason.</p>
+    <p class="what"><span class="lbl">Scope</span>(1) Add betaAtEntry to the ForwardPick interface, populated in the capture loop of runForwardTestNightly — FinvizRow already carries beta (the lowvol screen filters on it), so it is sitting in the snapshot rows extractTopN already walks. Store BOTH currentAlpha (beta=1, keeps history comparable) and currentAlphaBeta = pct − beta·spyPct; rank on the latter. Surface cohortAvgBeta per row. Fall back to 1.0 with a betaEstimated…</p>
+  </div>
+</article>
+<article class="item t-do-next">
+  <div class="item-rank">16</div>
+  <div class="item-body">
+    <h3>Make the mobile detail panel a bottom sheet with a persistent action bar</h3>
+    <div class="chips">
+      <span class="chip tier">do-next</span>
+      <span class="chip">effort M</span>
+      <span class="chip">high</span>
+      
+    </div>
+    <p class="why">MasterDetail&#x27;s !isDesktop branch is a centre-anchored desktop dialog at max-h-[92vh] — vh, not dvh, so Safari&#x27;s URL bar clips the last row — with no body-scroll lock, no Escape, and no back-button close. Inside it, the panel is a ~2,500px scroll whose every primary action (Log, Buy, Sell, Close) is a 20-28px target pinned at the very top. And the sticky header slot exists but only TargetBoardView passes anything, so…</p>
+    <p class="what"><span class="lbl">Scope</span>In the !isDesktop branch: items-end, max-h-[90dvh], rounded-t-2xl, a grab handle, overscroll-contain on the scroller, and a body-scroll lock — copy the pattern verbatim from MobileDrawer.jsx:22-34, which already does this correctly. Bind swipe-to-dismiss to the handle ONLY, never the sheet body, or a long scroll will generate accidental dismissals. Add a sticky bottom action bar above env(safe-area-inset-bottom) with three…</p>
+  </div>
+</article>
+<article class="item t-do-next">
+  <div class="item-rank">17</div>
+  <div class="item-body">
+    <h3>Real dollar P&amp;L and a portfolio line, now that share counts exist</h3>
+    <div class="chips">
+      <span class="chip tier">do-next</span>
+      <span class="chip">effort M</span>
+      <span class="chip">high</span>
+      
+    </div>
+    <p class="why">PositionsPanel&#x27;s header comment says &#x27;the journal doesn&#x27;t record share counts, and inventing a position size would be a lie&#x27;. That comment is stale — TradeTakenButton writes shares and both broker writebacks write qty. Once item 3 normalises those keys, dollar exposure becomes computable and the panel can stop showing per-share figures for trades where the real number is known. There is currently no portfolio level…</p>
+    <p class="what"><span class="lbl">Scope</span>Extend buildPositionRows to take a brokerPositionsBySymbol map (hoist useOwnedShares into a shared useBrokerPositions so DeskView fetches once, not per ticker) and add $ P&amp;L = qty×(last−avgCost) plus a simple annualised return over daysHeld. Preserve the em-dash discipline exactly: where no qty exists, keep the per-share figure and show an em-dash in the dollar column, never a zero, and put a `journal` vs `broker` basis pill…</p>
+  </div>
+</article>
+<article class="item t-do-next">
+  <div class="item-rank">18</div>
+  <div class="item-body">
+    <h3>Join your realised expectancy into the league table — the two scoreboards have never met</h3>
+    <div class="chips">
+      <span class="chip tier">do-next</span>
+      <span class="chip">effort S</span>
+      <span class="chip">high</span>
+      
+    </div>
+    <p class="why">ForwardTestView ranks boards by what their picks did. baseRates.js already exports baseRatesByBoard(log) keyed on the same `source` string LogButton stamps. Identical keyspace, never joined. This is the single highest-value addition to the review→learn end of the chain and it is a client-side join: no endpoint, no dependency, no AI. It converts the league from &#x27;which model ranks well&#x27; into &#x27;which model made me…</p>
+    <p class="what"><span class="lbl">Scope</span>Add three columns to the league rows: real n, real expectancy, and implementation gap (paper alpha − realised), sortable on the gap. Apply the existing MIN_SAMPLE=5 greying aggressively and never sort on a greyed value. Tooltip must state that journal trades are self-selected — you only buy what you like off a board — so the realised number is conditional on your filtering and does not measure the board alone. SEQUENCING:…</p>
+  </div>
+</article>
+<article class="item t-do-next">
+  <div class="item-rank">19</div>
+  <div class="item-body">
+    <h3>Tab the StockDetailPanel — eleven sections mount at once in a 440px column</h3>
+    <div class="chips">
+      <span class="chip tier">do-next</span>
+      <span class="chip">effort M</span>
+      <span class="chip">high</span>
+      
+    </div>
+    <p class="why">Every child mounts on open. KeyMetricsPanel and FundamentalsChart share the deduped useStockDetail bundle, but CatalystsFeed, RelativeStrengthChart, RiskCallouts and ScoreBreakdown each fire their own request on every single ticker click. That is 3-4 avoidable requests per tap, on cellular, into a very long scroll in a very narrow column. The component to copy already exists.</p>
+    <p class="what"><span class="lbl">Scope</span>Lift the tab chrome out of src/components/desk/DossierTabs.jsx into components/detail/ and share it. Keep the hero, VerdictChip, RiskCallouts and TradeTakenButton pinned ABOVE the strip — evidence, the board&#x27;s verdict and one-click execution must never be behind a tap; that is the culture. Four lazily-mounted panes: Chart, Thesis, Numbers, Catalysts. Persist the last-used pane to localStorage like tradeiq-chart-indicators…</p>
+  </div>
+</article>
+<article class="item t-consider">
+  <div class="item-rank">20</div>
+  <div class="item-body">
+    <h3>Show what changed on each board since last night</h3>
+    <div class="chips">
+      <span class="chip tier">consider</span>
+      <span class="chip">effort M</span>
+      <span class="chip">high</span>
+      
+    </div>
+    <p class="why">The nightly snapshot already records everything needed and the pattern already exists for exactly one board — CrossesView computes isNew from barsAgo. Generalising it answers the question you actually open a board to ask. It also composes with item 12: the same diff feeds both the row chips and the event ledger, so build the diff once.</p>
+    <p class="what"><span class="lbl">Scope</span>Expose /api/forward-picks?board=&amp;universe= keyed by ticker (the pickId helper exists) and join into the board views: a NEW chip when entryDate equals the latest snapshot date, a ↑7/↓3 rank delta vs rankAtEntry, and daysOnBoard. Add a board header line — &#x27;Top 20: 3 new, 2 dropped since Aug 5&#x27; — with a filter chip for new entrants only. Start with Fable, Trident and Target, then share the component. CAVEAT that must be checked…</p>
+  </div>
+</article>
+<article class="item t-consider">
+  <div class="item-rank">21</div>
+  <div class="item-body">
+    <h3>Fix the 640–1279px navigation dead zone — that range is your phone in landscape</h3>
+    <div class="chips">
+      <span class="chip tier">consider</span>
+      <span class="chip">effort S</span>
+      <span class="chip">high</span>
+      
+    </div>
+    <p class="why">The hamburger is gated on sm:hidden and the inline tab row on hidden sm:block, so between 640 and 1279px you get the inline row and no drawer. That row also uses justify-end, which makes it unscrollable to the left, so most of the 25 tabs are simply unreachable. iPhone landscape lands squarely in this band. Small, mechanical, and it fixes a genuine dead end.</p>
+    <p class="what"><span class="lbl">Scope</span>In App.jsx change the hamburger gate at line 231 and the current-view label at 238 from sm:hidden to xl:hidden, MobileDrawer.jsx:44 likewise, and the inline nav at 247 from hidden sm:block to hidden xl:block — below 1280 you always get the drawer, which is the good component. Then delete the inline nav row entirely once verified at 900px; the Sidebar already renders the same VIEWS array above 1280. Wire and verify the drawer…</p>
+  </div>
+</article>
+<article class="item t-consider">
+  <div class="item-rank">22</div>
+  <div class="item-body">
+    <h3>Turn on the intraday ranges you already pay for and already built</h3>
+    <div class="chips">
+      <span class="chip tier">consider</span>
+      <span class="chip">effort S</span>
+      <span class="chip">medium</span>
+      
+    </div>
+    <p class="why">netlify/functions/price-history.ts already implements 1D (minute bars) and 5D (5-minute bars) with a 5-minute cache TTL and already implements the graceful degrade — on a Polygon NOT_AUTHORIZED it falls back to daily and returns intradayUnavailable:true so the chart never errors on a plan limit. Nothing in src/ ever requests them: RANGES in AdvancedPriceChart.jsx:28 is [&#x27;1M&#x27;,&#x27;3M&#x27;,&#x27;6M&#x27;,&#x27;1Y&#x27;,&#x27;5Y&#x27;]. The backend work is…</p>
+    <p class="what"><span class="lbl">Scope</span>Add &#x27;1D&#x27;,&#x27;5D&#x27; to RANGES with entries in RANGE_BARS (390 and 1950), set timeVisible on the timeScale for those ranges, skip the MA-warmup fetchRange widening for intraday, and hide the two chips when the response carries intradayUnavailable. Make vwapSeries() session-anchored for 1D — it currently accumulates from the first bar of whatever range is loaded, which is meaningless on a 6M daily series and exactly right on 1D, so…</p>
+  </div>
+</article>
+<article class="item t-consider">
+  <div class="item-rank">23</div>
+  <div class="item-body">
+    <h3>Design tokens and four shared UI primitives — the enabler, sequenced BEFORE any restyle</h3>
+    <div class="chips">
+      <span class="chip tier">consider</span>
+      <span class="chip">effort M</span>
+      <span class="chip">medium</span>
+      
+    </div>
+    <p class="why">SEQUENCING ITEM. The light-theme override layer is a 114-line !important enumeration that silently breaks on every new colour, and 25 inline style={{color:hex}} usages bypass it entirely. VerdictPill is triplicated byte-for-byte across three files, there are 18 chip/badge components, 12 panel border+background combinations, 20 spellings of the micro section label, and six empty-state shapes. Do the token block…</p>
+    <p class="what"><span class="lbl">Scope</span>(1) A :root token block in index.css — --gain, --loss, --surface-pinned, --row-sorted, --tier-a/b/c — with html.theme-light overrides, consumed via Tailwind arbitrary values. Convert tierColor/tierGlow in formatters.jsx from a hex map to CSS custom properties so inline styles finally follow the theme; note callers string-concatenate alpha suffixes (&#x27;66&#x27;/&#x27;15&#x27;/&#x27;55&#x27;), which break with var() — use color-mix or add explicit…</p>
+  </div>
+</article>
+<article class="item t-consider">
+  <div class="item-rank">24</div>
+  <div class="item-body">
+    <h3>Audit the Polygon/Massive billing before buying anything, then take the free FINRA daily short-volume file</h3>
+    <div class="chips">
+      <span class="chip tier">consider</span>
+      <span class="chip">effort S</span>
+      <span class="chip">medium</span>
+      
+    </div>
+    <p class="why">Your own code says these may be one vendor: getShortInterest in shared/data-provider.ts is keyed provider:&#x27;massive&#x27; in its LiveCacheKey but builds its URL from the POLYGON base constant with polygonKey(). Same host, same credential, drifted naming. That matters architecturally, not just financially — data-provider.ts is written as though Polygon is an independent fallback for Finviz bars, and if Polygon IS Massive…</p>
+    <p class="what"><span class="lbl">Scope</span>(1) Reconcile the POLYGON/MASSIVE base constants and key accessors into one provider identity, update the labels in provider-live-cache.ts and the SettingsView data-source panel so cache keys stop implying two vendors, and verify entitlements endpoint by endpoint — do not blind-cancel. (2) Then the one free data win worth taking: shared/finra-short-volume.ts pulling one keyless CNMS file per trading day into a Firestore daily…</p>
+  </div>
+</article></section>
+
+<section>
+  <div class="sec-head">
+    <h2>The adversarial pass</h2>
+    <p class="sec-note">Every do-now and do-next item went to an independent agent instructed to refute it. Not one survived unaltered. Several rested on evidence that turned out to be false — which is exactly why the recommendations were not implemented as written.</p>
+  </div>
+<article class="crit challenged">
+  <div class="crit-head"><span class="chip challenged">challenged</span><strong>#1 Stop the price chart fighting the iPhone — and rebuilding itself every 15…</strong></div>
+  <p>Half of this is a real, precisely-diagnosed bug on the most-used surface. The other half is provably wrong or actively harmful, and the one test it demands would pin a library default. I would not build it as scoped. VERIFIED TRUE — (c), the rebuild. /home/user/TradeIQ/src/components/detail/AdvancedPriceChart.jsx:355 dep array is [bars, type, logScale, ind, priceLines, displayBars] and the cleanup at :350-354 calls chart.remove(). I checked every other…</p>
+  <p class="cheaper"><span class="lbl">Cheaper 80%</span>Two changes in one file, roughly 15 minutes, no call-site coordination and no way for a future caller to regress it: 1. In AdvancedPriceChart.jsx, stop depending on the array&#x27;s identity. Add `const priceLinesKey = useMemo(() =&gt; JSON.stringify(priceLines ?? []), [priceLines]);` — cheap, these are 0-5 tiny objects — and swap `priceLines` for `priceLinesKey` in the :355 dep array…</p>
+</article>
+<article class="crit challenged">
+  <div class="crit-head"><span class="chip challenged">challenged</span><strong>#2 Freeze the ticker column and pin the header across all 19 tables</strong></div>
+  <p>Real problem, but the recommendation is wrong on its central evidence and three of its four mechanics. As scoped it would not work, and the S estimate belongs to a version that doesn&#x27;t function. 1. HEADLINE EVIDENCE IS FALSE. src/TargetBoardView.jsx:376 gates the 16-column TargetTable behind `{isDesktop ? &lt;TargetTable/&gt; : &lt;TargetCard grid&gt;}`, and src/hooks/useBreakpoint.js:17 sets DESKTOP_BREAKPOINT_PX=1280. On a 390pt phone TargetBoardView renders cards,…</p>
+  <p class="cheaper"><span class="lbl">Cheaper 80%</span>Do column tiering ONLY, and drop every sticky rule. If the mobile table fits inside 390px, nothing scrolls horizontally, so the ticker can never be lost — which is the entire user-facing win — with zero sticky CSS, zero z-index coordination against App.jsx&#x27;s stacked chrome, zero light-theme opacity work, zero colSpan surgery, and no risk of shipping a header that silently does…</p>
+</article>
+<article class="crit challenged">
+  <div class="crit-head"><span class="chip challenged">challenged</span><strong>#3 Repair the broker→journal contract and make a sell close its buy</strong></div>
+  <p>Part 1 is correct and I&#x27;d ship it tomorrow. Part 2 is unsound as scoped and I&#x27;d refuse to build it in this shape. DIAGNOSIS IS FULLY VERIFIED. broker-execute.ts:135-152 and trade-queue.ts:205-215 write {price, entry, qty, stopPrice, notes}. Readers want loggedPrice (PositionsPanel.jsx:29, baseRates.js:24, JournalView.jsx:272), stop (PositionsPanel.jsx:40,44), shares (JournalView.jsx:264). Zero overlap, exactly as claimed. All 12 UI logTrade sites write…</p>
+  <p class="cheaper"><span class="lbl">Cheaper 80%</span>Roughly a quarter of the effort, most of the value, and it cannot lie. 1. normalizeTrade() exactly as briefed — loggedPrice ?? price ?? entry, shares ?? qty, stop ?? stopPrice, note ?? notes — applied in readLocal() and mergeRemote() in src/tradeLog.js. Read-side placement is the right call and the brief is correct that a writer-only fix leaves existing Firestore docs broken.…</p>
+</article>
+<article class="crit challenged">
+  <div class="crit-head"><span class="chip challenged">challenged</span><strong>#4 Plug the live background-Claude leak in ChartView</strong></div>
+  <p>=== RANK 4 — CHART TAB AI LEAK: SPLIT THE VERDICT === OUTCOME: The bug is real. The recommendation as scoped is not sound — it misquotes the evidence, the &quot;one-line stopgap&quot; does not work as written and introduces a new bug, and the second half (gut panels → AdvancedPriceChart) is not S and would make the app worse. --- 1. THE FINDING IS OVERSTATED BY TRUNCATION --- The rec quotes src/hooks/useChartAnalysis.js:5-7 as &quot;only fired when the user explicitly…</p>
+  <p class="cheaper"><span class="lbl">Cheaper 80%</span>=== CHEAPER 80% — ~15 LINES, NO NEW ENDPOINT, NO PANEL SURGERY === 1. Kill the iPhone re-focus spend (the only genuinely background-ish cost). In src/hooks/useChartAnalysis.js, mirror what usePriceHistory.js:23-26 already does: staleTime: Infinity, gcTime: Infinity, refetchOnWindowFocus: false, refetchOnReconnect: false Alone this removes the repeat-purchase-on-app-switch path…</p>
+</article>
+<article class="crit challenged">
+  <div class="crit-head"><span class="chip challenged">challenged</span><strong>#5 The DEFAULT theme is light, and it is measurably broken — flagging this as a…</strong></div>
+  <p>The premise deviation is correct and is the most valuable thing here — confirm it before anyone optimises for dark. src/main.jsx:12 applies getTheme() before first paint and src/lib/theme.js:12-14 returns &#x27;light&#x27; on both the invalid-value and no-value paths. Light is what loads. Verified contrast against the real backgrounds (#f5f6f8 body, rgba(255,255,255,0.85) cards): text-emerald-400 = 3.49:1, text-rose-400 = 5.81:1. The rec&#x27;s arithmetic is right and…</p>
+  <p class="cheaper"><span class="lbl">Cheaper 80%</span>Six lines, no new test, ~30 minutes, zero ongoing maintenance. (a) src/index.css:88 — text-emerald-400 -&gt; #047857, and bump line 87 emerald-300 to a distinctly darker shade so the Sidebar/MobileDrawer active pill still reads. Fixes 141 sites including ScreensView Chg/1Y, ForwardTestView pctTone, league alpha chips, Positions P/L. (b) Add three rules for text-red-400 /…</p>
+</article>
+<article class="crit challenged">
+  <div class="crit-head"><span class="chip challenged">challenged</span><strong>#6 Hash routing + PWA manifest + safe-area insets — the unlock everything else…</strong></div>
+  <p>Not sound AS SCOPED. The core piece (a hash view router) is worth building; the bundle around it is mis-sized and the WHY rests on two claims that the code contradicts. FALSE PREMISE 1 — &quot;App.jsx:414-442 has no fallback branch, so a stale `#vector` bookmark white-screens today.&quot; It does not. Verified: nothing in src/ reads location.hash (only hits are `history.replaceState` in src/EarningsView.jsx:74 and src/InsiderBoardView.jsx:88). Today `#vector` is…</p>
+  <p class="cheaper"><span class="lbl">Cheaper 80%</span>Split it and ship two-thirds of it in one sitting; drop the rest until a real consumer exists. SHIP NOW (true S, ~1 hour): 1. Hash VIEW router only — `#/&lt;viewId&gt;`, nothing else. In src/App.jsx: lazy-init `activeView` from `location.hash`, validated against `VIEWS.map(v =&gt; v.id)` with fallback to &#x27;desk&#x27; (this is where the fallback branch genuinely belongs, and it makes the…</p>
+</article>
+<article class="crit challenged">
+  <div class="crit-head"><span class="chip challenged">challenged</span><strong>#7 Watch the stops you already record, and point the earnings radar at what you…</strong></div>
+  <p>=== RANK 7 — SKEPTICAL BUILD REVIEW: PARTIALLY SOUND, NOT AS SCOPED === VERDICT: item (2) is a real confirmed bug and should ship today. Item (1) is a real gap but the proposed mechanism is mislabeled, mis-mitigated, and not S. Item (3) is scope creep with no consumer. Recommend building the reduced version below, and fixing a schema bug the proposal doesn&#x27;t know about first. WHAT I VERIFIED IN THE CODE - /home/user/TradeIQ/src/DeskView.jsx:71-78 —…</p>
+  <p class="cheaper"><span class="lbl">Cheaper 80%</span>=== CHEAPER 80% — 1.5 FILES, NO NEW FEEDS, NO ATR, NO NEW BUTTON === 1. THE ONE-LINE BUG (do this regardless — it is the whole value of the brief) src/DeskView.jsx:78 -&gt; `useEarningsRadar(quoteTickers)`. Then fix the now-false copy in src/components/desk/EarningsRadarPanel.jsx:36 (&quot;No upcoming reports on the watchlist.&quot; -&gt; &quot;...on the watchlist or in open positions.&quot;).…</p>
+</article>
+<article class="crit challenged">
+  <div class="crit-head"><span class="chip challenged">challenged</span><strong>#8 Put the verdict next to the Buy button, and derive the Unvalidated section from…</strong></div>
+  <p>Two of the four changes are real bugs worth fixing today. The two headline changes are wrong as specified — one of them does not do what the brief says it does. STEP 3 IS BROKEN, NOT JUST DEBATABLE. &quot;any board whose status is NO_EDGE drops below the divider, which moves fable automatically&quot; is false. The divider is POSITIONAL, not a grouping: Sidebar.jsx:30 computes `firstUnvalidated = unvalidated &amp;&amp; views[i-1]?.section !== &#x27;unvalidated&#x27;` and emits a…</p>
+  <p class="cheaper"><span class="lbl">Cheaper 80%</span>Ship four things, drop the rest. 1. DELETE TargetBoardView.jsx:629-641 — the Log as Trade / Watchlist / Open in TradeStation buttons with no onClick. Pure subtraction, no test churn, and the only item in the brief that is unambiguously a lie in the UI. Do this first and alone if nothing else gets merged. 2. FIX ScoreBadge.jsx properly, not with three more branches. Replace the…</p>
+</article></section>
+
+<section>
+  <div class="sec-head">
+    <h2>Deliberately rejected</h2>
+    <p class="sec-note">Popular ideas that are wrong for <em>this</em> app. A roadmap that recommends everything is worthless, so the synthesis was required to argue against at least six.</p>
+  </div>
+  <ul class="rej">
+<li><strong>Draggable multi-widget dashboards, detachable windows, saved layout profiles, and a DOM/order ladder</strong><span>The most photogenic cluster in the research and the most wrong. MasterDetail already solves ticker linking with zero configuration, and DeskView already provides the one canvas that benefits. A grid layout needs react-grid-layout against a stack that has deliberately stayed on Tailwind +…</span></li>
+<li><strong>A drawing-tool suite on the chart (trendlines, Fibs, 68 tools)</strong><span>It would be the first artifact in TradeIQ that produces claims nothing can check. The entire epistemic culture is measured — evidence grades, verdict chips, a forward-test league marking every board against SPY, survivorship disclosure. Hand-drawn trendlines are unmeasurable by construction:…</span></li>
+<li><strong>A multi-condition alert rule-builder UI</strong><span>TradeIQ already encodes its conditions — they are the 24 boards and the screen catalog in shared/finviz-screens.ts. A builder would let one person express, in a worse language, conditions the scoring models already express better, and would add a persistence layer, a validation layer and a settings…</span></li>
+<li><strong>SMS alerting via Twilio</strong><span>Cost and A2P 10DLC registration paperwork exceeding the effort of the entire Telegram integration, for strictly less capability — 160 characters with no deep-link buttons, no formatting, no badge. The owner is one person with an iPhone who can install Telegram in thirty seconds. Worse than merely…</span></li>
+<li><strong>A pairwise correlation matrix across open positions</strong><span>With a ~$500 per-order cap and a handful of open entries, a 5×5 heatmap costs five extra bar pulls plus a recharts heatmap to tell you what a sector-weight bar tells you for free — and a matrix does not survive an iPhone screen anyway. It looks sophisticated, burns a day, and renders em-dashes most…</span></li>
+<li><strong>Bayesian forecast cones, per-cohort pyfolio tearsheets, Fama-French panels, monthly heatmaps</strong><span>A heavy dependency and a wall of charts lending spurious authority to samples far too small to support any of it — directly contrary to the discipline verdicts.ts and the evidence-grading system already enforce. Take only the two cheap load-bearing pieces: a live-start ReferenceLine on the equity…</span></li>
+<li><strong>Unusual Whales, Similarweb/Revelio alt-data, and the $99/mo Benzinga analyst-ratings add-on</strong><span>Unusual Whales duplicates three feeds you already pay for and would add a fourth overlapping source of congress and dark-pool signal, making it harder to attribute which board is working — the one question the league exists to answer. Web traffic and job postings are priced out of reach, and the…</span></li>
+<li><strong>An Alpaca paper-trading account or migrating broker (Tradier/Schwab/IBKR/tastytrade)</strong><span>Alpaca doubles the surface that has to stay correct for a purely developer-facing benefit, and free-tier IEX data will not match Robinhood fills, so any price &#x27;validation&#x27; would mislead. If it exists at all it is a key-gated test adapter for reconcileStops integration tests — no tab, no nav entry,…</span></li>
+<li><strong>Celebration animations, streak counters, a social/Stocktwits feed, and native iOS widgets</strong><span>The terse &#x27;✓ MARKET buy 3 @ $124.50&#x27; confirmation chip is exactly right — keep it. Streaks and &#x27;trades this week&#x27; counters are the dishonest version of an instinct BaseRatesPanel already serves properly. A social feed would import exactly the engagement dynamics this app&#x27;s culture rejects. Native…</span></li>
+<li><strong>Repainting 413 sites for colour-blind safety, and adding zebra striping to the tables</strong><span>The colour-blind fix is the highest-profile item in most dataviz research and the lowest-value one here, because the user population is one known person. Ask him — one question decides it. If he is not red-green deficient the argument is void; if he is, the answer is a lightness-differentiated…</span></li>
+<li><strong>Earnings-call transcripts as a new paid feed</strong><span>Deferring, not never — but the risk profile is wrong for now. Transcripts are the longest text objects you could possibly hand an LLM, and if one ever reaches a scheduled scan or a page-load thesis you have reintroduced exactly the background Claude spend the 2026-08-06 rule bans, at the worst…</span></li>  </ul>
+</section>
+
+<footer>
+  <p>Method: six benchmark tracks (pro platforms, research terminals, charting, retail design, quant reporting, dataviz), five code audits requiring file:line citations, three integration studies. Synthesis was required to reject at least six ideas; the top eight were then adversarially reviewed for realistic effort and a cheaper 80% version. Findings by area — mobile 24, workflow 24, information architecture 22, integrations 17, trust &amp; provenance 16.</p>
+</footer>
+
+</div>
