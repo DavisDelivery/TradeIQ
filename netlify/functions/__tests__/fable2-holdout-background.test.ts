@@ -5,18 +5,20 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const docs = new Map<string, Record<string, unknown>>();
-let completedExists = false;
+// Prior completed runs the guard sees: [{id, completedAt}]. AUDIT-1 split the
+// guard on completedAt vs the membership-fix deploy time, so the mock carries
+// data() now, and `.where().get()` (no limit) is the shape the guard uses.
+let completedRuns: Array<{ id: string; completedAt: string }> = [];
 vi.mock('../shared/firebase-admin', () => ({
   getAdminDb: () => ({
     collection: (_c: string) => ({
-      where: () => ({
-        limit: () => ({
-          get: async () => ({
-            empty: !completedExists,
-            docs: completedExists ? [{ id: 'fbl2h_prior' }] : [],
-          }),
-        }),
-      }),
+      where: () => {
+        const result = async () => ({
+          empty: completedRuns.length === 0,
+          docs: completedRuns.map((r) => ({ id: r.id, data: () => ({ completedAt: r.completedAt }) })),
+        });
+        return { get: result, limit: () => ({ get: result }) };
+      },
       doc: (id: string) => ({
         set: async (payload: Record<string, unknown>, opts?: { merge?: boolean }) => {
           docs.set(id, opts?.merge ? { ...(docs.get(id) ?? {}), ...payload } : { ...payload });
@@ -32,7 +34,7 @@ vi.mock('../shared/backtest/policy-data', () => ({
     loadCalls.push(opts);
     return {
       inputs: { tickers: [], spyBars: [], checkpoints: [], config: opts.config },
-      stats: { universeSize: 0, tickersWithBars: 0, barFetchFailures: 0, insiderFetches: 0, insiderFailures: 0, checkpoints: 0 },
+      stats: { universeSize: 0, tickersWithBars: 0, barFetchFailures: 0, insiderFetches: 0, insiderFailures: 0, checkpoints: 0, membershipSource: 'pit-history' },
     };
   }),
 }));
@@ -63,7 +65,7 @@ const invoke = (body: unknown) =>
 beforeEach(() => {
   docs.clear();
   loadCalls.length = 0;
-  completedExists = false;
+  completedRuns = [];
 });
 
 describe('fable2-holdout-background — one shot, frozen window', () => {
@@ -79,13 +81,35 @@ describe('fable2-holdout-background — one shot, frozen window', () => {
     expect((docs.get('fbl2h_confirmatory') as any).frozenPer).toMatch(/APPENDIX A/);
   });
 
-  it('single-use guard: refuses (409) once any complete measurement exists', async () => {
-    completedExists = true;
+  it('single-use guard: refuses (409) once a POST-FIX complete measurement exists', async () => {
+    completedRuns = [{ id: 'fbl2h_prior', completedAt: '2026-08-07T01:00:00.000Z' }];
     const res = await invoke({ runId: 'fbl2h_second_try' });
     expect(res.statusCode).toBe(409);
     expect(JSON.parse(res.body).error).toMatch(/single-use|FINAL/);
     expect(loadCalls).toHaveLength(0); // no work performed
     expect(docs.has('fbl2h_second_try')).toBe(false);
+  });
+
+  // AUDIT-1: "final" binds the measurement, not a defective instrument. The
+  // pre-fix run measured the survivorship bug (candidates = today's roster),
+  // so it is superseded — one corrected run is permitted, config unchanged.
+  it('permits exactly one supersession of a PRE-FIX completion', async () => {
+    completedRuns = [{ id: 'fbl2h_confirmatory', completedAt: '2026-07-14T02:11:00.000Z' }];
+    const res = await invoke({ runId: 'fbl2h_pit_rerun' });
+    expect(res.statusCode).toBe(200);
+    expect(loadCalls).toHaveLength(1);
+    // the frozen window still binds — supersession is not a re-roll
+    expect(loadCalls[0].config.startDate).toBe('2024-01-01');
+    expect(loadCalls[0].config.endDate).toBe('2026-06-30');
+  });
+
+  it('a post-fix completion blocks even when pre-fix runs also exist', async () => {
+    completedRuns = [
+      { id: 'fbl2h_confirmatory', completedAt: '2026-07-14T02:11:00.000Z' },
+      { id: 'fbl2h_pit_rerun', completedAt: '2026-08-07T04:00:00.000Z' },
+    ];
+    const res = await invoke({ runId: 'fbl2h_third_try' });
+    expect(res.statusCode).toBe(409);
   });
 
   it('rejects malformed runId', async () => {
