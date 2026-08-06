@@ -93,6 +93,12 @@ export interface LoadPolicyInputsResult {
     insiderFetches: number;
     insiderFailures: number;
     checkpoints: number;
+    /**
+     * AUDIT-1: which candidate pool this run actually used. Persisted (not
+     * just logged) so a stored run can PROVE it was point-in-time rather
+     * than today's roster — the pre-fix +28.01pp holdout could not.
+     */
+    membershipSource: 'pit-history' | 'current-roster';
   };
 }
 
@@ -227,6 +233,7 @@ export async function loadPolicyInputs(opts: LoadPolicyInputsOpts): Promise<Load
       inputs: { tickers, spyBars, checkpoints, config },
       stats: {
         universeSize: entries.length,
+        membershipSource,
         tickersWithBars: tickers.length,
         barFetchFailures,
         insiderFetches: 0,
@@ -260,6 +267,7 @@ export async function loadPolicyInputs(opts: LoadPolicyInputsOpts): Promise<Load
     inputs: { tickers, spyBars, checkpoints, config },
     stats: {
       universeSize: entries.length,
+        membershipSource,
       tickersWithBars: tickers.length,
       barFetchFailures,
       insiderFetches,
