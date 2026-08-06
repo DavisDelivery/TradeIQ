@@ -203,12 +203,33 @@ export function AdvancedPriceChart({ ticker, priceLines = [] }) {
       .map((b) => ({ ...b, time: toTime(b.date) }));
   }, [query.data]);
 
+  // The effect below tears the chart down and rebuilds it (cleanup calls
+  // chart.remove()). `priceLines` was in its dep array BY IDENTITY, and it is
+  // unstable at every call site: three pass the `= []` default (which mints a
+  // new array per render) and two build inline literals. Every parent polls
+  // live quotes on a 15-30s timer, so the chart was being destroyed and
+  // rebuilt 2-4x a minute — canvases recreated, MA200/BB/RSI/MACD recomputed
+  // over up to 1260 bars, and pan/zoom reset each time. Mid-gesture, it
+  // destroyed the chart under the user's thumb.
+  //
+  // Keying on the serialized CONTENT fixes all five call sites at once and
+  // cannot be regressed by a future caller passing a fresh literal. These are
+  // 0-5 tiny objects, so stringifying is far cheaper than a rebuild.
+  const priceLinesKey = useMemo(() => JSON.stringify(priceLines ?? []), [priceLines]);
+
   useEffect(() => {
     const el = elRef.current;
     if (!el || bars.length === 0) return undefined;
 
     const chart = createChart(el, {
       autoSize: true,
+      // On a phone the chart is the first big section inside MasterDetail's
+      // `max-h-[92vh] overflow-y-auto` modal and can fill nearly the whole
+      // viewport, leaving no thumb-safe strip to scroll past it. Letting
+      // vertical drags fall through to the page scroller costs touch panning
+      // of the price axis (mostly relevant on log-scale 5Y) and buys back the
+      // ability to scroll the panel at all.
+      handleScroll: { vertTouchDrag: false, horzTouchDrag: true },
       layout: {
         background: { color: 'transparent' },
         textColor: '#737373',
@@ -352,7 +373,7 @@ export function AdvancedPriceChart({ ticker, priceLines = [] }) {
       chart.remove();
       chartRef.current = null;
     };
-  }, [bars, type, logScale, ind, priceLines, displayBars]);
+  }, [bars, type, logScale, ind, priceLinesKey, displayBars]);
 
   const last = bars[bars.length - 1];
   const shown = legend ?? (last
