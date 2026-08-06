@@ -99,30 +99,55 @@ export const BOARD_VERDICTS: Record<VerdictBoard, BoardVerdict> = {
   lynch: {
     board: 'lynch',
     status: 'NO_EDGE',
-    window: '2018-01-31 → 2024-12-31, sp500',
-    excessVsSPYPp: -1.3,
+    // AUDIT-1 (2026-08-06): this row previously cited runId 'bt_20260608015737'
+    // — a TRUNCATED id that resolves to "run not found" — and claimed the
+    // 2018→2024 window while the underlying run (…_t8uk0v) actually covered
+    // 2018-02→2021-12 quarterly, the friendliest of three available
+    // measurements. The two runs that DO cover the full window are
+    // bt_20260519014419_litbxp (−100.98pp) and bt_20260519014435_71ak9q
+    // (−87.56pp). The row now cites the discrete-signal full-window run.
+    // Caveat inherited from that era's engine: it predates the
+    // delisting-realization fix (b93eb3e), so the loss is if anything
+    // understated.
+    window: '2018-01-31 → 2024-12-31, sp500, quarterly, discrete BUY signal',
+    excessVsSPYPp: -101.0,
     excessVsQQQPp: null,
-    ic: 0.0011,
+    ic: -0.0612,
     rollingWindowsWon: null,
-    runId: 'bt_20260608015737',
-    date: '2026-06-08',
+    runId: 'bt_20260519014419_litbxp',
+    date: '2026-08-06',
     note:
-      'IC 0.0011 (indistinguishable from zero) and −1.3 pp vs SPY: the scores carry no ' +
-      'measurable ranking information. Restatement caveat applies (pit-audit §8).',
+      'Full-window discrete run: +6.9% vs SPY +107.9% (−101.0 pp), IC −0.0612. The BUY ' +
+      'signal fired in only a handful of quarterly rebalances across 7 years; when it fired ' +
+      'there is no evidence it beat the index. A shorter 2018–2021 run (…_t8uk0v) showed ' +
+      '−1.3 pp / IC 0.0011 and was previously (mis)quoted here as the full window.',
   },
   prophet: {
     board: 'prophet',
-    status: 'MIXED',
-    window: 'portfolio backtest, full window + 8 rolling windows',
-    excessVsSPYPp: 80.9,
-    excessVsQQQPp: -58,
+    // AUDIT-1 (2026-08-06): demoted MIXED → PENDING. The +80.9pp figure was
+    // never attributable (runId was null) and does not measure the board's
+    // ranking process: the underlying full-window portfolio run bought one
+    // 14-name basket at the window start and never traded again, because a
+    // single stored snapshot resolved for every rebalance date. Verified
+    // live the same day: 20 consecutive nightly rolling-2018 runs return
+    // portfolio 0.000% (100% cash, snapshot predates window) while SPY fell
+    // 7.01% — and each counts as a rolling "win" under excess>0. A number
+    // produced that way is concentration luck plus a scoring artifact, not
+    // a measurement. PENDING until a ranked-engine run with real per-date
+    // snapshots exists (AUDIT-1 top-N campaign, in flight).
+    status: 'PENDING',
+    window: 'no valid measurement — prior run traded once in 8 years',
+    excessVsSPYPp: null,
+    excessVsQQQPp: null,
     ic: null,
-    rollingWindowsWon: '4/8',
+    rollingWindowsWon: null,
     runId: null,
-    date: '2026-05-18',
+    date: '2026-08-06',
     note:
-      '+80.9 pp vs SPY full-window, but beats its benchmark in only 4/8 rolling windows ' +
-      'and loses to QQQ by ~58 pp — a flattering full-window number over inconsistent periods.',
+      'The previously shown +80.9 pp vs SPY came from a run that bought 14 names on day one ' +
+      'and never rebalanced (one stale snapshot served all 418 dates), with 6/20 slots in ' +
+      'cash; its "4/8 rolling windows" included an all-cash year credited as a win because ' +
+      'SPY fell. No valid full-window measurement of Prophet exists yet.',
   },
   target: {
     board: 'target',
