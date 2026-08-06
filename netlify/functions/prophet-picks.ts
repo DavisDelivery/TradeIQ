@@ -2,14 +2,13 @@
 //   ?universe=largecap|russell|all (default largecap)
 //   &minConviction=low|medium|high
 //   &limit=30
-//   &narrate=1|0 (default 1 — narrate top 5 from the snapshot if missing)
 //   [&force=1]
 //
-// Phase 1: snapshot-first. Snapshot stores ALL scored picks. After Phase 4c-1,
-// scheduled scans pre-narrate the full pick list before snapshot write, so
-// every pick in a fresh snapshot already has a narrative. For older
-// snapshots we narrate the top 5 inline so the most-visible picks always
-// have a thesis.
+// Phase 1: snapshot-first. Snapshot stores ALL scored picks.
+//
+// AI-1 (2026-08-06): picks ship WITHOUT a narrative. Nothing here — and
+// nothing in the scheduled scans — calls Claude any more. A thesis is
+// generated only when the owner opens a ticker and asks for one.
 //
 // Wave 2D (M1) — SNAPSHOT-ONLY, all universes. Every Prophet universe is
 // far too large to inline-scan inside a 26s request (largecap ~508,
@@ -39,16 +38,13 @@ import {
 } from './shared/snapshot-store';
 import { logger } from './shared/logger';
 import { MODEL_VERSION } from './shared/model-version';
-import { narrateTopN } from './shared/narrative-generator';
 
-const NARRATIVE_BUDGET_MS = 3_000;
 
 export const handler: Handler = async (event) => {
   const qs = event.queryStringParameters ?? {};
   const universe = (qs.universe as ProphetUniverseKey) ?? 'largecap';
   const minConviction = (qs.minConviction as 'low' | 'medium' | 'high') ?? 'low';
   const limit = Math.min(Number(qs.limit ?? 30), 100);
-  const narrate = qs.narrate !== '0';
   const force = qs.force === '1' || qs.force === 'true';
 
   const log = logger.child({ fn: 'prophet-picks', universe, force });
@@ -103,15 +99,17 @@ export const handler: Handler = async (event) => {
   const filtered = filterProphetByConviction(all, minConviction);
   const sliced = filtered.slice(0, limit);
 
-  // Snapshots written post-4c-1 pre-narrate all picks. For older
-  // snapshots written before W4 shipped, we still narrate top-N inline
-  // to maintain the previous UX.
-  const needsNarration = sliced.some((p) => !p.narrative);
-  if (narrate && needsNarration && process.env.ANTHROPIC_API_KEY) {
-    await narrateTopN(sliced, 5, NARRATIVE_BUDGET_MS, (msg, ticker, err) => {
-      log.warn(msg, { ticker, err: String((err as any)?.message ?? err) });
-    });
-  }
+  // AI-1 (2026-08-06) — NO inline narration on board load.
+  //
+  // This used to narrate the top 5 picks whenever the board was fetched, so
+  // merely OPENING the Prophet tab spent Claude tokens on tickers the owner
+  // might never look at. It was also the sneakier of the two auto-paths:
+  // once the scheduled workers stopped pre-narrating, `needsNarration` would
+  // have been true on every single load, quietly moving the spend from the
+  // cron to the page view rather than removing it.
+  //
+  // Narration is now exclusively on-demand — the detail panel's "Generate AI
+  // thesis" button (useGenerateNarrative -> POST /api/prophet-narrate).
 
   return json(200, {
     ok: true,
