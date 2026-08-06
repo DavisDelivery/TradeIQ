@@ -25,11 +25,16 @@ import { useSectorPerformance } from '../../hooks/useSectorPerformance.js';
 import { useStockDetail } from '../../hooks/useStockDetail.js';
 import { Ticker } from '../Ticker.jsx';
 
+// 6M and 12M carry what evidence there is (Moskowitz & Grinblatt's IM(6,6)
+// and IM(12,1)). 1M and 3M are recent-move context only: MG's own IM(1,1) is
+// the strongest in-sample industry effect ever measured AND untradeable — it
+// dies entirely on a one-month skip, and Grobys & Kolari (2019) measure it at
+// 19bp/t=0.64 over 2001-2018. Shown as news, never as evidence.
 const WINDOWS = [
-  ['m1', '1M'],
-  ['m3', '3M'],
-  ['m6', '6M'],
-  ['m12', '12M'],
+  ['m1', '1M', 'context'],
+  ['m3', '3M', 'context'],
+  ['m6', '6M', 'evidenced'],
+  ['m12', '12M', 'evidenced'],
 ];
 
 const dash = <span className="text-neutral-600">—</span>;
@@ -38,14 +43,6 @@ function pct(v, digits = 1) {
   if (typeof v !== 'number' || !Number.isFinite(v)) return dash;
   const cls = v > 0 ? 'text-emerald-400' : v < 0 ? 'text-rose-400' : 'text-neutral-300';
   return <span className={cls}>{v > 0 ? '+' : ''}{v.toFixed(digits)}%</span>;
-}
-
-/** Rank tone: top third / bottom third of the sectors that had data. */
-function rankTone(rank, of) {
-  if (!rank || !of) return 'text-neutral-400';
-  if (rank <= Math.ceil(of / 3)) return 'text-emerald-400';
-  if (rank > of - Math.ceil(of / 3)) return 'text-rose-400';
-  return 'text-neutral-300';
 }
 
 export function SectorContextPanel({ ticker }) {
@@ -110,13 +107,50 @@ export function SectorContextPanel({ ticker }) {
         {asOf && <span className="ml-auto text-[9px] font-mono text-neutral-600">as of {asOf}</span>}
       </div>
 
+      {/* STRONGEST ITEM ON THE PAGE, so it leads rather than trails.
+          Stock-vs-own-sector is idiosyncratic/residual momentum in cheap
+          form: Blitz, Huij & Martens (2011) measure ~2x the Sharpe of
+          conventional momentum, replicated out-of-sample 2009-2015 (Huij &
+          Lansdorp 2017) and across developed + emerging markets (Blitz,
+          Hanauer & Vidojevic 2020). Blitz et al. (FAJ 2023) doubled a
+          reversal factor's alpha (37bp -> 74bp, t 3.02 -> 9.24) purely by
+          measuring the stock against its industry instead of the market. */}
+      <div
+        data-testid="stock-vs-sector"
+        className="mb-3 pb-3 border-b border-neutral-800/80 flex items-baseline gap-2 flex-wrap"
+      >
+        <span className="text-[11px] font-mono text-neutral-400">{ticker} vs {row.etf}</span>
+        <span className="text-[15px] font-mono tabular-nums font-semibold">
+          {typeof vsSector === 'number' && Number.isFinite(vsSector)
+            ? <span className={vsSector > 0 ? 'text-emerald-400' : vsSector < 0 ? 'text-rose-400' : 'text-neutral-300'}>
+                {vsSector > 0 ? '+' : ''}{vsSector.toFixed(1)}%
+              </span>
+            : dash}
+        </span>
+        <span className="text-[10px] text-neutral-500">
+          {typeof vsSector === 'number' && Number.isFinite(vsSector)
+            ? vsSector > 0 ? 'leading its sector' : 'lagging its sector'
+            : rs?._reason
+              ? 'relative strength unavailable'
+              : ''}
+        </span>
+        <span className="ml-auto text-[9px] font-mono uppercase tracking-wider text-neutral-600">
+          cumulative, trailing window
+        </span>
+      </div>
+
       <div className="overflow-x-auto">
         <table className="w-full text-[11px] font-mono" data-testid="sector-context-table">
           <thead>
             <tr className="text-neutral-500 border-b border-neutral-800/80">
               <th className="text-left font-normal py-1 pr-3" />
-              {WINDOWS.map(([, label]) => (
-                <th key={label} className="text-right font-normal py-1 px-2">{label}</th>
+              {WINDOWS.map(([, label, weight]) => (
+                <th
+                  key={label}
+                  className={`text-right font-normal py-1 px-2 ${weight === 'context' ? 'text-neutral-600' : ''}`}
+                >
+                  {label}
+                </th>
               ))}
             </tr>
           </thead>
@@ -141,46 +175,17 @@ export function SectorContextPanel({ ticker }) {
                 </td>
               ))}
             </tr>
-            <tr>
-              <td className="py-1.5 pr-3 text-neutral-400 whitespace-nowrap">Rank of sectors</td>
-              {WINDOWS.map(([key]) => {
-                const w = row.windows?.[key];
-                return (
-                  <td key={key} className="py-1.5 px-2 text-right tabular-nums">
-                    {w?.rank
-                      ? <span className={rankTone(w.rank, w.rankOf)}>#{w.rank}<span className="text-neutral-600">/{w.rankOf}</span></span>
-                      : dash}
-                  </td>
-                );
-              })}
-            </tr>
           </tbody>
         </table>
       </div>
 
-      {/* Stock vs its own sector — the number with the best evidence behind
-          it, so it gets its own line rather than a column in the table. */}
-      <div className="mt-3 pt-3 border-t border-neutral-800/80 flex items-baseline gap-2 flex-wrap">
-        <span className="text-[11px] font-mono text-neutral-400">{ticker} vs {row.etf}</span>
-        <span className="text-[13px] font-mono tabular-nums">
-          {typeof vsSector === 'number' && Number.isFinite(vsSector)
-            ? <span className={vsSector > 0 ? 'text-emerald-400' : vsSector < 0 ? 'text-rose-400' : 'text-neutral-300'}>
-                {vsSector > 0 ? '+' : ''}{vsSector.toFixed(1)}%
-              </span>
-            : dash}
-        </span>
-        <span className="text-[10px] text-neutral-600">
-          {typeof vsSector === 'number' && Number.isFinite(vsSector)
-            ? vsSector > 0 ? 'leading its sector' : 'lagging its sector'
-            : rs?._reason
-              ? 'relative strength unavailable'
-              : ''}
-        </span>
-      </div>
-
       <p className="mt-2 text-[10px] leading-relaxed text-neutral-600">
-        Descriptive context, not a signal. Sector strength is not a validated
-        edge in this app — nothing here is scored or ranked for expected return.
+        Descriptive context, not a signal — nothing here is scored. Sector
+        strength on its own stopped being measurable after 2001 (Grobys &amp;
+        Kolari 2019: 6m t=0.37, 12m t=0.84). The stock-vs-sector line above is
+        the part with real out-of-sample support, and no interaction between
+        &ldquo;strong sector&rdquo; and &ldquo;good stock&rdquo; has ever been
+        measured — so this page deliberately applies no multiplier.
       </p>
     </section>
   );
