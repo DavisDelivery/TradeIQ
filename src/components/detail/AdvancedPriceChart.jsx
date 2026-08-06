@@ -12,6 +12,7 @@
 // log-scale toggles, autosizing. Data rides the shared usePriceHistory hook.
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { chartTheme } from '../../lib/chartTheme.js';
 import {
   createChart,
   CandlestickSeries,
@@ -37,8 +38,13 @@ const EMA_DEFS = [
   { key: 'ema9', period: 9, color: '#22d3ee', label: 'EMA9' },
   { key: 'ema21', period: 21, color: '#e879f9', label: 'EMA21' },
 ];
-const UP = '#14e89a';
-const DOWN = '#ff5577';
+// THEME-1: resolved per render from the CSS tokens so the chart follows the
+// active theme. The old literals (#14e89a / #ff5577) sat at 1.49:1 and
+// 2.85:1 on the light page — the default theme — i.e. invisible.
+const chartPalette = () => {
+  const t = chartTheme();
+  return { UP: t.up, DOWN: t.down, AXIS: t.axis, GRID: t.grid };
+};
 const BB_COLOR = '#8b9467';
 const VWAP_COLOR = '#eab308';
 
@@ -220,6 +226,7 @@ export function AdvancedPriceChart({ ticker, priceLines = [] }) {
   useEffect(() => {
     const el = elRef.current;
     if (!el || bars.length === 0) return undefined;
+    const { UP, DOWN, AXIS } = chartPalette();
 
     const chart = createChart(el, {
       autoSize: true,
@@ -232,7 +239,7 @@ export function AdvancedPriceChart({ ticker, priceLines = [] }) {
       handleScroll: { vertTouchDrag: false, horzTouchDrag: true },
       layout: {
         background: { color: 'transparent' },
-        textColor: '#737373',
+        textColor: AXIS,
         fontSize: 10,
         panes: { separatorColor: '#262626', enableResize: false },
       },
@@ -267,7 +274,8 @@ export function AdvancedPriceChart({ ticker, priceLines = [] }) {
       priceSeries.setData(bars.map((b) => ({ time: b.time, open: b.open, high: b.high, low: b.low, close: b.close })));
     } else if (type === 'Area') {
       priceSeries = chart.addSeries(AreaSeries, {
-        lineColor: UP, topColor: 'rgba(20,232,154,0.25)', bottomColor: 'rgba(20,232,154,0.02)', lineWidth: 2,
+        lineColor: UP, topColor: UP.replace('rgb(', 'rgba(').replace(')', ', 0.22)'),
+        bottomColor: UP.replace('rgb(', 'rgba(').replace(')', ', 0.02)'), lineWidth: 2,
       });
       priceSeries.setData(bars.map((b) => ({ time: b.time, value: b.close })));
     } else {
@@ -375,6 +383,7 @@ export function AdvancedPriceChart({ ticker, priceLines = [] }) {
     };
   }, [bars, type, logScale, ind, priceLinesKey, displayBars]);
 
+  const legend_ = chartPalette();
   const last = bars[bars.length - 1];
   const shown = legend ?? (last
     ? { date: last.date, open: last.open, high: last.high, low: last.low, close: last.close, volume: last.volume,
@@ -397,7 +406,7 @@ export function AdvancedPriceChart({ ticker, priceLines = [] }) {
             <span>C <span className="text-neutral-200">{shown.close?.toFixed(2)}</span></span>
             {shown.volume != null && <span>V <span className="text-neutral-200">{fmtVol(shown.volume)}</span></span>}
             {shown.chg != null && (
-              <span style={{ color: shown.chg >= 0 ? UP : DOWN }}>
+              <span style={{ color: shown.chg >= 0 ? legend_.UP : legend_.DOWN }}>
                 {shown.chg >= 0 ? '+' : ''}{shown.chg.toFixed(2)}%
               </span>
             )}
