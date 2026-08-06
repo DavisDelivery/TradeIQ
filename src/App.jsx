@@ -43,6 +43,7 @@ import { ResearchPanel } from './components/ResearchPanel.jsx';
 import { Logo, StatusDot, ConvictionBadge, DirectionPill } from './components/Badges.jsx';
 import { ThemeToggle } from './components/ThemeToggle.jsx';
 import { TickerSearch } from './components/TickerSearch.jsx';
+import { StopBreachBanner } from './components/StopBreachBanner.jsx';
 import { StockDetailPanel } from './components/detail/StockDetailPanel.jsx';
 import { fmt, safeTimestamp, tierColor, tierGlow, directionIcon, analystIcon, analystLabel } from './lib/formatters.jsx';
 import { MOCK_REGIME, MOCK_TARGETS, MOCK_ANALYSTS, MOCK_ALERTS, MOCK_EQUITY_CURVE } from './lib/mockData.js';
@@ -486,7 +487,12 @@ export default function App() {
           }
           topStrip={<RegimeStrip regime={regime} universeStats={{ core: 784, watchlist: 12 }} />}
         >
-          {demoBanner}
+          {/* STOP-1 — on every view, because a stop breach you only learn about by
+          opening the Desk tab is not much of a watcher. Renders null when the
+          watcher has observed nothing. */}
+      <StopBreachBanner onOpenDesk={() => setActiveView('desk')} />
+
+      {demoBanner}
           {universeBar}
           {viewRouter}
           {footer}

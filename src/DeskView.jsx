@@ -75,7 +75,10 @@ export function DeskView() {
   );
   const { quotesByTicker } = useLiveQuotes(quoteTickers);
   const { statsByTicker, isLoading: statsLoading } = useDeskStats(watchTickers);
-  const { radarByTicker } = useEarningsRadar(watchTickers);
+  // Earnings proximity matters MOST for money already at risk, so this covers
+  // open positions too — it was watchlist-only, which meant a position you held
+  // but had not also starred reported with no warning at all.
+  const { radarByTicker } = useEarningsRadar(quoteTickers);
 
   // Signal chips from the already-fetched board caches (shared React
   // Query entries with the board views — enabled:true, snapshot-first).
