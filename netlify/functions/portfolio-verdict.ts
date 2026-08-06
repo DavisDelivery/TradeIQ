@@ -119,6 +119,43 @@ function isDoneAtActiveVersion(s: BacktestSummary | undefined): boolean {
   return !!s && s.status === 'done' && resolveVersion(s) === ACTIVE_VERSION;
 }
 
+// No-data (all-cash) window guard.
+//
+// A `done` run in which the strategy NEVER TRADED — the ranking
+// snapshot predates the window, rankAtDate returns [], nothing is ever
+// bought, equity sits at startCapital for the whole window — is not
+// evidence the strategy beats SPY. It is evidence the harness had no
+// data. Such a window must be excluded from the binding rule entirely
+// (neither a beat nor a completed window), otherwise a bear-market
+// window like rolling-2018 (SPY −7%) gets credited as a "win" for
+// holding 100% cash, which is how a broken pipeline can manufacture a
+// positive verdict.
+//
+// Discriminator: `portfolioReturnPct` exactly 0 AND `turnoverPct`
+// absent-or-0. Rationale:
+//   - `swapCount` is NOT usable: the harness records a SwapEvent for
+//     notes-only rebalance decisions (swapOut/swapIn empty but
+//     decision.notes non-empty — see backtest-harness.ts, the
+//     `swaps.push` guard), so an all-cash run still accumulates a
+//     nonzero swapCount. Conversely swapCount===0 is sufficient but
+//     not necessary evidence of no trading.
+//   - `turnoverPct` is 0 iff totalTurnoverNotional is 0, i.e. not a
+//     single buy or sell executed — the direct trade-evidence signal —
+//     but it is optional on older result docs.
+//   - `portfolioReturnPct` is exactly 0 for an all-cash run (equity
+//     never leaves startCapital); a genuinely traded window landing on
+//     exactly 0.0000 is practically impossible.
+// Requiring BOTH signals absent is robust in both directions: any
+// nonzero return OR any nonzero turnover proves the window traded; a
+// window showing neither carries no trade evidence and must not
+// support a verdict.
+function isAllCashNoData(s: BacktestSummary | undefined): boolean {
+  if (!s || s.status !== 'done') return false;
+  const hasReturn = typeof s.portfolioReturnPct === 'number' && s.portfolioReturnPct !== 0;
+  const hasTurnover = typeof s.turnoverPct === 'number' && s.turnoverPct !== 0;
+  return !hasReturn && !hasTurnover;
+}
+
 function fmt(n: number | null | undefined, suffix = ''): string {
   if (n == null || !Number.isFinite(n)) return '—';
   return `${n.toFixed(2)}${suffix}`;
@@ -131,6 +168,11 @@ function row(s: BacktestSummary | undefined, label: string): string {
 
 function rollingRow(s: BacktestSummary | undefined, year: number): string {
   if (!s || s.status !== 'done') return `| ${year} | — | — | — | — |`;
+  if (isAllCashNoData(s)) {
+    // Never traded — render neither YES nor NO; this window is excluded
+    // from the ≥5/8 binding rule.
+    return `| ${year} | ${fmt(s.portfolioReturnPct)} | ${fmt(s.spyReturnPct)} | — | no data (all cash) |`;
+  }
   const beat = (s.excessReturnPct ?? 0) > 0 ? 'YES' : 'NO';
   return `| ${year} | ${fmt(s.portfolioReturnPct)} | ${fmt(s.spyReturnPct)} | ${fmt(s.excessReturnPct)} | ${beat} |`;
 }
@@ -145,9 +187,14 @@ function deriveVerdict(audit: AuditRow | null, results: Map<string, BacktestSumm
    *  rule version than the active one. Surfaced so the report can flag
    *  the v1-vs-v2 mix instead of silently aggregating it. */
   staleVersionWindows: string[];
+  /** Windows whose latest doc is `done` at the active version but shows
+   *  zero trade evidence (all cash — see isAllCashNoData). Excluded from
+   *  both rollingBeats and rollingDone; the full window landing here
+   *  forces PENDING. */
+  noDataWindows: string[];
 } {
   const full = results.get('full');
-  if (!audit || !full || !isDoneAtActiveVersion(full)) {
+  if (!audit || !full || !isDoneAtActiveVersion(full) || isAllCashNoData(full)) {
     return {
       verdict: 'PENDING LIVE-DATA RUN',
       rollingBeats: 0,
@@ -155,6 +202,7 @@ function deriveVerdict(audit: AuditRow | null, results: Map<string, BacktestSumm
       fullExcess: null,
       qqqDelta: null,
       staleVersionWindows: [],
+      noDataWindows: isAllCashNoData(full) ? ['full'] : [],
     };
   }
   const fullExcess = full.excessReturnPct ?? 0;
@@ -166,10 +214,17 @@ function deriveVerdict(audit: AuditRow | null, results: Map<string, BacktestSumm
   let beats = 0;
   let done = 0;
   const staleVersionWindows: string[] = [];
+  const noDataWindows: string[] = [];
   for (const w of ROLLING_WINDOWS) {
     const r = results.get(w);
     if (!r) continue;
     if (isDoneAtActiveVersion(r)) {
+      if (isAllCashNoData(r)) {
+        // Never traded — no trade evidence either way. Excluded from
+        // BOTH the numerator and the denominator of the ≥5/8 rule.
+        noDataWindows.push(w);
+        continue;
+      }
       done++;
       if ((r.excessReturnPct ?? 0) > 0) beats++;
     } else if (r.status === 'done') {
@@ -185,13 +240,14 @@ function deriveVerdict(audit: AuditRow | null, results: Map<string, BacktestSumm
       fullExcess,
       qqqDelta,
       staleVersionWindows,
+      noDataWindows,
     };
   }
 
   const beatsMajority = beats >= 5;
-  if (fullExcess > 0 && beatsMajority) return { verdict: 'SHIP', rollingBeats: beats, rollingDone: done, fullExcess, qqqDelta, staleVersionWindows };
-  if (fullExcess > 0 || beatsMajority) return { verdict: 'SHIP WITH CAVEATS', rollingBeats: beats, rollingDone: done, fullExcess, qqqDelta, staleVersionWindows };
-  return { verdict: "DON'T SHIP", rollingBeats: beats, rollingDone: done, fullExcess, qqqDelta, staleVersionWindows };
+  if (fullExcess > 0 && beatsMajority) return { verdict: 'SHIP', rollingBeats: beats, rollingDone: done, fullExcess, qqqDelta, staleVersionWindows, noDataWindows };
+  if (fullExcess > 0 || beatsMajority) return { verdict: 'SHIP WITH CAVEATS', rollingBeats: beats, rollingDone: done, fullExcess, qqqDelta, staleVersionWindows, noDataWindows };
+  return { verdict: "DON'T SHIP", rollingBeats: beats, rollingDone: done, fullExcess, qqqDelta, staleVersionWindows, noDataWindows };
 }
 
 function buildMarkdown(audit: AuditRow | null, results: Map<string, BacktestSummary>): string {
@@ -211,7 +267,9 @@ function buildMarkdown(audit: AuditRow | null, results: Map<string, BacktestSumm
   } else {
     const fullState = results.get('full');
     const fullStatus = isDoneAtActiveVersion(fullState)
-      ? `done (${ACTIVE_VERSION})`
+      ? isAllCashNoData(fullState)
+        ? `done (${ACTIVE_VERSION}) but NO DATA (all cash — never traded)`
+        : `done (${ACTIVE_VERSION})`
       : fullState?.status === 'done'
         ? `done (stale version ${resolveVersion(fullState)})`
         : 'PENDING';
@@ -220,6 +278,10 @@ function buildMarkdown(audit: AuditRow | null, results: Map<string, BacktestSumm
   if (v.staleVersionWindows.length > 0) {
     lines.push(``);
     lines.push(`> ⚠️ **Stale rule version detected.** ${v.staleVersionWindows.length} rolling window(s) have a \`done\` result from an older rule version and will NOT count toward the ≥5/8 binding rule until re-run under \`${ACTIVE_VERSION}\`: \`${v.staleVersionWindows.join('`, `')}\`. The cron (Phase 4r W1) will re-fire these automatically.`);
+  }
+  if (v.noDataWindows.length > 0) {
+    lines.push(``);
+    lines.push(`> ⚠️ **No-data (all-cash) window(s) detected.** ${v.noDataWindows.length} window(s) completed without executing a single trade (0% return, zero turnover — the ranking pipeline had no data for the period): \`${v.noDataWindows.join('`, `')}\`. These are EXCLUDED from the ≥5/8 binding rule — neither a beat nor a completed window. An all-cash window is not evidence the strategy beats SPY; fix the data pipeline and re-run these windows before a verdict can bind.`);
   }
   lines.push(``);
   lines.push(`**Generated:** ${new Date().toISOString()}`);
@@ -274,7 +336,9 @@ function buildMarkdown(audit: AuditRow | null, results: Map<string, BacktestSumm
   lines.push(`|------------:|-------:|------:|-------:|:---------:|`);
   for (let y = 2018; y <= 2025; y++) lines.push(rollingRow(results.get(`rolling-${y}`), y));
   lines.push(``);
-  lines.push(`**Rolling 1y windows that beat SPY:** ${v.rollingBeats}/${v.rollingDone}${v.rollingDone < 8 ? ` (${ROLLING_WINDOWS.length - v.rollingDone} still PENDING)` : ''}`);
+  const rollingNoData = v.noDataWindows.filter((w) => w !== 'full').length;
+  const rollingPendingCount = ROLLING_WINDOWS.length - v.rollingDone - rollingNoData;
+  lines.push(`**Rolling 1y windows that beat SPY:** ${v.rollingBeats}/${v.rollingDone}${rollingNoData > 0 ? ` (${rollingNoData} excluded: no data / all cash)` : ''}${v.rollingDone < 8 && rollingPendingCount > 0 ? ` (${rollingPendingCount} still PENDING)` : ''}`);
   lines.push(``);
 
   // § 4 — Style
