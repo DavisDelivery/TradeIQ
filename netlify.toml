@@ -144,6 +144,12 @@
   to = "/.netlify/functions/screens-board"
   status = 200
 
+# STOP-1 — observed stop breaches from the scheduled watcher.
+[[redirects]]
+  from = "/api/stop-watch"
+  to = "/.netlify/functions/stop-watch"
+  status = 200
+
 [[redirects]]
   from = "/api/target-board"
   to = "/.netlify/functions/target-board"

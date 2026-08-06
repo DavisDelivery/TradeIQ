@@ -14,6 +14,7 @@ const mockUseDeskStats = vi.fn();
 const mockUseEarningsRadar = vi.fn();
 const mockUseTargetBoard = vi.fn();
 const mockUseProphet = vi.fn();
+const mockUseStopWatch = vi.fn();
 
 vi.mock('../hooks/useBreakpoint.js', () => ({
   useBreakpoint: (...a) => mockUseBreakpoint(...a),
@@ -32,6 +33,10 @@ vi.mock('../hooks/useTargetBoard.js', () => ({ useTargetBoard: (...a) => mockUse
 // anyway, and has no assertions here.
 vi.mock('../components/desk/BrokerPanel.jsx', () => ({ BrokerPanel: () => null }));
 vi.mock('../hooks/useProphet.js', () => ({ useProphet: (...a) => mockUseProphet(...a) }));
+// STOP-1 — PositionsPanel reads the server-side stop watcher through a raw
+// useQuery; this harness omits the QueryClientProvider on purpose, so drive
+// the watcher's state directly.
+vi.mock('../hooks/useStopWatch.js', () => ({ useStopWatch: (...a) => mockUseStopWatch(...a) }));
 // The focus workspace's heavy children are covered by their own suites.
 vi.mock('../components/detail/AdvancedPriceChart.jsx', () => ({
   AdvancedPriceChart: ({ ticker }) => <div data-testid="price-chart">{ticker}</div>,
@@ -83,6 +88,10 @@ function seedDefaults() {
     data: { targets: [{ ticker: 'AAPL', tier: 'A', composite: 78 }] },
   });
   mockUseProphet.mockReturnValue({ data: { picks: [] } });
+  mockUseStopWatch.mockReturnValue({
+    breaches: [], breachByTradeId: {}, lastObserved: null,
+    stale: false, watching: true, error: null, isLoading: false,
+  });
 }
 
 beforeEach(() => {
@@ -172,6 +181,53 @@ describe('DeskView — desktop', () => {
     expect(within(row).getByText('+5.3%')).toBeInTheDocument();    // unrealized %
     expect(within(row).getByText('1.06R')).toBeInTheDocument();    // (210.55-200)/(200-190)
     expect(within(positions).queryByTestId('position-row-AMD')).not.toBeInTheDocument();
+  });
+
+  // STOP-1. The stop lived in a `title` tooltip, which iOS touch never shows —
+  // on the owner's primary device his own risk limit was unreadable.
+  it('positions rail: the recorded stop is visible text, not a tooltip', () => {
+    render(<DeskView />);
+    const row = within(screen.getByTestId('desk-positions')).getByTestId('position-row-AAPL');
+    expect(within(row).getByText('190.00')).toBeInTheDocument();
+    expect(row.querySelector('[title]')).toBeNull();
+  });
+
+  it('positions rail: a watcher-observed breach marks the row and counts in the header', () => {
+    mockUseStopWatch.mockReturnValue({
+      breaches: [{ tradeId: 'open-1', ticker: 'AAPL', stop: 190, firstObservedAt: '2026-07-10T18:32:00.000Z' }],
+      breachByTradeId: {
+        'open-1': { tradeId: 'open-1', ticker: 'AAPL', stop: 190, firstObservedAt: '2026-07-10T18:32:00.000Z' },
+      },
+      lastObserved: '2026-07-10T18:45:00.000Z',
+      stale: false, watching: true, error: null, isLoading: false,
+    });
+    render(<DeskView />);
+    const positions = screen.getByTestId('desk-positions');
+    const row = within(positions).getByTestId('position-row-AAPL');
+    expect(row).toHaveAttribute('data-breach', 'true');
+    // Phrased as an observation with its sample time — a 15-minute poll cannot
+    // claim the position was stopped out, only that it was seen at/below.
+    expect(within(row).getByText(/≤ stop — first seen 2:32 PM ET/)).toBeInTheDocument();
+    expect(within(positions).getByText(/1 at\/below stop/)).toBeInTheDocument();
+  });
+
+  it('positions rail: a stale watcher says so instead of showing a silent all-clear', () => {
+    mockUseStopWatch.mockReturnValue({
+      breaches: [], breachByTradeId: {}, lastObserved: '2026-07-10T12:00:00.000Z',
+      stale: true, watching: true, error: null, isLoading: false,
+    });
+    render(<DeskView />);
+    expect(screen.getByTestId('stop-watch-degraded')).toBeInTheDocument();
+  });
+
+  // The radar was fed watchTickers only, so a position you held but had not
+  // also starred could report earnings with no warning anywhere in the app.
+  it('earnings radar covers open positions, not just the watchlist', () => {
+    localStorage.setItem(LOG_KEY, JSON.stringify([
+      { id: 'open-2', ticker: 'NVDA', source: 'board', loggedAt: '2026-07-01T00:00:00.000Z', loggedPrice: 100, stop: 90 },
+    ]));
+    render(<DeskView />);
+    expect(mockUseEarningsRadar).toHaveBeenCalledWith(expect.arrayContaining(['NVDA']));
   });
 
   it('base rates render from closed trades with the insufficient-sample gate', () => {

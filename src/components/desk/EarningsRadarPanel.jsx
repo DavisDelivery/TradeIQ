@@ -33,7 +33,7 @@ export function EarningsRadarPanel({ radarByTicker, focusTicker, onFocus }) {
       </div>
       {rows.length === 0 ? (
         <div className="p-4 text-center text-[11px] font-mono text-neutral-600">
-          No upcoming reports on the watchlist.
+          No upcoming reports on the watchlist or in open positions.
         </div>
       ) : (
         <table className="w-full text-[11px] font-mono">
