@@ -192,7 +192,7 @@ export function computeMetrics(input: MetricsInput): PerformanceMetrics {
 
   // Information Coefficient — Spearman(composite, forward20d) per
   // rebalance, then averaged
-  const ic = computeInformationCoefficient(input.mlRows);
+  const { ic, icStdError, icWindows } = computeInformationCoefficient(input.mlRows);
 
   // Information Ratio — (portfolio return - benchmark return) / tracking error
   const ir = computeInformationRatio(equity, input.benchmarkBars, rfDaily);
@@ -214,6 +214,8 @@ export function computeMetrics(input: MetricsInput): PerformanceMetrics {
       ? +profitFactor.toFixed(4)
       : profitFactor,
     informationCoefficient: +ic.toFixed(4),
+    informationCoefficientSe: icStdError === null ? null : +icStdError.toFixed(4),
+    icWindows,
     informationRatio: +ir.toFixed(4),
     tradeCount: input.trades.length,
     rebalanceCount: new Set(input.trades.map((t) => t.rebalanceDate)).size,
@@ -221,7 +223,22 @@ export function computeMetrics(input: MetricsInput): PerformanceMetrics {
   };
 }
 
-function computeInformationCoefficient(rows: MLTrainingRow[]): number {
+function computeInformationCoefficient(rows: MLTrainingRow[]): {
+  ic: number;
+  /**
+   * Standard error of the mean per-rebalance IC (sd/sqrt(K)). AUDIT-1: this
+   * array was already built and then thrown away, so every registry row
+   * rendered a bare IC that could not be told apart from noise — lynch's
+   * 0.0011 read as "measured ≈ zero" when it was "unmeasurable". NOTE: K
+   * counts rebalances, but with 20d forward returns on sub-monthly cadences
+   * adjacent windows overlap, so the effective sample is smaller and this SE
+   * is a LOWER bound on the true uncertainty. Callers must not treat
+   * |ic| < 2·se as anything but noise (and even that is generous).
+   */
+  icStdError: number | null;
+  /** Number of per-rebalance Spearman windows the mean is over. */
+  icWindows: number;
+} {
   // Group by asOfDate (rebalance), compute Spearman per group, average
   const byDate = new Map<string, MLTrainingRow[]>();
   for (const r of rows) {
@@ -237,7 +254,14 @@ function computeInformationCoefficient(rows: MLTrainingRow[]): number {
     const forwards = group.map((r) => r.forward20dReturn ?? 0);
     ics.push(spearman(composites, forwards));
   }
-  return ics.length > 0 ? mean(ics) : 0;
+  if (ics.length === 0) return { ic: 0, icStdError: null, icWindows: 0 };
+  const m = mean(ics);
+  const se =
+    ics.length > 1
+      ? Math.sqrt(ics.reduce((a, x) => a + (x - m) ** 2, 0) / (ics.length - 1)) /
+        Math.sqrt(ics.length)
+      : null;
+  return { ic: m, icStdError: se, icWindows: ics.length };
 }
 
 function computeInformationRatio(
@@ -328,6 +352,8 @@ function emptyMetrics(): PerformanceMetrics {
     avgLossPct: 0,
     profitFactor: 0,
     informationCoefficient: 0,
+    informationCoefficientSe: null,
+    icWindows: 0,
     informationRatio: 0,
     tradeCount: 0,
     rebalanceCount: 0,

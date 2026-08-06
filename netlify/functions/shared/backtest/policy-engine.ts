@@ -128,6 +128,12 @@ export const DEFAULT_POLICY_CONFIG: PolicyConfig = {
 export interface PolicyTickerData {
   ticker: string;
   bars: FableBar[]; // full series, ascending, spanning warmup→endDate
+  /**
+   * AUDIT-1: was this ticker in the index at each checkpoint (aligned with
+   * PolicyInputs.checkpoints)? Present only when built from PIT history.
+   * Gates ENTRIES only — an open position may always be exited.
+   */
+  memberAtCheckpoint?: boolean[];
   /** insider txs known as of each checkpoint (index-aligned with checkpoints). */
   insiderByCheckpoint?: Array<FableInsiderTx[] | undefined>;
 }
@@ -385,6 +391,15 @@ export function runPolicyBacktest(inputs: PolicyInputs): PolicyResult {
       for (const ctx of ctxs) {
         const bi = ctx.dateToIdx.get(date);
         if (bi === undefined || bi + 1 < FABLE_CONSTANTS.MIN_BARS) continue;
+        // AUDIT-1: a name not in the index at this checkpoint is not scored,
+        // exactly as at live time (the live pool IS the current roster).
+        // Downstream this both blocks entries into not-yet-members and lets
+        // the topN rank-exit fire when a holding is deleted from the index —
+        // the same forced rotation the live board would produce. Ranks,
+        // percentiles and the rank-IC are therefore computed among actual
+        // members only. No mask (live window / uncovered universe) = allowed.
+        const cpi = cpOrigIdx.get(date) ?? -1;
+        if (ctx.t.memberAtCheckpoint && cpi >= 0 && !ctx.t.memberAtCheckpoint[cpi]) continue;
         const view = ctx.t.bars.slice(0, bi + 1);
         if (!evaluateFoundationGate(view).pass) continue;
         passers++;
@@ -437,6 +452,17 @@ export function runPolicyBacktest(inputs: PolicyInputs): PolicyResult {
         const p = pctlByTicker.get(pos.ticker);
         const ctx = ctxByTicker.get(pos.ticker)!;
         const close = ctx.closeByDate.get(date);
+        // AUDIT-1: a holding DELETED from the index leaves the board, so it
+        // is rotated out here — labelled 'rank-exit' (fell off the board),
+        // not 'gate-fail': recording index churn as a quality-gate failure
+        // would corrupt the exit-reason attribution this engine reports.
+        {
+          const cpi = cpOrigIdx.get(date) ?? -1;
+          if (ctx.t.memberAtCheckpoint && cpi >= 0 && !ctx.t.memberAtCheckpoint[cpi]) {
+            sellAt(pos, date, close ?? pos.lastClose, 'rank-exit');
+            continue;
+          }
+        }
         if (close === undefined) {
           // Series ended (delisting/merger)? If the ticker has no bars on or
           // after this checkpoint, exit at the last known close — never let a

@@ -14,6 +14,7 @@
 //     discipline); verified-empty caches fine.
 
 import { inIndex, SPY, type IndexTag } from '../universe';
+import { tickersInIndexOnDate, wasInIndexOnDate } from '../universe-history';
 import { getDailyBars, getFinnhubInsiderTransactionsWithStatus } from '../data-provider';
 import { pitCacheWrap } from '../pit-cache';
 import { evaluateFoundationGate, FABLE_CONSTANTS, type FableBar, type FableInsiderTx } from '../fable-scoring';
@@ -98,7 +99,6 @@ export interface LoadPolicyInputsResult {
 export async function loadPolicyInputs(opts: LoadPolicyInputsOpts): Promise<LoadPolicyInputsResult> {
   const { universe, config, warmupFrom } = opts;
   const log = opts.logger;
-  const entries = inIndex(universe);
 
   // Live-window guard (track-3 M1 lesson): a bar window ending today or
   // later is STILL GROWING — caching it would freeze a truncated series
@@ -130,6 +130,54 @@ export async function loadPolicyInputs(opts: LoadPolicyInputsOpts): Promise<Load
       )
     : monthEndCheckpoints(spyBars, config.startDate, config.endDate);
 
+  // --- Candidate pool (AUDIT-1, 2026-08-06).
+  // This used to be `inIndex(universe)` — TODAY'S index roster — for every
+  // run, including historical ones. That is survivorship bias plus
+  // index-addition bias in the favourable direction for a 52-week-high
+  // signal: names that later grew into the index were tradeable before
+  // they joined, and names that died were never candidates at all. Every
+  // fable-2 number produced before this fix, including the +28.01pp
+  // holdout, inherits that bias and none of them disclosed it.
+  //
+  // Historical runs now draw candidates from the UNION of point-in-time
+  // membership across the run's checkpoints (delisted members included —
+  // Polygon serves their bars), and each ticker carries a per-checkpoint
+  // membership mask the policy engine uses to refuse ENTRIES on dates the
+  // name was not in the index (exits stay allowed: you can always sell).
+  // Live windows keep the current roster — for them it is correct.
+  // If PIT history does not cover the window, we fall back to the current
+  // roster and SAY SO in a warning rather than failing the run: a biased
+  // run that declares its bias beats a silent one, and matches how the
+  // main engine stamps universeSurvivorshipCorrected.
+  const currentRoster = inIndex(universe);
+  let entries: Array<{ ticker: string }> = currentRoster;
+  let membershipSource: 'pit-history' | 'current-roster' = 'current-roster';
+  if (!liveWindow && checkpoints.length > 0) {
+    const union = new Set<string>();
+    let covered = true;
+    for (const cp of checkpoints) {
+      const members = tickersInIndexOnDate(universe, cp);
+      if (members === null) { covered = false; break; }
+      for (const m of members) union.add(m);
+    }
+    if (covered && union.size > 0) {
+      entries = [...union].sort().map((ticker) => ({ ticker }));
+      membershipSource = 'pit-history';
+    }
+  }
+  if (!liveWindow && membershipSource === 'current-roster') {
+    log?.warn?.('fable2_membership_not_pit', {
+      universe,
+      window: `${config.startDate}..${config.endDate}`,
+      note: 'PIT snapshots do not cover this window; candidates are TODAY\'S roster — survivorship-biased.',
+    });
+  }
+  log?.info?.('fable2_candidate_pool', {
+    source: membershipSource,
+    candidates: entries.length,
+    currentRoster: currentRoster.length,
+  });
+
   // --- Universe bars (one full series per ticker)
   let barFetchFailures = 0;
   const tickers: PolicyTickerData[] = (
@@ -150,6 +198,17 @@ export async function loadPolicyInputs(opts: LoadPolicyInputsOpts): Promise<Load
       }
     })
   ).filter((t): t is PolicyTickerData => t !== null);
+
+  // Per-checkpoint membership mask (PIT source only — under the fallback
+  // the mask would be all-true and is omitted so the engine's default
+  // "unknown = allowed" reads honestly as "membership unknown").
+  if (membershipSource === 'pit-history') {
+    for (const t of tickers) {
+      t.memberAtCheckpoint = checkpoints.map(
+        (cp) => wasInIndexOnDate(t.ticker, universe, cp) === true,
+      );
+    }
+  }
 
   // --- Insider: (checkpoint × gate-passer) pairs only.
   let insiderFetches = 0;
