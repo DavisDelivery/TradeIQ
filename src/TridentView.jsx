@@ -8,6 +8,7 @@ import { StockDetailPanel } from './components/detail/StockDetailPanel.jsx';
 import { AdvancedPriceChart } from './components/detail/AdvancedPriceChart.jsx';
 import { TRIDENT_LEGEND } from './components/detail/TridentPillarsSection.jsx';
 import { useLiveRows, useLiveQuotes } from './hooks/useLiveQuotes.js';
+import { Ticker } from './components/Ticker.jsx';
 
 const UNIVERSES = [
   { id: 'sp500', label: 'S&P 500' },
@@ -54,7 +55,11 @@ function RegimeCard({ title, symbol, r, quote }) {
     <div className="rounded-xl border border-neutral-800 bg-neutral-900/60 p-3">
       <button className="flex w-full items-center justify-between gap-2 text-left" onClick={() => setOpen(!open)}>
         <div className="flex items-center gap-2">
-          <span className="text-sm font-semibold text-neutral-100">{title}</span>
+          <span className="text-sm font-semibold text-neutral-100">
+            {title.split(' (')[0]}{' ('}
+            <Ticker symbol={symbol} board="trident" className="text-inherit" />
+            {')'}
+          </span>
           <span className={`rounded border px-1.5 py-0.5 text-[10px] font-medium ${TREND_STYLE[r.trend?.state] ?? ''}`}>
             {r.trend?.state}
           </span>
@@ -129,7 +134,7 @@ function TridentCard({ row, rank, onOpen }) {
             >
               {row.ticker}
             </button>
-            <span className="truncate text-xs text-neutral-500">{row.name}</span>
+            <Ticker symbol={row.ticker} row={row} board="trident" className="truncate text-xs text-neutral-500">{row.name}</Ticker>
             {row.entry?.kind && row.entry.kind !== 'NONE' && (
               <span className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${row.entry.kind === 'BREAKOUT' ? 'bg-sky-500/15 text-sky-300' : 'bg-emerald-500/15 text-emerald-300'}`}>
                 {row.entry.kind}

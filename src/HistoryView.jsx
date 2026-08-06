@@ -11,6 +11,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { Clock, AlertCircle } from 'lucide-react';
 import { useSnapshotHistory } from './hooks/useSnapshotHistory.js';
+import { Ticker } from './components/Ticker.jsx';
 
 const BOARDS = [
   { id: 'target-board', label: 'Target Board' },
@@ -329,7 +330,7 @@ function pickColumnsForBoard(board, results) {
   const tickerCol = {
     key: 'ticker',
     label: 'Ticker',
-    format: (r) => <span className="text-emerald-400">{r?.ticker ?? '—'}</span>,
+    format: (r) => <Ticker symbol={r?.ticker} row={r} board="history" className="text-emerald-400" />,
   };
 
   switch (board) {

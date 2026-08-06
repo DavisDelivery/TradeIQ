@@ -47,8 +47,8 @@ describe('RelativeStrengthChart', () => {
     renderChart({ ticker: 'AAPL' });
     await waitFor(() => expect(screen.getByText('Relative Strength')).toBeInTheDocument());
     // Latest-value summary line in the header carries both labels.
-    await waitFor(() => expect(screen.getByText(/vs SPY/i)).toBeInTheDocument());
-    expect(screen.getByText(/vs XLK/i)).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByTestId('ticker-link-SPY')).toBeInTheDocument());
+    expect(screen.getByTestId('ticker-link-XLK')).toBeInTheDocument();
   });
 
   it('renders a no-data state with the _reason from the bundle', async () => {
@@ -73,7 +73,7 @@ describe('RelativeStrengthChart', () => {
       }),
     }));
     renderChart({ ticker: 'X' });
-    await waitFor(() => expect(screen.getByText(/vs SPY/i)).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByTestId('ticker-link-SPY')).toBeInTheDocument());
     expect(screen.queryByText(/vs XLK/i)).not.toBeInTheDocument();
   });
 });

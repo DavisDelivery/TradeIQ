@@ -24,6 +24,7 @@ import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceL
 import { AlertTriangle } from 'lucide-react';
 import { useStockDetail } from '../../hooks/useStockDetail.js';
 import { chartTheme } from '../../lib/chartTheme.js';
+import { Ticker } from '../Ticker.jsx';
 
 // Resolved per render so the pair follows the active theme (see chartTheme).
 const SPY_COLOR = () => chartTheme().up;      // broad-market comparison
@@ -96,13 +97,13 @@ export function RelativeStrengthChart({ ticker }) {
         {latest && (
           <div className="flex gap-3 text-[11px] font-mono">
             {latest.vsSpy != null && Number.isFinite(latest.vsSpy) && (
-              <div style={{ color: SPY_COLOR }}>
-                vs SPY {latest.vsSpy > 0 ? '+' : ''}{latest.vsSpy.toFixed(1)}%
+              <div style={{ color: SPY_COLOR() }}>
+                vs <Ticker symbol="SPY" board="peer" className="text-inherit" /> {latest.vsSpy > 0 ? '+' : ''}{latest.vsSpy.toFixed(1)}%
               </div>
             )}
             {latest.vsSector != null && Number.isFinite(latest.vsSector) && sectorEtf && (
-              <div style={{ color: SECTOR_COLOR }}>
-                vs {sectorEtf} {latest.vsSector > 0 ? '+' : ''}{latest.vsSector.toFixed(1)}%
+              <div style={{ color: SECTOR_COLOR() }}>
+                vs <Ticker symbol={sectorEtf} board="peer" className="text-inherit" /> {latest.vsSector > 0 ? '+' : ''}{latest.vsSector.toFixed(1)}%
               </div>
             )}
           </div>
@@ -169,7 +170,7 @@ export function RelativeStrengthChart({ ticker }) {
                 type="monotone"
                 dataKey="vsSpy"
                 name="vs SPY"
-                stroke={SPY_COLOR}
+                stroke={SPY_COLOR()}
                 strokeWidth={1.5}
                 dot={false}
                 connectNulls
@@ -180,7 +181,7 @@ export function RelativeStrengthChart({ ticker }) {
                   type="monotone"
                   dataKey="vsSector"
                   name={`vs ${sectorEtf}`}
-                  stroke={SECTOR_COLOR}
+                  stroke={SECTOR_COLOR()}
                   strokeWidth={1.5}
                   dot={false}
                   connectNulls

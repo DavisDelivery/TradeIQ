@@ -188,7 +188,7 @@ export const SentimentView = ({ universe = 'sp500' }) => {
                   </div>
                 </div>
                 <div className="mt-2 pt-2 border-t border-neutral-800/60 ml-9">
-                  <FundamentalsStrip ticker={r.ticker} showExpandIcon={false} />
+                  <FundamentalsStrip ticker={r.ticker} showExpandIcon onExpand={() => setSelected(r)} />
                 </div>
               </div>
             </div>

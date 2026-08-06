@@ -13,6 +13,7 @@
 import React from 'react';
 import { ShieldAlert } from 'lucide-react';
 import { useStopWatch } from '../hooks/useStopWatch.js';
+import { Ticker } from './Ticker.jsx';
 
 export function StopBreachBanner({ onOpenDesk }) {
   const { breaches } = useStopWatch();
@@ -20,23 +21,32 @@ export function StopBreachBanner({ onOpenDesk }) {
 
   const tickers = [...new Set(breaches.map((b) => b.ticker))];
   return (
-    <button
-      type="button"
+    <div
+      role="button"
+      tabIndex={0}
       data-testid="stop-breach-banner"
       onClick={() => onOpenDesk?.()}
-      className="w-full flex items-center gap-2 px-3 sm:px-6 py-2 border-b border-rose-500/30 bg-rose-500/10 text-left text-[12px] font-mono text-rose-300 hover:bg-rose-500/15 transition-colors"
+      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpenDesk?.(); } }}
+      className="w-full flex items-center gap-2 px-3 sm:px-6 py-2 border-b border-rose-500/30 bg-rose-500/10 text-left text-[12px] font-mono text-rose-300 hover:bg-rose-500/15 transition-colors cursor-pointer"
     >
       <ShieldAlert className="h-3.5 w-3.5 flex-shrink-0" aria-hidden="true" />
       <span className="min-w-0 truncate">
         {/* "Observed at or below", never "stopped out" — the watcher samples
             every 15 minutes, so it knows where price was when it looked and
             nothing at all about what happened in between. */}
-        <span className="font-semibold">{tickers.join(', ')}</span>{' '}
+        <span className="font-semibold">
+          {tickers.map((t, i) => (
+            <React.Fragment key={t}>
+              {i > 0 && ', '}
+              <Ticker symbol={t} board="desk" className="text-inherit" />
+            </React.Fragment>
+          ))}
+        </span>{' '}
         observed at or below your stop
       </span>
       <span className="ml-auto flex-shrink-0 text-[10px] uppercase tracking-widest text-rose-400/70">
         Positions →
       </span>
-    </button>
+    </div>
   );
 }

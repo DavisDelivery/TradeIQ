@@ -286,7 +286,7 @@ export const InsiderBoardView = ({ universe = 'all' }) => {
                         glance. Lazy-fetched via intersection observer. */}
                     <tr data-testid={`insider-strip-row-${r.ticker}`} className="bg-neutral-950/40">
                       <td colSpan={10} className="px-3 py-1.5">
-                        <FundamentalsStrip ticker={r.ticker} showExpandIcon={false} />
+                        <FundamentalsStrip ticker={r.ticker} showExpandIcon onExpand={() => setSelected(r)} />
                       </td>
                     </tr>
                     {isOpen && (

@@ -3,6 +3,7 @@ import { TickerDetailModal } from './components/detail/TickerDetailModal.jsx';
 import { Search, FileText, AlertTriangle, ExternalLink, Info } from 'lucide-react';
 import { useTrendExposure } from './hooks/useTrendExposure.js';
 import { VerdictChip } from './components/VerdictChip.jsx';
+import { Ticker } from './components/Ticker.jsx';
 
 // TREND EXPOSURE — "who is exposed to this phrase?"
 //
@@ -266,7 +267,9 @@ export const TrendExposureView = () => {
                   {data.filers.map((f) => (
                     <tr key={`${f.cik ?? f.name}`} className="border-b border-neutral-900 last:border-0">
                       <td className="px-3 py-2">
-                        <span className="text-neutral-200">{f.name}</span>
+                        {f.ticker
+                          ? <Ticker symbol={f.ticker} board="trend" className="text-neutral-200">{f.name}</Ticker>
+                          : <span className="text-neutral-200">{f.name}</span>}
                         {f.ticker && (
                           <button
                             onClick={(e) => { e.stopPropagation(); setSelected({ ticker: f.ticker }); }}

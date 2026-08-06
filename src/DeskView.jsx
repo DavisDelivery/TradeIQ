@@ -37,6 +37,7 @@ import { PositionsPanel } from './components/desk/PositionsPanel.jsx';
 import { BrokerPanel } from './components/desk/BrokerPanel.jsx';
 import { BaseRatesPanel } from './components/desk/BaseRatesPanel.jsx';
 import { EarningsRadarPanel } from './components/desk/EarningsRadarPanel.jsx';
+import { Ticker } from './components/Ticker.jsx';
 
 export function DeskView() {
   const { isDesktop } = useBreakpoint();
@@ -105,7 +106,7 @@ export function DeskView() {
   const focus = focusTicker ? (
     <div data-testid="desk-focus">
       <div className="flex items-baseline gap-2 mb-2">
-        <span className="text-lg font-semibold font-mono text-neutral-100">{focusTicker}</span>
+        <Ticker symbol={focusTicker} board="desk" className="text-lg font-semibold font-mono text-neutral-100" />
         {statsByTicker[focusTicker]?.name && (
           <span className="text-[11px] text-neutral-500 truncate">{statsByTicker[focusTicker].name}</span>
         )}

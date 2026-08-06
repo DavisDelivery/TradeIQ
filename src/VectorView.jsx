@@ -7,6 +7,7 @@ import { VerdictChip } from './components/VerdictChip.jsx';
 import { useRegime } from './hooks/useRegime.js';
 import { fetchWithRetry } from './lib/validateResponse.js';
 import { queryKeys } from './lib/queryKeys.js';
+import { Ticker } from './components/Ticker.jsx';
 
 // VECTOR — event-driven library board (reports/vector/design.md).
 // Live event feed (newest first) + a ticker evaluator that issues the
@@ -225,7 +226,7 @@ export const VectorView = () => {
           {evaluation.data?.f && (
             <div className="space-y-3">
               <div className="flex items-center gap-3 flex-wrap">
-                <span className="font-serif font-bold text-2xl">{evaluation.data.ticker}</span>
+                <Ticker symbol={evaluation.data.ticker} board="vector" className="font-serif font-bold text-2xl text-neutral-100" />
                 <QuadrantBadge q={evaluation.data.quadrant} />
                 <span className="text-[10px] font-mono text-neutral-500 uppercase">{evaluation.data.hygiene.sizeBucket}</span>
                 <button

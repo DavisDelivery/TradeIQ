@@ -9,6 +9,7 @@
 
 import React from 'react';
 import { useLiveQuotes } from '../../hooks/useLiveQuotes.js';
+import { Ticker } from '../Ticker.jsx';
 
 export const TAPE_TICKERS = ['SPY', 'QQQ', 'IWM', 'DIA'];
 
@@ -51,7 +52,7 @@ export function TapeStrip({ regime, enabled = true }) {
         const signed = typeof pct === 'number' && Number.isFinite(pct);
         return (
           <div key={t} className="flex items-baseline gap-1.5 flex-shrink-0" data-testid={`tape-${t}`}>
-            <span className="text-neutral-500 uppercase tracking-wider">{t}</span>
+            <Ticker symbol={t} board="desk" className="text-neutral-500 uppercase tracking-wider" />
             <span className="text-neutral-200 tabular-nums">
               {q?.price != null ? q.price.toFixed(2) : '—'}
             </span>

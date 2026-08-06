@@ -17,6 +17,7 @@ import { StockDetailPanel } from './components/detail/StockDetailPanel.jsx';
 import { useGenerateNarrative } from './hooks/useGenerateNarrative.js';
 import { FundamentalsStrip } from './components/detail/FundamentalsStrip.jsx';
 import { chartTheme } from './lib/chartTheme.js';
+import { Ticker } from './components/Ticker.jsx';
 
 const UNIVERSE_OPTIONS = [
   { id: 'largecap', label: 'Large Cap', desc: 'S&P 500 + NDX + Dow (~230)' },
@@ -268,7 +269,7 @@ const ProphetRow = ({ pick, expanded, onToggle, onOpen }) => {
                 >
                   {pick.ticker}
                 </button>
-                <span className="text-[11px] text-neutral-500 truncate">{pick.name}</span>
+                <Ticker symbol={pick.ticker} row={pick} board="prophet" className="text-[11px] text-neutral-500 truncate">{pick.name}</Ticker>
                 <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 text-[9px] font-mono uppercase tracking-wider border ${convictionColor}`}>
                   <Zap className="h-2.5 w-2.5" />
                   {pick.signal}
