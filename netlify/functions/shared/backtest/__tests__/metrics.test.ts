@@ -197,3 +197,47 @@ describe('computeMetrics — synthetic equity curves', () => {
     expect(m.informationCoefficient).toBeCloseTo(1, 4);
   });
 });
+
+// AUDIT-1 — the IC must carry its uncertainty. The per-rebalance IC array
+// was computed and then discarded, so the registry rendered bare ICs like
+// 0.0011 that could not be told apart from noise.
+import { computeMetrics as _cm } from '../metrics';
+describe('informationCoefficientSe (AUDIT-1)', () => {
+  const row = (asOfDate: string, ticker: string, composite: number, fwd: number) => ({
+    asOfDate, ticker, composite, forward20dReturn: fwd,
+    layers: {}, universe: 'sp500', board: 'target',
+  }) as any;
+  const base = {
+    initialCapital: 100_000,
+    dailyEquity: [
+      { date: '2024-01-02', value: 100_000 },
+      { date: '2024-01-03', value: 100_500 },
+      { date: '2024-01-04', value: 101_000 },
+    ],
+    trades: [],
+    benchmarkBars: [],
+    attribution: [],
+    startDate: '2024-01-02',
+    endDate: '2024-01-04',
+  } as any;
+
+  it('reports sd/sqrt(K) over the per-rebalance ICs, and the window count', () => {
+    const rows = [
+      // Two rebalances with OPPOSITE rank orderings → ICs +1 and −1,
+      // mean 0, sd sqrt(2), se = sqrt(2)/sqrt(2) = 1.
+      row('2024-01-31', 'A', 3, 0.03), row('2024-01-31', 'B', 2, 0.02), row('2024-01-31', 'C', 1, 0.01),
+      row('2024-02-29', 'A', 3, 0.01), row('2024-02-29', 'B', 2, 0.02), row('2024-02-29', 'C', 1, 0.03),
+    ];
+    const m = _cm({ ...base, mlRows: rows });
+    expect(m.informationCoefficient).toBe(0);
+    expect(m.icWindows).toBe(2);
+    expect(m.informationCoefficientSe).toBe(1);
+  });
+
+  it('is null with a single window — one observation has no dispersion', () => {
+    const rows = [row('2024-01-31', 'A', 3, 0.03), row('2024-01-31', 'B', 2, 0.02), row('2024-01-31', 'C', 1, 0.01)];
+    const m = _cm({ ...base, mlRows: rows });
+    expect(m.icWindows).toBe(1);
+    expect(m.informationCoefficientSe).toBeNull();
+  });
+});

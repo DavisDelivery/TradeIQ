@@ -175,6 +175,14 @@ export interface PerformanceMetrics {
   avgLossPct: number;
   profitFactor: number;
   informationCoefficient: number; // mean Spearman(composite, fwd20dRet)
+  /**
+   * sd/sqrt(K) of the per-rebalance ICs (AUDIT-1). Null when <2 windows.
+   * Lower bound on true uncertainty (overlapping forward windows); a bare
+   * IC without this is uninterpretable and the UI must not render one.
+   */
+  informationCoefficientSe?: number | null;
+  /** Per-rebalance Spearman windows behind the mean IC. */
+  icWindows?: number;
   informationRatio: number; // (port - bench) / tracking error
   tradeCount: number;
   rebalanceCount: number;
