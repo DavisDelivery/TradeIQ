@@ -287,8 +287,8 @@ function monthEnds(fromYearMonth: string, toYearMonth: string): string[] {
   return out;
 }
 
-async function backfillRussell2kHistory(): Promise<Snapshot[]> {
-  const dates = monthEnds('2022-01', '2026-04');
+async function backfillRussell2kHistory(toYearMonth: string): Promise<Snapshot[]> {
+  const dates = monthEnds('2022-01', toYearMonth);
   const out: Snapshot[] = [];
   for (const monthEnd of dates) {
     // iShares only archives on trading days. If the month-end falls on
@@ -445,7 +445,7 @@ const NDX_SEED_DATE = '${meta.generatedAt}';
 // ---------------------------------------------------------------------------
 
 export const UNIVERSE_HISTORY: UniverseSnapshot[] = [
-${sorted.map((s) => `  { date: '${s.date}', index: '${s.index}', tickers: ${JSON.stringify(s.tickers)} },`).join('\n')}
+${sorted.map((s) => `  { date: '${s.date}', index: '${s.index}', tickers: ${JSON.stringify([...new Set(s.tickers)])} },`).join('\n')}
   { date: NDX_SEED_DATE, index: 'ndx', tickers: tickersTaggedWith('ndx') },
 ];
 
@@ -556,9 +556,32 @@ async function main(): Promise<void> {
   snapshots.push(...sp500History);
 
   // 5. iShares IWM historical → Russell 2000
-  console.log('[iwm] backfilling Russell 2000 historical…');
-  const russell = await backfillRussell2kHistory();
+  // Same dynamic bound as sp500: prior month-end of `today`, so each
+  // monthly re-run grows the backfill by one month (per the runbook).
+  console.log(`[iwm] backfilling Russell 2000 historical 2022-01 → ${sp500EndYM}…`);
+  const russell = await backfillRussell2kHistory(sp500EndYM);
   snapshots.push(...russell);
+
+  // 5b. iShares IWM current → Russell 2000 current snapshot, paralleling
+  // the SSGA SPY/DIA current snapshots. Probe from today backwards to the
+  // nearest trading day and bucket at the actual as-of date probed.
+  for (let rollback = 0; rollback < 5; rollback++) {
+    const probe = new Date(`${today}T00:00:00Z`);
+    probe.setUTCDate(probe.getUTCDate() - rollback);
+    const probeIso = probe.toISOString().slice(0, 10);
+    if (probeIso.slice(0, 7) === sp500EndYM) break; // backfill already covers it
+    try {
+      const result = await fetchIwmHoldingsCsv(probeIso);
+      if (result.length >= 100) {
+        snapshots.push({ date: probeIso, index: 'russell2k', tickers: result.sort() });
+        console.log(`[iwm current] ${result.length} tickers as of ${probeIso}`);
+        break;
+      }
+    } catch (err) {
+      console.log(`[iwm current ${probeIso}] fetch error: ${(err as Error).message}; continuing`);
+    }
+    await new Promise((r) => setTimeout(r, 250));
+  }
 
   // 6. NDX — Invesco QQQ blocked from this env; fall back to universe.ts seed
   ndxNote = 'BLOCKED — Invesco SPA-only at last run; falls back to universe.ts seed (curated subset, not authoritative)';
