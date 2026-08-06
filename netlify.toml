@@ -40,6 +40,16 @@
 # Anthropic-backed generators + serial bar fetchers — all can exceed the
 # 10s default and die with no response (same class as the vector-evaluate
 # hang; audit 2026-07-15).
+# Trend scanner sweeps ~40 consumer names, each costing a Wikipedia article
+# resolve, a 90-day pageview pull and a Quiver off-exchange call, plus one
+# Firestore read of the recorded mention history. Same class as trend-exposure
+# above, times forty. The study's own post-mortem lists "no function timeout"
+# as a defect it caught before merge last time — a 10s kill here surfaces as a
+# 502, and 502 IS in fetchWithRetry's retry list, so the failure amplifies
+# instead of stopping.
+[functions."trend-scanner"]
+  timeout = 26
+
 [functions."chart-analysis"]
   timeout = 26
 
@@ -190,6 +200,15 @@
 [[redirects]]
   from = "/api/camillo-research"
   to = "/.netlify/functions/camillo-research"
+  status = 200
+
+# TREND SCANNER — step 1 of the workflow: what CHANGED this week, swept across
+# the consumer watchlist. Trend-first, unlike every other Camillo surface,
+# which needs you to bring a ticker. Returns an ALPHABETICAL list, never a
+# ranking — see shared/trend-detect.ts and reports/trend/social-arb-study.md.
+[[redirects]]
+  from = "/api/trend-scanner"
+  to = "/.netlify/functions/trend-scanner"
   status = 200
 
 # DIAG — does this Quiver plan include the SOCIAL datasets (WSB, twitter,

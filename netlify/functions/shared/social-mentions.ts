@@ -288,6 +288,52 @@ export async function readMentionSnapshot(date: string, filter = 'all-stocks'): 
 }
 
 /**
+ * Read the last `days` recorded days, newest first, skipping days that were
+ * never written.
+ *
+ * The header of this file says there is deliberately no range reader "until
+ * enough days have accumulated to be worth reading". That day is arriving:
+ * `trend-detect.ts` needs a mention SERIES to compare a recent window against
+ * a baseline, and the only place that series can come from is the docs this
+ * module has been writing since the snapshot cron went live.
+ *
+ * It reads by CONSTRUCTED DOC ID rather than by query, so it needs no
+ * composite index and costs one `getAll` round trip. Missing days are simply
+ * absent from the result — a day the cron did not run is not a day with no
+ * chatter, and the caller is given the count so it can refuse to compute on
+ * too thin a history.
+ */
+export async function readMentionHistory(
+  days: number,
+  filter = 'all-stocks',
+  asOf: string = new Date().toISOString().slice(0, 10),
+): Promise<MentionSnapshot[]> {
+  const n = Math.max(1, Math.floor(days));
+  const db = getAdminDb();
+  const base = Date.parse(`${asOf}T00:00:00Z`);
+  const ids: string[] = [];
+  for (let i = 0; i < n; i++) {
+    const d = new Date(base - i * 86_400_000).toISOString().slice(0, 10);
+    ids.push(`${d}_${filter}`);
+  }
+  const refs = ids.map((id) => db.collection(MENTION_COLLECTION).doc(id));
+  const docs = await db.getAll(...refs);
+  const out: MentionSnapshot[] = [];
+  for (const doc of docs) {
+    if (!doc.exists) continue;
+    const d = doc.data() as any;
+    out.push({
+      date: d.date, filter: d.filter, available: true, rows: d.rows ?? [],
+      floor: d.floor ?? null, reason: null, fetchedAt: d.fetchedAt,
+    });
+  }
+  // Newest first regardless of the order Firestore returns them in.
+  out.sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
+  log.info('mention_history_read', { requested: n, found: out.length });
+  return out;
+}
+
+/**
  * Resolve one ticker against a snapshot, keeping the three states distinct.
  * Pure — takes the snapshot rather than fetching, so it is trivially testable.
  */

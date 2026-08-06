@@ -30,7 +30,7 @@ import {
   type AppRatingObservation,
 } from './shared/social-mentions';
 import { fetchAppRating } from './shared/app-ratings';
-import { getFinvizUniverseSnapshot, type FinvizRow } from './shared/finviz';
+import { consumerWatchlist } from './shared/consumer-universe';
 import { getTickerName } from './shared/ticker-reference';
 import { logger } from './shared/logger';
 
@@ -49,21 +49,11 @@ const APP_POLL_DELAY_MS = 1200;
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-/**
- * The consumer names worth tracking: the same sector filter the Camillo screen
- * uses, biggest float first so the list is stable day to day. Stability matters
- * more than coverage here — a set that churns produces a ragged panel where
- * most tickers have two observations and none has a series.
- */
-async function consumerWatchlist(limit: number): Promise<FinvizRow[]> {
-  const snap = await getFinvizUniverseSnapshot('russell2k').catch(() => null);
-  const rows: FinvizRow[] = snap?.rows ?? [];
-  return rows
-    .filter((r) => r.sector === 'Consumer Cyclical' || r.sector === 'Consumer Defensive')
-    .filter((r) => typeof r.marketCapM === 'number' && r.marketCapM > 0)
-    .sort((a, b) => (b.marketCapM ?? 0) - (a.marketCapM ?? 0))
-    .slice(0, limit);
-}
+// The watchlist definition moved to `shared/consumer-universe.ts` when the
+// trend-detect pass became a second caller. Both must read the SAME list: this
+// job records the mention and app-rating observations, and the detect pass
+// reads them back — two drifting copies would silently lose a name's history
+// on the day the lists disagreed.
 
 export const handler = schedule(CRON, async () => {
   const log = logger.child({ fn: 'snapshot-social', schedule: CRON });
@@ -90,7 +80,10 @@ export const handler = schedule(CRON, async () => {
     // wrote, so it is caught rather than allowed to propagate.
     let appRows = 0;
     try {
-      const watchlist = await consumerWatchlist(APP_POLL_LIMIT);
+      // Null means the universe feed failed — NOT that there are no consumer
+      // names. Polling an empty list would write a zero-row app-rating day
+      // into a history that can never be corrected.
+      const watchlist = (await consumerWatchlist(APP_POLL_LIMIT)) ?? [];
       const obs: AppRatingObservation[] = [];
       for (const row of watchlist) {
         const name = await getTickerName(row.ticker).catch(() => null);
