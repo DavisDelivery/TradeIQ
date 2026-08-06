@@ -23,7 +23,6 @@ import { useRegime } from './hooks/useRegime.js';
 import { useLiveQuotes } from './hooks/useLiveQuotes.js';
 import { useDeskStats } from './hooks/useDeskStats.js';
 import { useEarningsRadar } from './hooks/useEarningsRadar.js';
-import { useTargetBoard } from './hooks/useTargetBoard.js';
 import { useProphet } from './hooks/useProphet.js';
 import { readWatchlist } from './watchlist.js';
 import { readLog } from './tradeLog.js';
@@ -81,13 +80,13 @@ export function DeskView() {
   // but had not also starred reported with no warning at all.
   const { radarByTicker } = useEarningsRadar(quoteTickers);
 
-  // Signal chips from the already-fetched board caches (shared React
-  // Query entries with the board views — enabled:true, snapshot-first).
-  const { data: targetData } = useTargetBoard('sp500');
+  // Signal chips from the already-fetched prophet board cache. The target
+  // leg was removed when that board retired (AUDIT-1: −74.2pp, negative IC
+  // — a chip derived from it was a recommendation wearing a costume).
   const { data: prophetData } = useProphet('largecap');
   const signalMap = useMemo(
-    () => buildSignalMap(targetData, prophetData),
-    [targetData, prophetData],
+    () => buildSignalMap(undefined, prophetData),
+    [prophetData],
   );
 
   // ── modules ─────────────────────────────────────────────────────────

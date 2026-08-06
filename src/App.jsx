@@ -13,8 +13,6 @@ import {
   PolarGrid, PolarAngleAxis, PolarRadiusAxis, Radar, ResponsiveContainer,
   XAxis, YAxis, Tooltip, Cell, ReferenceLine, CartesianGrid, Legend
 } from 'recharts';
-import { WilliamsView } from './WilliamsView.jsx';
-import { LynchView } from './LynchView.jsx';
 import { CatalystView } from './CatalystView.jsx';
 import { ChartView } from './ChartView.jsx';
 import { JournalView } from './JournalView.jsx';
@@ -27,14 +25,12 @@ import { FreshnessPill } from './components/FreshnessPill.jsx';
 import { readLog, logTrade, removeTrade, computeForwardReturns } from './tradeLog.js';
 import { useSortable, SortableTh } from './lib/useSortable.jsx';
 import { captureException } from './lib/sentry.js';
-import { TargetBoardView, LiveTargetBoard } from './TargetBoardView.jsx';
 import { DeskView } from './DeskView.jsx';
 import { RegimeView } from './RegimeView.jsx';
 import { AnalystsView } from './AnalystsView.jsx';
 import { AlertsView } from './AlertsView.jsx';
 import { EngineTestView } from './EngineTestView.jsx';
 import { EarningsPlaysView } from './EarningsView.jsx';
-import { FableView } from './FableView.jsx';
 import { TridentView } from './TridentView.jsx';
 import { OptionsFlowView } from './OptionsFlowView.jsx';
 import { SettingsView } from './SettingsView.jsx';
@@ -57,9 +53,7 @@ import { DesktopShell } from './layout/DesktopShell.jsx';
 import { RegimeStrip } from './layout/RegimeStrip.jsx';
 import { MobileDrawer } from './layout/MobileDrawer.jsx';
 import { CrossesView } from './CrossesView.jsx';
-import { SentimentView } from './SentimentView.jsx';
 import { ScreensView } from './ScreensView.jsx';
-import { TrendExposureView } from './TrendExposureView.jsx';
 import { ForwardTestView } from './ForwardTestView.jsx';
 
 
@@ -81,9 +75,13 @@ const VIEWS = [
   // positions/base rates. Same VIEWS entry renders in the mobile TopBar
   // scroller AND the 4k Sidebar (Phase 4k single source of truth).
   { id: 'desk', label: 'Desk', shortLabel: 'Desk', icon: Monitor },
-  // FABLE — Claude's own board (reports/fable/design.md). PENDING chip
-  // until the pre-committed backtest lands; then the registry decides.
-  { id: 'fable', label: 'FABLE', shortLabel: 'FABLE', icon: Sparkles },
+  // RETIRED (owner decision, 2026-08-06, on AUDIT-1 evidence): fable,
+  // target board, williams, lynch, sentiment, trend. Measured losses of
+  // 73-101pp vs SPY or structural defects (coincident signal, failed
+  // placebo). Their views remain in src/ and their read endpoints stay
+  // deployed; the cron TRIGGERS moved to netlify/functions-retired/ so
+  // the scans stop burning provider quota. To revive a board: move its
+  // scan-* triggers back and re-add its VIEWS entry + router branch.
   // TRIDENT — near-term F×T×I picker + NQ/SPX regime panel
   // (reports/trident/design.md). Labelled screener until the
   // pre-committed backtest stamps a verdict. Occupies VECTOR's old slot.
@@ -120,19 +118,14 @@ const VIEWS = [
   // section alongside Williams + Lynch. It stays in VIEWS (still
   // reachable as a screener); its VerdictChip now renders NO VALIDATED
   // EDGE automatically from verdicts.ts. FIX-2 (earnings) is the product.
-  { id: 'board', label: 'Target Board', shortLabel: 'Board', icon: Target, section: 'unvalidated' },
-  { id: 'williams', label: 'Williams', shortLabel: 'Williams', icon: Activity, section: 'unvalidated' },
-  { id: 'lynch', label: 'Lynch', shortLabel: 'Lynch', icon: Shield, section: 'unvalidated' },
   // SENTIMENT — Most Bullish/Bearish news screener (Finnhub headlines, finance
   // lexicon). Coincident + noisy, so it lives here in the Unvalidated section.
-  { id: 'sentiment', label: 'Sentiment', shortLabel: 'Sentiment', icon: Newspaper, section: 'unvalidated' },
   // TREND-1 — EDGAR filing-mention attribution ("who is exposed to this
   // phrase?"). Deliberately score-free: the consumer-attention signal it
   // grew out of failed its placebo test (verdicts.ts `trend`), so only the
   // entity-resolution half shipped. Attribution is a fact about disclosure,
   // which is why it can live in the app at all; it sits in Unvalidated so
   // nobody mistakes it for a measured edge.
-  { id: 'trend', label: 'Trend Exposure', shortLabel: 'Trend', icon: ScanSearch, section: 'unvalidated' },
   // FVZ-3 — published screening strategies (Minervini, CAN SLIM, Piotroski,
   // Magic Formula, PEAD, ...) over the Finviz universe. Unvalidated on
   // purpose: these are OTHER PEOPLE'S published screens, carrying their
@@ -416,19 +409,13 @@ export default function App() {
   const viewRouter = (
     <>
       {activeView === 'desk' && <ErrorBoundary label="Desk"><DeskView /></ErrorBoundary>}
-      {activeView === 'fable' && <ErrorBoundary label="FABLE"><FableView /></ErrorBoundary>}
       {activeView === 'trident' && <ErrorBoundary label="TRIDENT"><TridentView /></ErrorBoundary>}
-      {activeView === 'board' && <ErrorBoundary label="Board"><LiveTargetBoard universe={universe} /></ErrorBoundary>}
       {activeView === 'prophet' && <ErrorBoundary label="Prophet"><ProphetView /></ErrorBoundary>}
       {activeView === 'catalyst' && <ErrorBoundary label="Catalyst"><CatalystView universe={universe} onNavigate={setActiveView} /></ErrorBoundary>}
       {activeView === 'insiders' && <ErrorBoundary label="Insiders"><InsiderBoardView universe={universe} /></ErrorBoundary>}
-      {activeView === 'williams' && <ErrorBoundary label="Williams"><WilliamsView universe={universe} /></ErrorBoundary>}
-      {activeView === 'lynch' && <ErrorBoundary label="Lynch"><LynchView universe={universe} /></ErrorBoundary>}
       {activeView === 'earnings' && <ErrorBoundary label="Earnings"><EarningsPlaysView universe={universe} /></ErrorBoundary>}
       {activeView === 'crosses' && <ErrorBoundary label="Crosses"><CrossesView /></ErrorBoundary>}
-      {activeView === 'sentiment' && <ErrorBoundary label="Sentiment"><SentimentView /></ErrorBoundary>}
       {activeView === 'screens' && <ErrorBoundary label="Screens"><ScreensView /></ErrorBoundary>}
-      {activeView === 'trend' && <ErrorBoundary label="Trend Exposure"><TrendExposureView /></ErrorBoundary>}
       {activeView === 'forward' && <ErrorBoundary label="Forward Test"><ForwardTestView /></ErrorBoundary>}
       {activeView === 'history' && <ErrorBoundary label="History"><HistoryView /></ErrorBoundary>}
       {activeView === 'options' && <ErrorBoundary label="Options"><OptionsFlowView universe={universe} /></ErrorBoundary>}
