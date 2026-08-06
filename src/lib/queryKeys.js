@@ -53,7 +53,11 @@ export const queryKeys = {
   regime: () => ['tradeiq', 'regime'],
   analystsStatus: () => ['tradeiq', 'analystsStatus'],
   research: (ticker) => ['tradeiq', 'research', ticker],
-  chartAnalysis: (ticker) => ['tradeiq', 'chartAnalysis', ticker],
+  // withAi is part of the key: the AI and no-AI responses are different
+  // payloads from the same endpoint (chart-analysis.ts keys its own cache the
+  // same way at :121). Sharing one key would make the "Generate AI read"
+  // button a no-op — it would re-serve the cached AI-less result.
+  chartAnalysis: (ticker, withAi) => ['tradeiq', 'chartAnalysis', ticker, withAi ? 'ai' : 'noai'],
   // Phase 4q — per-ticker analyst rationale (live recompute, session-
   // memoized: opening the same stock twice returns the cached payload
   // without re-fetching).
