@@ -141,12 +141,24 @@ describe('scan-prophet-russell-background (worker)', () => {
     expect(written.warnings).toContainEqual(expect.stringContaining('publish guard'));
   });
 
-  it('preserves the inline narrate step in the background worker', async () => {
+  // AI-1 (2026-08-06) — the scheduled worker must NEVER call Claude.
+  // This scan runs 18x per weekday; narrating every pick spent tokens on
+  // tickers the owner may never open. Narration is on-demand only, via the
+  // detail panel's "Generate AI thesis" button. This test is inverted from
+  // its original form on purpose: it now guards against RE-ADDING the
+  // automatic call.
+  it('NEVER narrates automatically — even with an API key present', async () => {
+    process.env.ANTHROPIC_API_KEY = 'test-key';
     const sieve = fakeSieve();
     mocks.runProphetSieveMock.mockResolvedValue(sieve);
     await handler(evt(), {} as any, () => {});
-    expect(mocks.narrateAllMock).toHaveBeenCalledOnce();
-    expect(mocks.narrateAllMock).toHaveBeenCalledWith(sieve.picks, expect.objectContaining({ concurrency: 4 }));
+    expect(mocks.narrateAllMock).not.toHaveBeenCalled();
+  });
+
+  it('still writes the snapshot — picks just ship without a narrative', async () => {
+    mocks.runProphetSieveMock.mockResolvedValue(fakeSieve());
+    await handler(evt(), {} as any, () => {});
+    expect(mocks.writeSnapshotMock).toHaveBeenCalled();
   });
 
   it('returns 500 without writing when the sieve throws', async () => {

@@ -181,20 +181,25 @@ describe('prophet-picks — sieve telemetry + narration backfill', () => {
     expect(body.sieve).toMatchObject({ stage1: { scored: 1930 } });
   });
 
-  it('narrates top-N inline only when served picks lack narratives', async () => {
+  // AI-1 (2026-08-06) — loading the board must NEVER call Claude.
+  //
+  // This endpoint used to narrate the top 5 whenever picks arrived without a
+  // narrative, so simply OPENING the Prophet tab spent tokens. It was the
+  // sneakier of the two auto-paths: once the scheduled workers stopped
+  // pre-narrating, this condition would have been true on EVERY load —
+  // moving the spend from the cron to the page view instead of removing it.
+  it('NEVER narrates on board load, even when picks lack a narrative', async () => {
     process.env.ANTHROPIC_API_KEY = 'test-key';
     mocks.latestReturn.value = snapshot({
       ageMs: 60 * 60_000,
       picks: [{ ticker: 'NVDA', composite: 88, conviction: 'high' }], // no narrative
     });
-    await handler(evt({ universe: 'largecap' }), {} as any, () => {});
-    expect(mocks.narrateTopNSpy).toHaveBeenCalledOnce();
+    const res = (await handler(evt({ universe: 'largecap' }), {} as any, () => {})) as any;
+    expect(mocks.narrateTopNSpy).not.toHaveBeenCalled();
+    // The board still serves the pick — it just arrives thesis-less, and the
+    // detail panel offers the on-demand button.
+    expect(res.statusCode).toBe(200);
+    expect(JSON.parse(res.body).picks[0].ticker).toBe('NVDA');
   });
 
-  it('skips narration when every served pick is pre-narrated', async () => {
-    process.env.ANTHROPIC_API_KEY = 'test-key';
-    mocks.latestReturn.value = snapshot({ ageMs: 60 * 60_000 });
-    await handler(evt({ universe: 'largecap' }), {} as any, () => {});
-    expect(mocks.narrateTopNSpy).not.toHaveBeenCalled();
-  });
 });

@@ -35,12 +35,10 @@ import {
 } from './shared/snapshot-store';
 import { MODEL_VERSION } from './shared/model-version';
 import { logger } from './shared/logger';
-import { narrateAll } from './shared/narrative-generator';
 import { inIndex } from './shared/universe';
 import { runProphetSieve } from './shared/prophet-sieve';
 
 const NARRATE_BUDGET_MS = 60_000; // 1 min budget after the sieve finishes
-const NARRATE_CONCURRENCY = 4;
 
 const STORE_KEY: UniverseKey = 'russell2k';
 
@@ -62,21 +60,15 @@ export const handler: Handler = async (event) => {
       logger: log,
     });
 
-    if (process.env.ANTHROPIC_API_KEY && sieveResult.picks.length > 0) {
-      const narrateResult = await narrateAll(sieveResult.picks, {
-        concurrency: NARRATE_CONCURRENCY,
-        budgetMs: NARRATE_BUDGET_MS,
-        onWarn: (msg, ticker, err) =>
-          log.warn(msg, { ticker, err: String((err as any)?.message ?? err) }),
-      });
-      log.info('narrate_all_complete', {
-        picks: sieveResult.picks.length,
-        narrated: narrateResult.narrated,
-        failed: narrateResult.failed,
-        skipped: narrateResult.skipped,
-        durationMs: narrateResult.durationMs,
-      });
-    }
+    // AI-1 (2026-08-06) — NO automatic narration.
+    //
+    // This scan runs every 30 minutes, 13:00-21:00 UTC, weekdays: 18 runs a
+    // day, each generating a Claude thesis for every qualifying pick. The
+    // owner may never open most of those tickers, so the overwhelming
+    // majority of that spend bought nothing. Narration is now strictly
+    // on-demand: a pick ships without a narrative and the detail panel's
+    // "Generate AI thesis" button (ProphetDetail -> useGenerateNarrative ->
+    // POST /api/prophet-narrate) produces one when the owner actually asks.
 
     // Wave 2D (CR-8) — stamp status from the sieve's partial flags. Any
     // stage that ran out of budget means the result set is truncated, so
