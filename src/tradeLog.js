@@ -11,6 +11,57 @@ const LOCAL_KEY = 'tradeiq.tradeLog.v1';
 // tool — add auth.userId later if the app goes multi-user.
 const FB_COLLECTION = 'tradeLog';
 
+// ─── Schema reconciliation ────────────────────────────────────────────────────
+
+/**
+ * Broker-journal repair (2026-08-06).
+ *
+ * The server-side writers and the client readers disagreed on field names,
+ * with ZERO overlap:
+ *   broker-execute.ts / trade-queue.ts wrote {price, entry, qty, stopPrice, notes}
+ *   PositionsPanel / baseRates / JournalView read {loggedPrice, shares, stop, note}
+ *
+ * Consequence: every trade actually executed through Robinhood showed a blank
+ * entry, rendered null Unrl%/R in Positions, and was silently excluded from
+ * Base Rates. The honesty apparatus was blind to precisely the trades the
+ * owner really makes.
+ *
+ * Normalising on the READ side is deliberate: fixing only the writers would
+ * leave every doc already in Firestore broken. The writers emit canonical
+ * keys too, so this is a no-op for new docs rather than a permanent crutch.
+ *
+ * Two derived flags, both about refusing to lie:
+ *   isSellEvent — a sell is not a position. These used to render as open rows
+ *                 whose "entry" was really an exit price.
+ *   pending     — broker docs are written at ORDER PLACEMENT, not at fill. An
+ *                 armed stop or unfilled limit is not a position and must
+ *                 never reach Positions or Base Rates. This is also why
+ *                 automatic FIFO exit-matching was rejected: a protective
+ *                 sell-stop at $92 on a winning $100 lot would have posted a
+ *                 fake -8% loss for a position that is still open.
+ */
+export function normalizeTrade(t) {
+  if (!t || typeof t !== 'object') return t;
+  const num = (...vals) => {
+    for (const v of vals) if (typeof v === 'number' && Number.isFinite(v)) return v;
+    return undefined;
+  };
+  const loggedPrice = num(t.loggedPrice, t.price, t.entry);
+  const shares = num(t.shares, t.qty);
+  const stop = num(t.stop, t.stopPrice);
+  const note = t.note ?? t.notes;
+  return {
+    ...t,
+    ...(loggedPrice !== undefined ? { loggedPrice } : {}),
+    ...(shares !== undefined ? { shares } : {}),
+    ...(stop !== undefined ? { stop } : {}),
+    ...(note !== undefined ? { note } : {}),
+    isSellEvent: t.side === 'sell' || (typeof shares === 'number' && shares < 0),
+    pending: t.pending === true,
+  };
+}
+
+
 // ─── Local storage helpers ────────────────────────────────────────────────────
 
 function readLocal() {
@@ -18,7 +69,7 @@ function readLocal() {
     const raw = localStorage.getItem(LOCAL_KEY);
     if (!raw) return [];
     const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : [];
+    return Array.isArray(parsed) ? parsed.map(normalizeTrade) : [];
   } catch {
     return [];
   }
@@ -63,9 +114,10 @@ function mergeRemote(remoteEntries) {
   // Remote is authoritative. Remote entries replace local, plus any local-only
   // entries (never synced, maybe offline-queued) are preserved.
   const local = readLocal();
-  const remoteIds = new Set(remoteEntries.map((e) => e.id));
+  const remote = (remoteEntries || []).map(normalizeTrade);
+  const remoteIds = new Set(remote.map((e) => e.id));
   const localOnly = local.filter((e) => !remoteIds.has(e.id) && e._pendingSync);
-  const merged = [...remoteEntries, ...localOnly];
+  const merged = [...remote, ...localOnly];
   writeLocal(merged);
   // Re-drain pending syncs in case we came back online
   drainPendingSyncs();

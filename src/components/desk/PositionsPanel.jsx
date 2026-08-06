@@ -25,6 +25,12 @@ function signed(v, digits = 2, suffix = '') {
 export function buildPositionRows(log, quotesByTicker, nowIso = new Date().toISOString()) {
   return (log || [])
     .filter((t) => !isClosed(t))
+    // A SELL is an exit event, not an open position — it used to render as a
+    // row whose "entry" was actually the exit price. And broker docs are
+    // written at ORDER PLACEMENT, so an armed stop or an unfilled limit is
+    // not a position either; showing one would invent a holding that does
+    // not exist. (broker-journal repair, 2026-08-06)
+    .filter((t) => !t.isSellEvent && t.pending !== true)
     .map((t) => {
       const entry = typeof t.loggedPrice === 'number' && Number.isFinite(t.loggedPrice) && t.loggedPrice > 0
         ? t.loggedPrice : null;

@@ -138,12 +138,28 @@ export const handler: Handler = async (event) => {
       source: String(body.sourceBoard ?? 'app'),
       side,
       loggedAt: new Date().toISOString(),
+      // CANONICAL keys the client readers actually use. The legacy
+      // {price, entry, qty, stopPrice, notes} names are still written for
+      // backwards compatibility with docs already in Firestore, but the
+      // canonical ones are what PositionsPanel / baseRates / JournalView
+      // read. Before this, none of them overlapped and every real broker
+      // trade showed a blank entry and never reached Base Rates.
+      loggedPrice: refPrice,
+      shares: side === 'sell' ? -Math.abs(qty) : qty,
+      stop: stopOrder?.stopPrice ?? (orderType === 'stop' || orderType === 'stop_limit' ? stopPrice : null),
+      // This doc is written at ORDER PLACEMENT, not at fill. Anything not
+      // immediately filled is NOT a position — an armed protective stop or a
+      // resting limit must never render as a holding or feed a base rate.
+      // `order.state` was already available here and was being discarded.
+      pending: order.state !== 'filled',
+      brokerOrderState: order.state ?? null,
+      // legacy aliases (pre-2026-08-06 readers / existing docs)
       price: refPrice,
       entry: refPrice,
       qty: side === 'sell' ? -Math.abs(qty) : qty,
       stopPrice: stopOrder?.stopPrice ?? (orderType === 'stop' || orderType === 'stop_limit' ? stopPrice : null),
       orderType,
-      notes: `robinhood ${orderType} ${side} ${qty} ${ticker} @ ~$${refPrice}`
+      note: `robinhood ${orderType} ${side} ${qty} ${ticker} @ ~$${refPrice}`
         + (orderType === 'stop' || orderType === 'stop_limit' ? ` (stop $${stopPrice})` : '')
         + (stopOrder ? ` · stop $${stopOrder.stopPrice}` : '')
         + (body.rationale ? ` — ${String(body.rationale).slice(0, 300)}` : ''),
