@@ -43,7 +43,7 @@ export function TapeStrip({ regime, enabled = true }) {
   return (
     <div
       data-testid="desk-tape"
-      className="flex items-center gap-4 h-9 px-3 border-b border-neutral-800/80 bg-[#090a0c] overflow-x-auto scrollbar-hide whitespace-nowrap font-mono text-[11px]"
+      className="flex items-center gap-4 h-9 px-3 border-b border-neutral-800/80 bg-strip overflow-x-auto scrollbar-hide whitespace-nowrap font-mono text-[11px]"
     >
       {TAPE_TICKERS.map((t) => {
         const q = quotesByTicker[t];
@@ -62,7 +62,7 @@ export function TapeStrip({ regime, enabled = true }) {
         );
       })}
 
-      <span className="text-neutral-800">│</span>
+      <span aria-hidden="true" className="inline-block w-px h-3 align-middle bg-neutral-700" />
 
       {/* Regime pill + gross-exposure band */}
       <div className="flex items-center gap-1.5 flex-shrink-0" data-testid="desk-regime-pill">

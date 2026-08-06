@@ -19,6 +19,22 @@ export default {
       // the theme is now one block of variable values, not a per-class
       // enumeration that can drift.
       colors: {
+        // THEME-2 (2026-08-06) — SURFACES.
+        //
+        // The palette below was already token-driven, but every surface in
+        // the app was an arbitrary value: bg-[#050607] for the page,
+        // bg-[#0a0b0d] for the header/sidebar/drawer/modals, bg-[#090a0c]
+        // for the strips. Arbitrary values cannot be themed, so switching to
+        // light repainted the TEXT dark and left the page black — dark ink
+        // on a near-black page, which is how "light mode" shipped.
+        //
+        // Naming the surfaces is what closes that hole. Alpha modifiers keep
+        // working (`bg-chrome/95` under a backdrop-blur), and a surface can
+        // never again be introduced as an un-themeable literal.
+        page: 'rgb(var(--c-page) / <alpha-value>)',
+        chrome: 'rgb(var(--c-chrome) / <alpha-value>)',
+        strip: 'rgb(var(--c-strip) / <alpha-value>)',
+        rail: 'rgb(var(--c-rail) / <alpha-value>)',
         neutral: {
           '50': 'rgb(var(--c-neutral-50) / <alpha-value>)',
           '100': 'rgb(var(--c-neutral-100) / <alpha-value>)',

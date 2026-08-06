@@ -38,6 +38,7 @@ import { ScoreBreakdown } from './ScoreBreakdown.jsx';
 import { ResearchPanel } from '../ResearchPanel.jsx';
 import { CamilloPanel } from './CamilloPanel.jsx';
 import { TradeTakenButton } from '../TradeTakenButton.jsx';
+import { chartTheme } from '../../lib/chartTheme.js';
 
 export function StockDetailPanel({ board, ticker, row }) {
   const isWilliams = board === 'williams';
@@ -119,8 +120,8 @@ export function StockDetailPanel({ board, ticker, row }) {
         priceLines={
           (isFable || isTrident) && row?.entry?.pivot != null
             ? [
-                { price: row.entry.pivot, color: '#38bdf8', title: 'entry pivot' },
-                { price: row.entry.stop, color: '#ff5577', title: 'stop' },
+                { price: row.entry.pivot, color: chartTheme().accent, title: 'entry pivot' },
+                { price: row.entry.stop, color: chartTheme().down, title: 'stop' },
               ]
             : []
         }

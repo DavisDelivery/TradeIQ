@@ -11,7 +11,7 @@ import { readLog } from '../../tradeLog.js';
 import { baseRatesBySetup, baseRatesByBoard, MIN_SAMPLE } from '../../lib/baseRates.js';
 import { useSortable, SortableTh } from '../../lib/useSortable.jsx';
 
-const dash = <span className="text-neutral-700">—</span>;
+const dash = <span className="text-neutral-600">—</span>;
 
 function WlStrip({ strip }) {
   if (!strip || strip.length === 0) return dash;

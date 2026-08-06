@@ -40,7 +40,7 @@ export function buildSignalMap(targetData, prophetData) {
 
 export function SignalCell({ signals }) {
   if (!signals || signals.length === 0) {
-    return <span className="text-neutral-700 font-mono text-[10px]">—</span>;
+    return <span className="text-neutral-600 font-mono text-[10px]">—</span>;
   }
   return (
     <div className="flex flex-col gap-0.5 items-start">

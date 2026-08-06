@@ -14,7 +14,7 @@ import { ThemeToggle } from '../components/ThemeToggle.jsx';
 export function Sidebar({ views, activeView, setActiveView, appVersion }) {
   return (
     <aside
-      className="hidden xl:flex flex-col w-[224px] flex-shrink-0 border-r border-neutral-800/80 bg-[#0a0b0d]/95 backdrop-blur-xl sticky top-0 self-start max-h-screen overflow-y-auto"
+      className="hidden xl:flex flex-col w-[224px] flex-shrink-0 border-r border-neutral-800/80 bg-chrome/95 backdrop-blur-xl sticky top-0 self-start max-h-screen overflow-y-auto"
       data-testid="desktop-sidebar"
     >
       <div className="px-4 pt-4 pb-3 border-b border-neutral-800/60">

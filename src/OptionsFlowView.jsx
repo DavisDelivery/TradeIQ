@@ -4,6 +4,7 @@ import { useOptionsFlow } from './hooks/useOptionsFlow.js';
 import { FundamentalsStrip } from './components/detail/FundamentalsStrip.jsx';
 import { MasterDetail } from './layout/MasterDetail.jsx';
 import { StockDetailPanel } from './components/detail/StockDetailPanel.jsx';
+import { chartTheme } from './lib/chartTheme.js';
 
 export const OptionsFlowView = () => {
   const [filter, setFilter] = useState('all');
@@ -98,9 +99,10 @@ export const OptionsFlowView = () => {
 
       <div className="space-y-3">
         {filtered.map((o) => {
-          const color = o.direction === 'bullish' ? '#14e89a'
-            : o.direction === 'bearish' ? '#ff5577'
-            : '#b0b4c0';
+          const pal = chartTheme();
+          const color = o.direction === 'bullish' ? pal.up
+            : o.direction === 'bearish' ? pal.down
+            : pal.muted;
           return (
             <div
               key={o.ticker}

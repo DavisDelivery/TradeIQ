@@ -71,7 +71,7 @@ export function StockDetailHero({ board, ticker, rationale, detail, row, thesis 
         )}
         {marketCap && (
           <>
-            <span className="text-neutral-700">│</span>
+            <span aria-hidden="true" className="inline-block w-px h-3 align-middle bg-neutral-700" />
             <span>
               <span className="text-neutral-500 uppercase tracking-widest mr-1">Mkt cap</span>
               <span className="text-neutral-200">{marketCap}</span>

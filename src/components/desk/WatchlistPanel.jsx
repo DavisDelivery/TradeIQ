@@ -18,7 +18,7 @@ import { fmtMcap, fmtCompact } from '../../lib/formatters.jsx';
 import { Spark } from './Spark.jsx';
 import { SignalCell } from './SignalCell.jsx';
 
-const dash = <span className="text-neutral-700">—</span>;
+const dash = <span className="text-neutral-600">—</span>;
 
 function num(v, digits = 2, suffix = '') {
   if (typeof v !== 'number' || !Number.isFinite(v)) return dash;
@@ -205,7 +205,7 @@ export function WatchlistPanel({
                   <td className="px-3 py-1.5 text-right tabular-nums text-neutral-200">{num(row.last)}</td>
                   <td className="px-3 py-1.5 text-right tabular-nums">{signed(row.chgPct)}</td>
                   <td className="px-3 py-1.5 text-right">
-                    {statsLoading && !row.spark ? <span className="text-neutral-700">…</span> : <Spark values={row.spark} />}
+                    {statsLoading && !row.spark ? <span className="text-neutral-600">…</span> : <Spark values={row.spark} />}
                   </td>
                   <td className="px-3 py-1.5 text-right tabular-nums">{signed(row.dist52wHighPct, 1)}</td>
                   <td className="px-3 py-1.5 text-right tabular-nums text-neutral-300">{num(row.atrPct14, 1, '%')}</td>
@@ -221,7 +221,7 @@ export function WatchlistPanel({
                     <button
                       onClick={(ev) => handleRemove(row.ticker, ev)}
                       aria-label={`Remove ${row.ticker}`}
-                      className="h-5 w-5 flex items-center justify-center text-neutral-700 hover:text-rose-400 transition-colors"
+                      className="h-5 w-5 flex items-center justify-center text-neutral-600 hover:text-rose-400 transition-colors"
                     >
                       <X className="h-3 w-3" />
                     </button>

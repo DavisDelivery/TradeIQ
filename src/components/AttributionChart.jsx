@@ -10,6 +10,7 @@ import {
   ResponsiveContainer,
 } from 'recharts';
 import { ChartPanel } from './ChartPanel.jsx';
+import { chartTheme } from '../lib/chartTheme.js';
 
 // Phase 4b — per-analyst attribution.
 //
@@ -72,6 +73,7 @@ function TooltipBody({ active, payload, label }) {
 }
 
 export function AttributionChart({ attribution }) {
+  const pal = chartTheme();
   const rows = useMemo(() => aggregate(attribution), [attribution]);
 
   if (rows.length === 0) {
@@ -95,11 +97,11 @@ export function AttributionChart({ attribution }) {
       <div className="h-[240px]" data-testid="attribution-chart">
         <ResponsiveContainer width="100%" height="100%">
           <BarChart data={rows} margin={{ top: 5, right: 5, left: 0, bottom: 0 }}>
-            <CartesianGrid stroke="#262626" strokeDasharray="3 3" vertical={false} />
+            <CartesianGrid stroke={pal.grid} strokeDasharray="3 3" vertical={false} />
             <XAxis
               dataKey="analyst"
-              stroke="#525252"
-              tick={{ fontSize: 9, fill: '#a3a3a3', fontFamily: 'monospace' }}
+              stroke={pal.axis}
+              tick={{ fontSize: 9, fill: pal.tick, fontFamily: 'monospace' }}
               tickMargin={4}
               interval={0}
               angle={-25}
@@ -107,17 +109,17 @@ export function AttributionChart({ attribution }) {
               height={50}
             />
             <YAxis
-              stroke="#525252"
-              tick={{ fontSize: 9, fill: '#737373', fontFamily: 'monospace' }}
+              stroke={pal.axis}
+              tick={{ fontSize: 9, fill: pal.tick, fontFamily: 'monospace' }}
               tickFormatter={(v) => `${v}%`}
               width={45}
             />
-            <Tooltip content={<TooltipBody />} cursor={{ fill: '#171717' }} />
+            <Tooltip content={<TooltipBody />} cursor={{ fill: pal.cursor }} />
             <Bar dataKey="contributionPct" isAnimationActive={false}>
               {rows.map((r) => (
                 <Cell
                   key={r.analyst}
-                  fill={r.contributionPct >= 0 ? '#34d399' : '#f43f5e'}
+                  fill={r.contributionPct >= 0 ? pal.up : pal.down}
                 />
               ))}
             </Bar>

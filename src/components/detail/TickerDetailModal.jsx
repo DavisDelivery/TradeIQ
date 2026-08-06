@@ -25,10 +25,10 @@ export function TickerDetailModal({ ticker, row = null, board = 'search', onClos
       onClick={onClose}
     >
       <div
-        className="relative w-full max-w-5xl max-h-[92vh] overflow-y-auto bg-[#0a0b0d] border border-neutral-800"
+        className="relative w-full max-w-5xl max-h-[92vh] overflow-y-auto bg-chrome border border-neutral-800"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="sticky top-0 z-10 bg-[#0a0b0d] border-b border-neutral-800 px-6 py-4 flex items-center justify-between gap-4">
+        <div className="sticky top-0 z-10 bg-chrome border-b border-neutral-800 px-6 py-4 flex items-center justify-between gap-4">
           <span className="font-serif text-xl font-bold text-neutral-100">{ticker}</span>
           <button
             type="button"

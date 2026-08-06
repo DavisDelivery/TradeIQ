@@ -6,7 +6,7 @@
 import React from 'react';
 import { useSortable, SortableTh } from '../../lib/useSortable.jsx';
 
-const dash = <span className="text-neutral-700">—</span>;
+const dash = <span className="text-neutral-600">—</span>;
 
 /** Flatten the radar map into upcoming rows. Pure — exported for tests. */
 export function buildRadarRows(radarByTicker) {
@@ -66,7 +66,7 @@ export function EarningsRadarPanel({ radarByTicker, focusTicker, onFocus }) {
                       : dash}
                   </td>
                   <td className={`px-3 py-1.5 text-right tabular-nums ${
-                    r.lastSurprisePct == null ? 'text-neutral-700' : r.lastSurprisePct > 0 ? 'text-emerald-400' : 'text-rose-400'
+                    r.lastSurprisePct == null ? 'text-neutral-600' : r.lastSurprisePct > 0 ? 'text-emerald-400' : 'text-rose-400'
                   }`}>
                     {r.lastSurprisePct != null ? `${r.lastSurprisePct > 0 ? '+' : ''}${r.lastSurprisePct.toFixed(1)}%` : '—'}
                   </td>

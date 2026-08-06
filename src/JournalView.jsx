@@ -11,6 +11,7 @@ import { fetchWithRetry } from './lib/validateResponse.js';
 import { FundamentalsStrip } from './components/detail/FundamentalsStrip.jsx';
 import { TickerDetailModal } from './components/detail/TickerDetailModal.jsx';
 import { TradeQueuePanel } from './components/TradeQueuePanel.jsx';
+import { chartTheme } from './lib/chartTheme.js';
 
 const SOURCE_META = {
   earnings: { label: 'Earnings', icon: Zap, color: 'text-sky-400 border-sky-500/40 bg-sky-500/5' },
@@ -185,7 +186,7 @@ export const JournalView = () => {
 
       {log.length === 0 ? (
         <div className="border border-neutral-800 p-10 text-center">
-          <BookMarked className="h-8 w-8 text-neutral-700 mx-auto mb-2" />
+          <BookMarked className="h-8 w-8 text-neutral-600 mx-auto mb-2" />
           <div className="text-neutral-500 font-mono text-sm mb-2">No logged trades yet.</div>
           <div className="text-neutral-600 text-[11px] font-mono">
             Tap any Earnings card and hit "Log Trade" to start tracking.
@@ -200,12 +201,12 @@ export const JournalView = () => {
             <SummaryStat
               label="5D Win Rate"
               value={summary.winRate5d !== null ? `${(summary.winRate5d * 100).toFixed(0)}%` : '—'}
-              color={summary.winRate5d !== null ? (summary.winRate5d >= 0.5 ? '#14e89a' : '#f43f5e') : undefined}
+              color={summary.winRate5d !== null ? (summary.winRate5d >= 0.5 ? chartTheme().up : chartTheme().down) : undefined}
             />
             <SummaryStat
               label="Avg 5D Return"
               value={summary.avgReturn5d !== null ? `${summary.avgReturn5d >= 0 ? '+' : ''}${summary.avgReturn5d}%` : '—'}
-              color={summary.avgReturn5d !== null ? (summary.avgReturn5d >= 0 ? '#14e89a' : '#f43f5e') : undefined}
+              color={summary.avgReturn5d !== null ? (summary.avgReturn5d >= 0 ? chartTheme().up : chartTheme().down) : undefined}
             />
           </div>
 
@@ -480,19 +481,19 @@ const FilterChip = ({ active, onClick, children }) => (
 
 const ReturnCell = ({ label, entry, spyEntry, loading }) => {
   let value = '—';
-  let color = '#737373';
+  let color = chartTheme().tick;
   let alphaText = null;
-  let alphaColor = '#737373';
+  let alphaColor = chartTheme().tick;
   if (loading) {
     value = '…';
   } else if (entry && Number.isFinite(entry.returnPct)) {
     const r = entry.returnPct;
     value = `${r >= 0 ? '+' : ''}${r.toFixed(2)}%`;
-    color = r >= 0 ? '#14e89a' : '#f43f5e';
+    color = r >= 0 ? chartTheme().up : chartTheme().down;
     if (spyEntry && Number.isFinite(spyEntry.returnPct)) {
       const alpha = r - spyEntry.returnPct;
       alphaText = `α ${alpha >= 0 ? '+' : ''}${alpha.toFixed(1)}`;
-      alphaColor = alpha >= 0 ? '#10b981' : '#f43f5e';
+      alphaColor = alpha >= 0 ? chartTheme().up : chartTheme().down;
     }
   }
   return (

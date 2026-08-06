@@ -133,10 +133,10 @@ export function FundamentalsStrip({
       }
     >
       {!inView && (
-        <span className="text-neutral-700">…</span>
+        <span className="text-neutral-600">…</span>
       )}
       {inView && isLoading && (
-        <span className="text-neutral-700 uppercase tracking-widest">loading…</span>
+        <span className="text-neutral-600 uppercase tracking-widest">loading…</span>
       )}
       {inView && isError && (
         <span className="text-rose-500/70 uppercase tracking-widest">no fundamentals</span>
@@ -151,7 +151,7 @@ export function FundamentalsStrip({
             className="inline-flex items-baseline gap-1"
           >
             <span className="text-neutral-600 uppercase tracking-widest text-[9px]">{m.label}</span>
-            <span className={`tabular-nums ${v == null ? 'text-neutral-700' : 'text-neutral-200'}`}>
+            <span className={`tabular-nums ${v == null ? 'text-neutral-600' : 'text-neutral-200'}`}>
               {display}
             </span>
           </span>

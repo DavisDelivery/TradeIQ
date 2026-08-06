@@ -23,9 +23,11 @@ import React from 'react';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine, CartesianGrid, Legend } from 'recharts';
 import { AlertTriangle } from 'lucide-react';
 import { useStockDetail } from '../../hooks/useStockDetail.js';
+import { chartTheme } from '../../lib/chartTheme.js';
 
-const SPY_COLOR = '#14e89a';   // emerald — broad-market comparison
-const SECTOR_COLOR = '#1e5b92'; // brand blue — sector ETF comparison
+// Resolved per render so the pair follows the active theme (see chartTheme).
+const SPY_COLOR = () => chartTheme().up;      // broad-market comparison
+const SECTOR_COLOR = () => chartTheme().accent; // sector ETF comparison
 
 function formatTickDate(d) {
   if (!d) return '';
@@ -54,6 +56,7 @@ function CustomTooltip({ active, payload, label }) {
 }
 
 export function RelativeStrengthChart({ ticker }) {
+  const pal = chartTheme();
   const { data, isLoading, isError, error, refetch } = useStockDetail(ticker);
   const rs = data?.relativeStrength;
   const vsSpy = Array.isArray(rs?.vsSpy) ? rs.vsSpy : [];
@@ -138,30 +141,30 @@ export function RelativeStrengthChart({ ticker }) {
         {!isLoading && !isError && merged.length > 0 && (
           <ResponsiveContainer width="100%" height="100%">
             <LineChart data={merged} margin={{ top: 6, right: 8, left: 0, bottom: 0 }}>
-              <CartesianGrid strokeDasharray="2 2" stroke="#1f1f23" />
+              <CartesianGrid strokeDasharray="2 2" stroke={pal.grid} />
               <XAxis
                 dataKey="date"
-                stroke="#525252"
+                stroke={pal.axis}
                 tickFormatter={formatTickDate}
                 fontSize={10}
                 minTickGap={32}
               />
               <YAxis
-                stroke="#525252"
+                stroke={pal.axis}
                 domain={['auto', 'auto']}
                 tickFormatter={formatPctTick}
                 fontSize={10}
                 width={48}
                 orientation="right"
               />
-              <Tooltip content={<CustomTooltip />} cursor={{ stroke: '#1e5b92', strokeWidth: 1 }} />
+              <Tooltip content={<CustomTooltip />} cursor={{ stroke: pal.accent, strokeWidth: 1 }} />
               <Legend
                 verticalAlign="bottom"
                 height={20}
-                wrapperStyle={{ fontFamily: 'IBM Plex Mono, monospace', fontSize: 10, color: '#737373' }}
+                wrapperStyle={{ fontFamily: 'IBM Plex Mono, monospace', fontSize: 10, color: pal.tick }}
                 iconType="plainline"
               />
-              <ReferenceLine y={0} stroke="#525252" strokeDasharray="3 3" />
+              <ReferenceLine y={0} stroke={pal.axis} strokeDasharray="3 3" />
               <Line
                 type="monotone"
                 dataKey="vsSpy"

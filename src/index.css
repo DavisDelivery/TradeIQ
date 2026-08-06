@@ -28,6 +28,26 @@
    #f5f6f8 page: the lowest is 4.64:1, the rest clear 5:1.
    =================================================================== */
 :root {
+    /* ---- SURFACES (THEME-2) ------------------------------------------
+       The palette above was tokenised, but every actual SURFACE in the app
+       was a hardcoded hex — bg-page for the page, bg-chrome for the
+       header/sidebar/modals, and so on. Arbitrary Tailwind values cannot be
+       themed, so the light theme repainted the text and left the page black:
+       dark ink on a near-black page. Naming the surfaces is what makes the
+       theme actually reach the app.
+
+       page   — the app background, behind everything
+       chrome — raised bars and overlays: header, sidebar, drawer, modals
+       strip  — recessed full-width bands: tape, regime, universe
+       rail   — the master-detail side rail
+       ------------------------------------------------------------------ */
+    --c-page: 5 6 7;
+    --c-chrome: 10 11 13;
+    --c-strip: 9 10 12;
+    --c-rail: 7 8 9;
+    --c-scroll-track: 10 11 13;
+    --c-scroll-thumb: 42 43 46;
+    --c-scroll-thumb-hover: 58 59 62;
     --c-neutral-50: 250 250 250;
     --c-neutral-100: 245 245 245;
     --c-neutral-200: 229 229 229;
@@ -141,23 +161,34 @@
 }
 
 html.theme-light {
+    /* Light surfaces. `chrome` is pure white so the header, drawer and
+       modals lift off the page the way they lift off the black in dark
+       mode; `strip` and `rail` sit slightly BELOW the page for the same
+       recessed reading. */
+    --c-page: 245 246 248;
+    --c-chrome: 255 255 255;
+    --c-strip: 236 238 242;
+    --c-rail: 240 241 244;
+    --c-scroll-track: 233 235 239;
+    --c-scroll-thumb: 176 180 188;
+    --c-scroll-thumb-hover: 140 145 155;
     --c-neutral-50: 10 10 10;
     --c-neutral-100: 23 23 23;
     --c-neutral-200: 38 38 38;
     --c-neutral-300: 64 64 64;
     --c-neutral-400: 82 82 82;
-    --c-neutral-500: 115 115 115;
-    --c-neutral-600: 163 163 163;
-    --c-neutral-700: 212 212 212;
-    --c-neutral-800: 229 229 229;
-    --c-neutral-900: 245 245 245;
-    --c-neutral-950: 250 250 250;
+    --c-neutral-500: 96 96 96;
+    --c-neutral-600: 112 112 112;
+    --c-neutral-700: 150 150 150;
+    --c-neutral-800: 214 214 214;
+    --c-neutral-900: 232 232 232;
+    --c-neutral-950: 255 255 255;
     --c-emerald-50: 2 44 34;
     --c-emerald-100: 6 78 59;
     --c-emerald-200: 6 95 70;
     --c-emerald-300: 4 120 87;
     --c-emerald-400: 4 120 87;
-    --c-emerald-500: 5 150 105;
+    --c-emerald-500: 6 95 70;
     --c-emerald-600: 16 185 129;
     --c-emerald-700: 110 231 183;
     --c-emerald-800: 167 243 208;
@@ -168,7 +199,7 @@ html.theme-light {
     --c-rose-200: 159 18 57;
     --c-rose-300: 190 18 60;
     --c-rose-400: 190 18 60;
-    --c-rose-500: 225 29 72;
+    --c-rose-500: 159 18 57;
     --c-rose-600: 244 63 94;
     --c-rose-700: 253 164 175;
     --c-rose-800: 254 205 211;
@@ -179,7 +210,7 @@ html.theme-light {
     --c-amber-200: 146 64 14;
     --c-amber-300: 180 83 9;
     --c-amber-400: 180 83 9;
-    --c-amber-500: 217 119 6;
+    --c-amber-500: 146 64 14;
     --c-amber-600: 245 158 11;
     --c-amber-700: 252 211 77;
     --c-amber-800: 253 230 138;
@@ -254,9 +285,23 @@ html.theme-light {
 }
 
 html.theme-light { color-scheme: light; }
-html.theme-light, html.theme-light body, html.theme-light #root { background:#f5f6f8; }
-html.theme-light body { color:#181b21; }
+html, body, #root { background: rgb(var(--c-page)); }
+body { color: rgb(var(--c-neutral-200)); }
 
+
+/* Ambient page glow. Two soft washes that give the dark page depth. In light
+   they are dialled right down — the same 4% emerald over white reads as a
+   stain, not as atmosphere. */
+.app-glow {
+  background-image:
+    radial-gradient(ellipse at top, rgb(var(--c-emerald-400) / 0.04) 0%, transparent 45%),
+    radial-gradient(ellipse at bottom, rgb(var(--c-sky-400) / 0.02) 0%, transparent 45%);
+}
+html.theme-light .app-glow {
+  background-image:
+    radial-gradient(ellipse at top, rgb(var(--c-emerald-400) / 0.012) 0%, transparent 45%),
+    radial-gradient(ellipse at bottom, rgb(var(--c-sky-400) / 0.008) 0%, transparent 45%);
+}
 
 /* Desk 3-pane grid: auto-fit so panes wrap instead of overflowing the
    viewport (the old fixed minmax(430/480/360)=1270px min clipped every

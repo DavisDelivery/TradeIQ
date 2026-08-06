@@ -7,6 +7,7 @@ import {
   ArrowUpRight, ArrowDownRight, Minus, LineChart as LineChartIcon, Layers,
   BarChart3, Newspaper, Cpu, Zap, Globe2, Gauge, Landmark, Eye, FlaskConical,
 } from 'lucide-react';
+import { tierPalette } from './chartTheme.js';
 
 export const fmt = {
   pct: (n, d = 1) => {
@@ -47,11 +48,13 @@ export const safeTimestamp = (v) => {
 };
 
 export const tierColor = (tier) => ({
-  A: '#14e89a', B: '#4dbaf2', C: '#ffb020', D: '#5a6373',
-}[tier] || '#5a6373');
+  ...tierPalette(),
+}[tier] || tierPalette().D);
 
 export const tierGlow = (tier) => ({
-  A: '0 0 24px -4px #14e89a77', B: '0 0 16px -4px #4dbaf255', C: '', D: '',
+  A: `0 0 24px -4px color-mix(in srgb, ${tierPalette().A} 47%, transparent)`,
+  B: `0 0 16px -4px color-mix(in srgb, ${tierPalette().B} 33%, transparent)`,
+  C: '', D: '',
 }[tier] || '');
 
 export const directionIcon = (d) =>

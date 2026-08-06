@@ -86,7 +86,7 @@ export function TickerSearch({ onSelect, className = '' }) {
 
       {open && (
         <div className="absolute right-0 top-0 z-[60] w-[min(78vw,320px)]">
-          <div className="flex items-center gap-1.5 h-8 px-2.5 border border-neutral-600 bg-[#0a0b0d] shadow-2xl">
+          <div className="flex items-center gap-1.5 h-8 px-2.5 border border-neutral-600 bg-chrome shadow-2xl">
             <Search className="h-3.5 w-3.5 text-neutral-500 flex-shrink-0" />
             <input
               ref={inputRef}
@@ -115,7 +115,7 @@ export function TickerSearch({ onSelect, className = '' }) {
             <div
               role="listbox"
               data-testid="ticker-search-results"
-              className="mt-1 max-h-[60vh] overflow-y-auto border border-neutral-800 bg-[#0a0b0d] shadow-2xl"
+              className="mt-1 max-h-[60vh] overflow-y-auto border border-neutral-800 bg-chrome shadow-2xl"
             >
               {results.length === 0 ? (
                 <div className="px-3 py-3 text-[12px] text-neutral-500 font-mono">

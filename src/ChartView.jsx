@@ -11,6 +11,7 @@ import {
 import { LogButton } from './components/LogButton.jsx';
 import { useChartAnalysis } from './hooks/useChartAnalysis.js';
 import { FundamentalsStrip } from './components/detail/FundamentalsStrip.jsx';
+import { chartTheme } from './lib/chartTheme.js';
 
 const QUICK_TICKERS = ['NVDA', 'AAPL', 'MSFT', 'TSLA', 'META', 'GOOGL', 'AMZN', 'SPY'];
 
@@ -172,8 +173,10 @@ const SignalHeader = ({ data }) => {
 };
 
 const chartMargin = { top: 5, right: 10, bottom: 5, left: 0 };
-const gridProps = { stroke: '#262626', strokeDasharray: '2 2' };
-const axisProps = { stroke: '#525252', fontSize: 10, tick: { fill: '#737373' } };
+// Resolved per render, not at module load: a theme flip after import must
+// reach the axes too (these used to be frozen dark-mode literals).
+const gridProps = () => ({ stroke: chartTheme().grid, strokeDasharray: '2 2' });
+const axisProps = () => ({ stroke: chartTheme().axis, fontSize: 10, tick: { fill: chartTheme().tick } });
 
 const PricePanel = ({ data }) => (
   <div className="border border-neutral-800 bg-neutral-950/40 mb-2">
@@ -186,14 +189,14 @@ const PricePanel = ({ data }) => (
     <div className="h-48 sm:h-64">
       <ResponsiveContainer width="100%" height="100%">
         <LineChart data={data.bars} margin={chartMargin}>
-          <CartesianGrid {...gridProps} />
-          <XAxis dataKey="date" {...axisProps} minTickGap={40} />
-          <YAxis {...axisProps} domain={['dataMin', 'dataMax']} />
+          <CartesianGrid {...gridProps()} />
+          <XAxis dataKey="date" {...axisProps()} minTickGap={40} />
+          <YAxis {...axisProps()} domain={['dataMin', 'dataMax']} />
           <Tooltip content={<ChartTooltip />} />
-          <Line type="monotone" dataKey="c" stroke="#10b981" strokeWidth={1.5} dot={false} name="Price" />
-          <Line type="monotone" dataKey="sma20" stroke="#fbbf24" strokeWidth={1} dot={false} name="SMA20" />
-          <Line type="monotone" dataKey="sma50" stroke="#38bdf8" strokeWidth={1} dot={false} name="SMA50" />
-          <Line type="monotone" dataKey="sma200" stroke="#a78bfa" strokeWidth={1} dot={false} name="SMA200" />
+          <Line type="monotone" dataKey="c" stroke={pal.up} strokeWidth={1.5} dot={false} name="Price" />
+          <Line type="monotone" dataKey="sma20" stroke={pal.amber} strokeWidth={1} dot={false} name="SMA20" />
+          <Line type="monotone" dataKey="sma50" stroke={pal.accent} strokeWidth={1} dot={false} name="SMA50" />
+          <Line type="monotone" dataKey="sma200" stroke={pal.violet} strokeWidth={1} dot={false} name="SMA200" />
         </LineChart>
       </ResponsiveContainer>
     </div>
@@ -208,13 +211,13 @@ const VolumePanel = ({ data }) => (
     <div className="h-16">
       <ResponsiveContainer width="100%" height="100%">
         <BarChart data={data.bars} margin={chartMargin}>
-          <XAxis dataKey="date" {...axisProps} hide />
-          <YAxis {...axisProps} />
+          <XAxis dataKey="date" {...axisProps()} hide />
+          <YAxis {...axisProps()} />
           <Tooltip content={<ChartTooltip />} />
-          <Bar dataKey="v" fill="#525252">
+          <Bar dataKey="v" fill={pal.axis}>
             {data.bars.map((b, i) => {
               const prev = i > 0 ? data.bars[i - 1] : b;
-              return <Cell key={i} fill={b.c >= prev.c ? '#065f46' : '#7f1d1d'} />;
+              return <Cell key={i} fill={b.c >= prev.c ? pal.up : pal.down} />;
             })}
           </Bar>
         </BarChart>
@@ -239,13 +242,13 @@ const RsiPanel = ({ data }) => {
     <div className="h-24">
       <ResponsiveContainer width="100%" height="100%">
         <LineChart data={data.bars} margin={chartMargin}>
-          <CartesianGrid {...gridProps} />
-          <XAxis dataKey="date" {...axisProps} hide />
-          <YAxis domain={[0, 100]} ticks={[30, 50, 70]} {...axisProps} />
+          <CartesianGrid {...gridProps()} />
+          <XAxis dataKey="date" {...axisProps()} hide />
+          <YAxis domain={[0, 100]} ticks={[30, 50, 70]} {...axisProps()} />
           <Tooltip content={<ChartTooltip />} />
-          <ReferenceLine y={70} stroke="#f43f5e" strokeDasharray="2 2" strokeWidth={1} />
-          <ReferenceLine y={30} stroke="#10b981" strokeDasharray="2 2" strokeWidth={1} />
-          <Line type="monotone" dataKey="rsi" stroke="#fbbf24" strokeWidth={1.2} dot={false} />
+          <ReferenceLine y={70} stroke={pal.down} strokeDasharray="2 2" strokeWidth={1} />
+          <ReferenceLine y={30} stroke={pal.up} strokeDasharray="2 2" strokeWidth={1} />
+          <Line type="monotone" dataKey="rsi" stroke={pal.amber} strokeWidth={1.2} dot={false} />
         </LineChart>
       </ResponsiveContainer>
     </div>
@@ -268,18 +271,18 @@ const MacdPanel = ({ data }) => {
     <div className="h-24">
       <ResponsiveContainer width="100%" height="100%">
         <ComposedChart data={data.bars} margin={chartMargin}>
-          <CartesianGrid {...gridProps} />
-          <XAxis dataKey="date" {...axisProps} hide />
-          <YAxis {...axisProps} />
+          <CartesianGrid {...gridProps()} />
+          <XAxis dataKey="date" {...axisProps()} hide />
+          <YAxis {...axisProps()} />
           <Tooltip content={<ChartTooltip />} />
-          <ReferenceLine y={0} stroke="#525252" strokeWidth={1} />
+          <ReferenceLine y={0} stroke={pal.axis} strokeWidth={1} />
           <Bar dataKey="macdHist">
             {data.bars.map((b, i) => (
-              <Cell key={i} fill={(b.macdHist ?? 0) >= 0 ? '#047857' : '#be123c'} />
+              <Cell key={i} fill={(b.macdHist ?? 0) >= 0 ? pal.up : pal.down} />
             ))}
           </Bar>
-          <Line type="monotone" dataKey="macd" stroke="#38bdf8" strokeWidth={1} dot={false} />
-          <Line type="monotone" dataKey="macdSignal" stroke="#fbbf24" strokeWidth={1} dot={false} />
+          <Line type="monotone" dataKey="macd" stroke={pal.accent} strokeWidth={1} dot={false} />
+          <Line type="monotone" dataKey="macdSignal" stroke={pal.amber} strokeWidth={1} dot={false} />
         </ComposedChart>
       </ResponsiveContainer>
     </div>

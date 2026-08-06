@@ -220,7 +220,7 @@ const TopBar = ({ activeView, setActiveView, regime, universeStats }) => {
   const regimeLabel = (regime?.regime ?? 'neutral').replace(/_/g, ' ').toUpperCase();
 
   return (
-    <header className="sticky top-0 z-40 border-b border-neutral-800/80 bg-[#0a0b0d]/95 backdrop-blur-xl">
+    <header className="sticky top-0 z-40 border-b border-neutral-800/80 bg-chrome/95 backdrop-blur-xl">
       {/* Row 1: hamburger (mobile) + logo + current view */}
       <div className="flex items-center h-11 sm:h-[52px] px-3 sm:px-6 gap-3">
         <button
@@ -295,10 +295,10 @@ const TopBar = ({ activeView, setActiveView, regime, universeStats }) => {
           data-testid="global-detail-modal"
         >
           <div
-            className="relative w-full max-w-5xl my-4 bg-[#0a0b0d] border border-neutral-800"
+            className="relative w-full max-w-5xl my-4 bg-chrome border border-neutral-800"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="sticky top-0 z-10 bg-[#0a0b0d]/95 backdrop-blur-xl border-b border-neutral-800 px-4 sm:px-6 py-3 flex items-center justify-between gap-4">
+            <div className="sticky top-0 z-10 bg-chrome/95 backdrop-blur-xl border-b border-neutral-800 px-4 sm:px-6 py-3 flex items-center justify-between gap-4">
               <div className="font-serif text-lg font-bold text-neutral-100">{searchTicker}</div>
               <button
                 type="button"
@@ -318,7 +318,7 @@ const TopBar = ({ activeView, setActiveView, regime, universeStats }) => {
       )}
 
       {/* Ticker-tape regime strip */}
-      <div className="h-8 border-t border-neutral-800/60 bg-[#090a0c] text-[11px] font-mono overflow-x-auto scrollbar-hide">
+      <div className="h-8 border-t border-neutral-800/60 bg-strip text-[11px] font-mono overflow-x-auto scrollbar-hide">
         <div className="flex items-center h-full gap-3 sm:gap-6 px-3 sm:px-6 text-neutral-400 whitespace-nowrap min-w-max">
           <div className="flex items-center gap-2">
             <StatusDot status={regime?.regime === 'risk_off' ? 'warning' : 'healthy'} />
@@ -330,13 +330,13 @@ const TopBar = ({ activeView, setActiveView, regime, universeStats }) => {
               {regimeLabel}
             </span>
           </div>
-          <span className="text-neutral-700">│</span>
+          <span aria-hidden="true" className="inline-block w-px h-3 align-middle bg-neutral-700" />
           <div>VIX <span className="text-neutral-200">{regime?.vol?.level?.toFixed(1) ?? '—'}</span></div>
-          <span className="text-neutral-700">│</span>
+          <span aria-hidden="true" className="inline-block w-px h-3 align-middle bg-neutral-700" />
           <div>10Y <span className="text-neutral-200">{regime?.rates?.tenYear?.toFixed(2) ?? '—'}%</span></div>
-          <span className="text-neutral-700">│</span>
+          <span aria-hidden="true" className="inline-block w-px h-3 align-middle bg-neutral-700" />
           <div>2Y10Y <span className="text-neutral-200">{regime?.rates?.twoTenSpread ?? '—'}bp</span> <span className="text-neutral-500">{regime?.rates?.curveRegime ?? ''}</span></div>
-          <span className="text-neutral-700">│</span>
+          <span aria-hidden="true" className="inline-block w-px h-3 align-middle bg-neutral-700" />
           <div>
             <span className="uppercase tracking-wider">Universe</span>
             <span className="text-neutral-200 ml-1.5">{universeStats?.core || 0}</span>
@@ -403,8 +403,8 @@ export default function App() {
   const universeBar = showUniverseBar && (
     <div className={
       isDesktop
-        ? 'sticky top-8 z-20 border-b border-neutral-800/60 bg-[#0a0b0d]/95 backdrop-blur-xl'
-        : 'sticky top-[76px] sm:top-[92px] z-30 border-b border-neutral-800/60 bg-[#0a0b0d]/95 backdrop-blur-xl'
+        ? 'sticky top-8 z-20 border-b border-neutral-800/60 bg-chrome/95 backdrop-blur-xl'
+        : 'sticky top-[76px] sm:top-[92px] z-30 border-b border-neutral-800/60 bg-chrome/95 backdrop-blur-xl'
     }>
       <div className={isDesktop ? 'px-6 py-2' : 'px-3 sm:px-6 py-2 max-w-[1400px] mx-auto'}>
         <UniverseSelector universe={universe} setUniverse={setUniverse} />
@@ -458,23 +458,21 @@ export default function App() {
       .font-mono { font-family: 'IBM Plex Mono', ui-monospace, monospace; }
       .tabular-nums { font-variant-numeric: tabular-nums; }
       ::-webkit-scrollbar { width: 8px; height: 8px; }
-      ::-webkit-scrollbar-track { background: #0a0b0d; }
-      ::-webkit-scrollbar-thumb { background: #2a2b2e; }
-      ::-webkit-scrollbar-thumb:hover { background: #3a3b3e; }
+      ::-webkit-scrollbar-track { background: rgb(var(--c-scroll-track)); }
+      ::-webkit-scrollbar-thumb { background: rgb(var(--c-scroll-thumb)); }
+      ::-webkit-scrollbar-thumb:hover { background: rgb(var(--c-scroll-thumb-hover)); }
     `}</style>
   );
 
-  const rootStyle = {
-    fontFamily: '"Sora", system-ui, sans-serif',
-    backgroundImage: `
-      radial-gradient(ellipse at top, rgba(20, 232, 154, 0.04) 0%, transparent 45%),
-      radial-gradient(ellipse at bottom, rgba(77, 186, 242, 0.02) 0%, transparent 45%)
-    `,
-  };
+  // The ambient glow is a dark-mode device — two coloured washes that read as
+  // depth against black and as a faint stain against white. It is defined per
+  // theme in index.css (`.app-glow`) rather than inline so light can dial it
+  // down instead of inheriting a tint nobody asked for.
+  const rootStyle = { fontFamily: '"Sora", system-ui, sans-serif' };
 
   if (isDesktop) {
     return (
-      <div className="min-h-screen bg-[#050607] text-neutral-200" style={rootStyle}>
+      <div className="app-glow min-h-screen bg-page text-neutral-200" style={rootStyle}>
         {fontsAndScrollbars}
         <DesktopShell
           sidebar={
@@ -502,7 +500,7 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen bg-[#050607] text-neutral-200 overflow-x-hidden" style={rootStyle}>
+    <div className="app-glow min-h-screen bg-page text-neutral-200 overflow-x-hidden" style={rootStyle}>
       {fontsAndScrollbars}
 
       <TopBar

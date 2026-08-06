@@ -120,7 +120,7 @@ export function DeskView() {
     </div>
   ) : (
     <div data-testid="desk-focus-empty" className="border border-dashed border-neutral-800 p-10 text-center">
-      <Monitor className="h-6 w-6 text-neutral-700 mx-auto mb-2" />
+      <Monitor className="h-6 w-6 text-neutral-600 mx-auto mb-2" />
       <div className="text-[12px] font-mono text-neutral-500">
         Add a ticker to the watchlist and tap a row to focus it here.
       </div>

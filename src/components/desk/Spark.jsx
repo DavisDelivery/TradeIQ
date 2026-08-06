@@ -4,11 +4,12 @@
 // Desk palette rule, and a sparkline is a shape, not a signed number.
 
 import React from 'react';
+import { chartTheme } from '../../lib/chartTheme.js';
 
 export function Spark({ values, width = 72, height = 20, className = '' }) {
   const vals = (values || []).filter((v) => typeof v === 'number' && Number.isFinite(v));
   if (vals.length < 2) {
-    return <span className="text-neutral-700 font-mono text-[10px]">—</span>;
+    return <span className="text-neutral-600 font-mono text-[10px]">—</span>;
   }
   const min = Math.min(...vals);
   const max = Math.max(...vals);
@@ -35,7 +36,7 @@ export function Spark({ values, width = 72, height = 20, className = '' }) {
       <polyline
         points={points}
         fill="none"
-        stroke="#a3a3a3"
+        stroke={chartTheme().tick}
         strokeWidth="1"
         vectorEffect="non-scaling-stroke"
       />
