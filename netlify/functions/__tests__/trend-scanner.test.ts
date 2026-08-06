@@ -36,11 +36,11 @@ const row = (ticker: string) => ({ ticker, marketCapM: 1000, price: 10, perfWeek
 
 const candidate = (ticker: string, convergence: number) => ({
   ticker, companyName: null, convergence, sourcesAvailable: 3,
-  observations: [], saturation: { mentionRank: null, mentionState: 'UNAVAILABLE', crowded: false, note: '' },
+  observations: [], saturation: { mentionRank: null, mentionState: 'UNAVAILABLE', offExchangeZ: null, crowded: false, reasons: [], note: '' },
   context: {},
 });
 
-function scanResult(candidates: any[] = [candidate('AAA', 1), candidate('ZZZ', 3)]) {
+function scanResult(candidates: any[] = [candidate('AAA', 1), candidate('ZZZ', 2)]) {
   return {
     asOf: '2026-08-06',
     universeChecked: candidates.length,
@@ -147,8 +147,15 @@ describe('trend-scanner endpoint', () => {
     });
 
     it('filters on minSources', async () => {
-      const body = JSON.parse((await call({ minSources: '3' })).body);
+      const body = JSON.parse((await call({ minSources: '2' })).body);
       expect(body.candidates.map((c: any) => c.ticker)).toEqual(['ZZZ']);
+    });
+
+    it('clamps minSources to the number of convergence legs that exist', async () => {
+      // Off-exchange moved to saturation, so there are TWO legs. Asking for 3
+      // would otherwise return a permanently empty board.
+      const body = JSON.parse((await call({ minSources: '3' })).body);
+      expect(body.minSources).toBeLessThanOrEqual(2);
     });
   });
 

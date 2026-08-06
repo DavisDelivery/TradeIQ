@@ -46,7 +46,7 @@ const MIN_LIMIT = 5;
 const Query = z.object({
   universe: z.enum(['russell2k', 'sp500']).default('russell2k'),
   limit: z.coerce.number().int().min(MIN_LIMIT).max(MAX_LIMIT).catch(DEFAULT_WATCHLIST_LIMIT),
-  minSources: z.coerce.number().int().min(1).max(3).catch(1),
+  minSources: z.coerce.number().int().min(1).max(2).catch(1),
 });
 
 function json(status: number, body: unknown) {
@@ -75,11 +75,19 @@ function json(status: number, body: unknown) {
  *
  * Best-effort: losing the record must not fail the request.
  */
-async function recordPaperTrail(trail: unknown, date: string): Promise<'written' | 'exists' | 'failed'> {
+async function recordPaperTrail(
+  trail: { date: string; universeScanned: string[] },
+  universe: string,
+): Promise<'written' | 'exists' | 'failed'> {
+  // Keyed by the SHAPE of the scan, not just the date. A ?limit=5 probe and
+  // the real 40-name sweep are different cohorts and both deserve a record;
+  // keying on the date alone let whichever ran first silently own the day.
+  const docId = `${trail.date}_${universe}_${trail.universeScanned.length}`;
   try {
     const db = getAdminDb();
-    await db.collection(COHORT_COLLECTION).doc(date).create({
-      ...(trail as Record<string, unknown>),
+    await db.collection(COHORT_COLLECTION).doc(docId).create({
+      ...trail,
+      universe,
       recordedAt: new Date().toISOString(),
     });
     return 'written';
@@ -130,7 +138,7 @@ export const handler: Handler = async (event) => {
 
     const result = await scanForTrends(input);
     const candidates = result.candidates.filter((c) => c.convergence >= minSources);
-    const recorded = await recordPaperTrail(result.paperTrail, result.asOf);
+    const recorded = await recordPaperTrail(result.paperTrail, universe);
 
     log.info('response', {
       status: 200, universe, scanned: rows.length,

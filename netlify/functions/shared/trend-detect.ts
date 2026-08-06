@@ -14,9 +14,14 @@
 //
 //   `camillo-research` reads ONE ticker you already chose.
 //
-// Neither can answer "what changed this week", and that gap is real. This
-// module answers it by measuring CHANGE in attention across the consumer
-// watchlist and reporting, per name, which sources moved.
+// Neither can answer "what changed this week", and that gap is real IN THE
+// APP. It is not true that the step "was never built": `paper/` is a complete
+// Python social-arbitrage scanner — consumer velocity, convergence, investor
+// saturation — and it is the code that produced the study cited below. What
+// was missing is a production surface. Worth knowing, because that scanner's
+// composite nets saturation against signal
+// (`SAS = ... - 0.65*investor_total`), which is precisely the move this
+// module refuses to make.
 //
 // ===========================================================================
 // THE THREE LINES THIS DOES NOT CROSS
@@ -49,11 +54,11 @@
 // 2. IT DOES NOT PRETEND THE SOURCES SHARE A CLOCK.
 //
 //    Each source is measured over its own window and REPORTS that window in
-//    its own row. Where they cannot be aligned (off-exchange volume is fixed
-//    at 5d-vs-60d inside `quiver-offexchange.ts`), the mismatch is printed
-//    rather than smoothed over. Three sources measured over three different
-//    lookbacks cannot "agree about an event" and the payload must not imply
-//    that they did.
+//    its own row. The two convergence legs are aligned on 7-vs-28 for exactly
+//    this reason; the off-exchange gauge is fixed at 5d-vs-60d upstream in
+//    `quiver-offexchange.ts` and prints that, rather than being quietly
+//    described as though it shared the others' clock. Measurements taken over
+//    different lookbacks have not "agreed about an event".
 //
 // 3. IT RECORDS A CONTROL COHORT, EVERY TIME IT RUNS.
 //
@@ -87,7 +92,7 @@
 import { fetchOffExchange } from './quiver-offexchange';
 import { fetchPageviews, resolveArticle } from './trend-exposure';
 import { readMentionHistory, readTicker, type MentionSnapshot } from './social-mentions';
-import { getTickerName } from './ticker-reference';
+import { enrichTickerNames } from './ticker-reference';
 import { logger } from './logger';
 
 const log = logger.child({ mod: 'trend-detect' });
@@ -115,8 +120,6 @@ export const THRESHOLDS = {
   wikiSpikePct: 25,
   /** Recorded retail mentions, 7d mean vs prior 28d mean. */
   mentionSpikePct: 100,
-  /** Off-exchange volume vs its own baseline, in sd. Window is NOT ours. */
-  offExchangeZ: 1.0,
 } as const;
 
 /**
@@ -133,6 +136,12 @@ export const SATURATION = {
   /** Retail-forum rank inside the tracked list. Lower rank = louder. */
   loudRank: 150,
   instOwnPct: 70,
+  /**
+   * Off-exchange volume vs its own 60d baseline, in sd. A POSITIVE reading is
+   * crowding, not signal — see the `DetectSource` note. Its window is fixed
+   * upstream in `quiver-offexchange.ts` and is not this detector's window.
+   */
+  offExchangeZ: 1.0,
 } as const;
 
 export const DETECT_CAVEAT =
@@ -148,7 +157,29 @@ export const DETECT_CAVEAT =
 // Types
 // ---------------------------------------------------------------------------
 
-export type DetectSource = 'wikipedia' | 'mentions' | 'offExchange';
+/**
+ * The sources that can count toward convergence.
+ *
+ * OFF-EXCHANGE VOLUME IS NOT ONE OF THEM, and that is a correction rather
+ * than an omission. This app's own Camillo doctrine — the system prompt in
+ * `shared/camillo-research.ts` — reads:
+ *
+ *   "Off-exchange volume against its own baseline is a RETAIL-crowding gauge:
+ *    a positive z means the crowd is already here, which argues AGAINST an
+ *    undiscovered setup."
+ *
+ * Counting that same measurement as evidence FOR a candidate would have put
+ * two endpoints in this one app on opposite sides of the same number:
+ * `/api/camillo-research` calling a +1.8sd reading a discovery warning while
+ * `/api/trend-scanner` called it a reason to look. It moves to `saturation`,
+ * where the doctrine already puts it.
+ *
+ * The honest cost: that leaves TWO convergence sources, and the mention leg
+ * is UNCHECKED until the daily snapshot accumulates 35 days. App review
+ * velocity — a "what consumers DO" flow, the class the study found does not
+ * reverse — is the next leg and the one that restores a second live source.
+ */
+export type DetectSource = 'wikipedia' | 'mentions';
 
 export interface SourceObservation {
   source: DetectSource;
@@ -185,7 +216,7 @@ export interface TrendCandidate {
   ticker: string;
   companyName: string | null;
   /**
-   * Independent sources that moved UP, 0-3. A COUNT, reported for filtering.
+   * Independent sources that moved UP, 0-2. A COUNT, reported for filtering.
    * It is NOT the sort key and must not become one — see the header.
    */
   convergence: number;
@@ -196,7 +227,12 @@ export interface TrendCandidate {
   saturation: {
     mentionRank: number | null;
     mentionState: 'TRACKED' | 'BELOW_FLOOR' | 'UNAVAILABLE';
+    /** Retail participation vs the name's OWN 60d baseline, in sd. A
+     *  positive reading is crowding, not signal. */
+    offExchangeZ: number | null;
     crowded: boolean;
+    /** Which gauges fired, so `crowded` is never a bare assertion. */
+    reasons: string[];
     note: string;
   };
   /** Columns a trader needs before a name is actionable. Never scored. */
@@ -408,22 +444,12 @@ export function assessCandidate(
     ),
   );
 
-  // 3. OFF-EXCHANGE VOLUME — retail participation against the name's own
-  //    baseline. Its window is FIXED INSIDE `quiver-offexchange.ts` at 5d vs
-  //    60d and is NOT the window above. Printing the real one is the whole
-  //    point: this row has not been measured over the same period as the
-  //    other two and must never be read as though it had.
-  const oez = inputs.offExchangeZ ?? null;
-  observations.push({
-    source: 'offExchange',
-    value: oez,
-    unbounded: false,
-    unit: 'sd',
-    window: '5d mean vs prior 60d (fixed upstream — NOT this detector\'s window)',
-    checked: oez != null,
-    moved: oez != null && oez >= THRESHOLDS.offExchangeZ,
-    reason: oez == null ? 'not enough off-exchange history' : null,
-  });
+  // OFF-EXCHANGE VOLUME IS NOT AN OBSERVATION — it is a saturation gauge, and
+  // it lives below. Measured live on the deploy preview before this was
+  // corrected, 4 of 7 candidates were flagged SOLELY by a positive
+  // off-exchange z, and 3 of those were simultaneously marked crowded: the
+  // board was surfacing names on the strength of the one number this app's
+  // own Camillo doctrine reads as "the crowd already got here".
 
   const sourcesAvailable = observations.filter((s) => s.checked).length;
   const convergence = observations.filter((s) => s.moved).length;
@@ -431,7 +457,14 @@ export function assessCandidate(
   const loud = m?.state === 'TRACKED' && m.rank != null && m.rank <= SATURATION.loudRank;
   const instOwn = inputs.context?.instOwnPct ?? null;
   const heldByInstitutions = instOwn != null && instOwn >= SATURATION.instOwnPct;
-  const crowded = Boolean(loud || heldByInstitutions);
+  const oez = inputs.offExchangeZ ?? null;
+  const retailCrowded = oez != null && oez >= SATURATION.offExchangeZ;
+
+  const reasons: string[] = [];
+  if (loud) reasons.push(`loud on retail forums (rank ${m?.rank}) — the crowd is here, which argues the gap has closed`);
+  if (heldByInstitutions) reasons.push(`institutional ownership ${instOwn?.toFixed(0)}% — already discovered by professionals`);
+  if (retailCrowded) reasons.push(`off-exchange volume ${oez?.toFixed(2)}sd above its own baseline — retail is already trading it`);
+  const crowded = reasons.length > 0;
 
   return {
     ticker,
@@ -442,11 +475,11 @@ export function assessCandidate(
     saturation: {
       mentionRank: m?.rank ?? null,
       mentionState: m?.state ?? 'UNAVAILABLE',
+      offExchangeZ: oez,
       crowded,
+      reasons,
       note: crowded
-        ? loud
-          ? `already loud on retail forums (rank ${m?.rank}) — the crowd is here, which argues the gap has closed`
-          : `institutional ownership ${instOwn?.toFixed(0)}% — already discovered by professionals`
+        ? reasons.join('; ')
         : 'not crowded on the measures available — consistent with an undiscovered setup, not evidence for one',
     },
     context: { ...EMPTY_CONTEXT, ...(inputs.context ?? {}) },
@@ -607,9 +640,27 @@ export async function scanForTrends(
   }
   const latest: MentionSnapshot | null = history[0] ?? null;
 
+  // Bulk name lookup — ONE Firestore round trip for the whole universe rather
+  // than forty. `enrichTickerNames` is the reader the scans already use for
+  // exactly this, and forty sequential gets against a slow-but-alive Firestore
+  // is how a scan quietly eats its entire time budget.
+  const names = await enrichTickerNames(universe.map((u) => u.ticker.toUpperCase())).catch(
+    () => ({}) as Record<string, string>,
+  );
+
+  // Wholesale failure has to be distinguishable from "nothing is trending".
+  // Counting per-source failures is what makes an empty board explainable:
+  // without it, Wikipedia being down for every name returns 200 with an empty
+  // list and an empty `degraded`, which is exactly the lie this handler
+  // refuses to tell about a dead Finviz feed.
+  let wikiAttempted = 0;
+  let wikiFailed = 0;
+  let offExchangeAttempted = 0;
+  let offExchangeFailed = 0;
+
   const results = await pool(universe, opts.concurrency ?? 6, async (row) => {
     const t = row.ticker.toUpperCase();
-    const name = row.companyName ?? (await getTickerName(t).catch(() => null));
+    const name = row.companyName ?? names[t] ?? null;
     const usableName = name && name !== t ? name : null;
 
     // --- Wikipedia. Needs a company name; a bare ticker resolves to the
@@ -617,6 +668,7 @@ export async function scanForTrends(
     let wikiSpikePct: number | null = null;
     let wikiReason: string | null = usableName ? null : 'no company name resolved, so no article to look up';
     if (usableName) {
+      wikiAttempted++;
       try {
         const article = await resolveArticle(usableName);
         if (!article) {
@@ -630,16 +682,21 @@ export async function scanForTrends(
           wikiReason = spike.reason;
         }
       } catch (e: any) {
+        wikiFailed++;
         wikiReason = `pageview lookup failed: ${String(e?.message ?? e)}`;
       }
     }
 
-    // --- Off-exchange volume.
+    // --- Off-exchange volume. A SATURATION gauge, not a detect source.
     let offExchangeZ: number | null = null;
+    offExchangeAttempted++;
     try {
       const oe = await fetchOffExchange(t);
       offExchangeZ = oe.available ? oe.volumeZ : null;
-    } catch { /* per-name gap, not a run failure */ }
+      if (!oe.available) offExchangeFailed++;
+    } catch {
+      offExchangeFailed++; // per-name gap; only a RUN failure if it is all of them
+    }
 
     // --- Retail mentions, off our own recorded series.
     const read = readTicker(t, latest);
@@ -674,9 +731,28 @@ export async function scanForTrends(
   });
 
   const assessed = results.filter((c): c is TrendCandidate => c !== null);
+
+  // A source that failed for EVERY name it was tried on did not measure
+  // "no movement" — it measured nothing, and an empty board built on it is
+  // not a finding.
+  if (wikiAttempted > 0 && wikiFailed === wikiAttempted) {
+    degraded.push(`wikipedia: every one of ${wikiAttempted} lookups failed — this board cannot claim nothing moved`);
+  }
+  if (offExchangeAttempted > 0 && offExchangeFailed === offExchangeAttempted) {
+    degraded.push(`off-exchange: unavailable for all ${offExchangeAttempted} names — saturation is unmeasured, not clear`);
+  }
+  if (assessed.length < universe.length) {
+    degraded.push(`${universe.length - assessed.length} of ${universe.length} names failed outright`);
+  }
+
   const candidates = selectMoved(assessed, 1);
   const scanned = universe.map((u) => u.ticker.toUpperCase()).sort();
-  const seed = `${asOf}:${scanned.length}:${scanned[0] ?? ''}`;
+  // The seed identifies the SHAPE of the scan, not just the day. Observed on
+  // the deploy preview: a ?limit=5 call wrote the day's record first, and the
+  // real 40-name scan then could not record at all because the date key was
+  // taken. A cohort has to be pinned to the universe it was actually drawn
+  // from, or the forward record compares a 40-name board to a 5-name control.
+  const seed = `${asOf}:${scanned.length}:${scanned[0] ?? ''}:${scanned[scanned.length - 1] ?? ''}`;
 
   log.info('scan', {
     universe: universe.length,

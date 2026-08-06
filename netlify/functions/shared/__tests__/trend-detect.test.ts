@@ -114,8 +114,11 @@ describe('assessCandidate — a count of what moved, never a score', () => {
       mentions: { state: 'TRACKED', rank: 400, spikePct: 400 },
       offExchangeZ: 1.8,
     });
-    expect(c.convergence).toBe(3);
-    expect(c.sourcesAvailable).toBe(3);
+    // Two convergence legs. The off-exchange reading is real and is reported,
+    // but on the saturation side — it cannot add to the count.
+    expect(c.convergence).toBe(2);
+    expect(c.sourcesAvailable).toBe(2);
+    expect(c.saturation.offExchangeZ).toBe(1.8);
   });
 
   it('does not let ONE source manufacture a strong reading on its own', () => {
@@ -125,7 +128,7 @@ describe('assessCandidate — a count of what moved, never a score', () => {
       offExchangeZ: 0,
     });
     expect(c.convergence).toBe(1);
-    expect(c.sourcesAvailable).toBe(3);
+    expect(c.sourcesAvailable).toBe(2);
   });
 
   it('never blends units and exposes no composite anywhere on the object', () => {
@@ -134,22 +137,39 @@ describe('assessCandidate — a count of what moved, never a score', () => {
       mentions: { state: 'TRACKED', rank: 400, spikePct: 400 },
       offExchangeZ: 1.8,
     });
-    expect(new Set(c.observations.map((o) => o.unit))).toEqual(new Set(['%', 'sd']));
+    expect(new Set(c.observations.map((o) => o.unit))).toEqual(new Set(['%']));
+    // The sd-unit reading still exists — it is just not an observation.
+    expect(c.saturation.offExchangeZ).toBe(1.8);
     expect(c).not.toHaveProperty('score');
     expect(c).not.toHaveProperty('composite');
     expect(JSON.stringify(c)).not.toMatch(/"(score|composite|rank(ing)?Score)"/);
   });
 
-  it('PRINTS each source\'s real window, and they are not all the same', () => {
-    // The honesty invariant. Off-exchange is fixed at 5d-vs-60d inside
-    // quiver-offexchange.ts. Three sources on three clocks have not "agreed
-    // about an event", and the payload must not let anyone claim they did.
+  it('PRINTS the window each source was measured over', () => {
+    // The honesty invariant. The two convergence legs are aligned on 7-vs-28
+    // deliberately; anything measured on a different clock must say so rather
+    // than be described as though it agreed with them.
     const c = assessCandidate('X', null, { wikiSpikePct: 60, offExchangeZ: 1.8 });
-    const wiki = c.observations.find((o) => o.source === 'wikipedia')!;
-    const oe = c.observations.find((o) => o.source === 'offExchange')!;
-    expect(wiki.window).toBe('7d mean vs prior 28d mean');
-    expect(oe.window).toMatch(/5d mean vs prior 60d/);
-    expect(oe.window).not.toBe(wiki.window);
+    for (const o of c.observations) expect(o.window).toBe('7d mean vs prior 28d mean');
+  });
+
+  it('does NOT count off-exchange volume toward convergence — it is a CROWDING gauge', () => {
+    // shared/camillo-research.ts states this app's doctrine verbatim: "a
+    // positive z means the crowd is already here, which argues AGAINST an
+    // undiscovered setup." Counting it as evidence FOR a candidate put two
+    // endpoints in one app on opposite sides of the same number. Measured on
+    // the deploy preview before this was corrected, 4 of 7 candidates were
+    // flagged SOLELY by a positive off-exchange z.
+    const c = assessCandidate('X', null, { offExchangeZ: 2.5 });
+    expect(c.observations.some((o) => (o.source as string) === 'offExchange')).toBe(false);
+    expect(c.convergence).toBe(0);
+    expect(c.saturation.offExchangeZ).toBe(2.5);
+    expect(c.saturation.crowded).toBe(true);
+    expect(c.saturation.reasons.join(' ')).toMatch(/retail is already trading it/);
+  });
+
+  it('a high off-exchange z can never on its own make a name a candidate', () => {
+    expect(selectMoved([assessCandidate('X', null, { offExchangeZ: 9 })])).toEqual([]);
   });
 
   it('carries an unbounded rise through as MOVED and CHECKED', () => {
@@ -184,12 +204,18 @@ describe('assessCandidate — a count of what moved, never a score', () => {
   it('treats a missing source as UNCHECKED, never as a negative', () => {
     const c = assessCandidate('X', null, { wikiSpikePct: 60 });
     expect(c.convergence).toBe(1);
-    expect(c.sourcesAvailable).toBe(1); // out of 1, not out of 3
-    const oe = c.observations.find((o) => o.source === 'offExchange')!;
-    expect(oe.checked).toBe(false);
-    expect(oe.moved).toBe(false);
-    expect(oe.value).toBeNull();
-    expect(oe.reason).toMatch(/not enough/);
+    expect(c.sourcesAvailable).toBe(1); // out of 1, not out of 2
+    const m = c.observations.find((o) => o.source === 'mentions')!;
+    expect(m.checked).toBe(false);
+    expect(m.moved).toBe(false);
+    expect(m.value).toBeNull();
+    expect(m.reason).toMatch(/no recorded mention history/);
+  });
+
+  it('reports an unmeasured saturation gauge as null, not as "not crowded"', () => {
+    const c = assessCandidate('X', null, { wikiSpikePct: 60 });
+    expect(c.saturation.offExchangeZ).toBeNull();
+    expect(c.saturation.reasons).toEqual([]);
   });
 
   it('says quiet is the EXPECTED state for an undiscovered name', () => {
@@ -203,7 +229,10 @@ describe('assessCandidate — a count of what moved, never a score', () => {
   });
 
   it('requires an UP move — a collapse in attention is not a candidate', () => {
-    const c = assessCandidate('X', null, { wikiSpikePct: -80, offExchangeZ: -2.4 });
+    const c = assessCandidate('X', null, {
+      wikiSpikePct: -80,
+      mentions: { state: 'TRACKED', rank: 400, spikePct: -50 },
+    });
     expect(c.convergence).toBe(0);
     expect(c.sourcesAvailable).toBe(2); // measured, and measured as "no"
   });
@@ -211,7 +240,8 @@ describe('assessCandidate — a count of what moved, never a score', () => {
   it('honours each threshold exactly at the boundary', () => {
     expect(assessCandidate('A', null, { wikiSpikePct: THRESHOLDS.wikiSpikePct }).convergence).toBe(1);
     expect(assessCandidate('B', null, { wikiSpikePct: THRESHOLDS.wikiSpikePct - 0.1 }).convergence).toBe(0);
-    expect(assessCandidate('C', null, { offExchangeZ: THRESHOLDS.offExchangeZ }).convergence).toBe(1);
+    expect(assessCandidate('C', null, { offExchangeZ: SATURATION.offExchangeZ }).saturation.crowded).toBe(true);
+    expect(assessCandidate('C2', null, { offExchangeZ: SATURATION.offExchangeZ - 0.01 }).saturation.crowded).toBe(false);
     expect(
       assessCandidate('D', null, { mentions: { state: 'TRACKED', rank: 9, spikePct: THRESHOLDS.mentionSpikePct } }).convergence,
     ).toBe(1);
@@ -225,8 +255,11 @@ describe('saturation is reported, never netted', () => {
       mentions: { state: 'TRACKED', rank: 3, spikePct: 900 },
       offExchangeZ: 2.0,
     });
-    expect(c.convergence).toBe(3);
+    // Three crowding gauges all firing, and the convergence count is
+    // untouched by every one of them. That is the whole invariant.
+    expect(c.convergence).toBe(2);
     expect(c.saturation.crowded).toBe(true);
+    expect(c.saturation.reasons).toHaveLength(2); // loud rank + off-exchange
   });
 
   it('flags retail crowding by rank', () => {
@@ -397,7 +430,7 @@ describe('the contract refuses to imply edge', () => {
   it('thresholds and windows are explicit constants a reader can argue with', () => {
     expect(THRESHOLDS.wikiSpikePct).toBe(25);
     expect(THRESHOLDS.mentionSpikePct).toBe(100);
-    expect(THRESHOLDS.offExchangeZ).toBe(1.0);
+    expect(SATURATION.offExchangeZ).toBe(1.0);
     expect(WINDOW).toEqual({ recentDays: 7, baseDays: 28 });
     expect(MIN_MENTION_HISTORY_DAYS).toBe(35);
   });
