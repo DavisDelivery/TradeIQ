@@ -12,6 +12,7 @@ import { LogButton } from './components/LogButton.jsx';
 import { useChartAnalysis } from './hooks/useChartAnalysis.js';
 import { FundamentalsStrip } from './components/detail/FundamentalsStrip.jsx';
 import { chartTheme } from './lib/chartTheme.js';
+import { Ticker } from './components/Ticker.jsx';
 
 const QUICK_TICKERS = ['NVDA', 'AAPL', 'MSFT', 'TSLA', 'META', 'GOOGL', 'AMZN', 'SPY'];
 
@@ -127,7 +128,7 @@ const SignalHeader = ({ data }) => {
     <div className="border border-neutral-800 bg-neutral-950/40 p-3 sm:p-4 mb-3">
       <div className="flex items-baseline justify-between flex-wrap gap-3">
         <div className="flex items-baseline gap-3">
-          <span className="font-serif font-bold text-2xl sm:text-3xl text-neutral-100">{ticker}</span>
+          <Ticker symbol={ticker} board="chart" className="font-serif font-bold text-2xl sm:text-3xl text-neutral-100" />
           <span className="font-mono text-lg text-neutral-200">${Number.isFinite(price) ? price.toFixed(2) : '—'}</span>
           <span className={`font-mono text-[13px] ${changeColor}`}>
             {(priceChangePct ?? 0) >= 0 ? '+' : ''}{priceChangePct ?? 0}%

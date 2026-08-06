@@ -1,6 +1,7 @@
 import React from 'react';
 import { Shield } from 'lucide-react';
 import { StatusDot } from './components/Badges.jsx';
+import { Ticker } from './components/Ticker.jsx';
 
 export const RegimeView = ({ regime }) => {
   if (!regime || !regime.regime) {
@@ -66,7 +67,7 @@ export const RegimeView = ({ regime }) => {
           <div className="text-[10px] uppercase tracking-[0.2em] text-neutral-500 font-mono">Risk Appetite</div>
           <div className="mt-3 space-y-3">
             <div>
-              <div className="text-[11px] font-mono text-neutral-500 uppercase tracking-widest">SPY / TLT Trend</div>
+              <div className="text-[11px] font-mono text-neutral-500 uppercase tracking-widest"><Ticker symbol="SPY" board="regime" className="text-inherit" /> / <Ticker symbol="TLT" board="regime" className="text-inherit" /> Trend</div>
               <div className={`text-sm mt-1 ${
                 regime.riskAppetite?.ratioTrend === 'risk_on_rising' ? 'text-emerald-400' :
                 regime.riskAppetite?.ratioTrend === 'risk_off_rising' ? 'text-rose-400' : 'text-neutral-300'

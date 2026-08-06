@@ -14,6 +14,7 @@ import { readLog, updateTrade, daysBetween } from '../../tradeLog.js';
 import { isClosed, rMultiple } from '../../lib/baseRates.js';
 import { useSortable, SortableTh } from '../../lib/useSortable.jsx';
 import { useStopWatch } from '../../hooks/useStopWatch.js';
+import { Ticker } from '../Ticker.jsx';
 
 const dash = <span className="text-neutral-600">—</span>;
 
@@ -170,7 +171,7 @@ export function PositionsPanel({ quotesByTicker, focusTicker, onFocus }) {
                     }`}
                   >
                     <td className="px-3 py-1.5">
-                      <span className="font-semibold text-neutral-200">{row.ticker}</span>
+                      <Ticker symbol={row.ticker} board="desk" className="font-semibold text-neutral-200" />
                       {row.setup && <span className="ml-1.5 text-[9px] text-neutral-500 uppercase">{row.setup}</span>}
                       {breach && (
                         // "Observed", not "stopped out": a 15-minute poll samples

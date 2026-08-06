@@ -1,5 +1,5 @@
-import React, { useMemo, useState } from 'react';
-import { TickerDetailModal } from './detail/TickerDetailModal.jsx';
+import React, { useMemo } from 'react';
+import { Ticker } from './Ticker.jsx';
 import { useSortable, SortableTh } from '../lib/useSortable.jsx';
 import { ChartPanel } from './ChartPanel.jsx';
 
@@ -47,8 +47,9 @@ function topByAbsContribution(attribution, n = 10) {
 }
 
 export function TopTradesTable({ attribution }) {
-  // Backtest attribution rows are real tickers; they opened nothing.
-  const [selected, setSelected] = useState(null);
+  // TICKER-1: predates the app-root provider — kept local selected state and
+  // its own TickerDetailModal. Now the symbol IS the primitive; one less
+  // modal, one less state hook, and it cannot drift from the app pattern.
   const rows = useMemo(() => topByAbsContribution(attribution, 10), [attribution]);
 
   // Default sort: contribution desc (biggest winners on top); user can
@@ -71,12 +72,6 @@ export function TopTradesTable({ attribution }) {
       title="Top 10 positions by P&L"
       subtitle="Ranked by |contribution| — both winners and losers appear"
     >
-      <TickerDetailModal
-        ticker={selected?.ticker}
-        row={selected}
-        board="backtest"
-        onClose={() => setSelected(null)}
-      />
       <div className="overflow-x-auto" data-testid="top-trades-table">
         <table className="w-full text-[11px] font-mono">
           <thead>
@@ -108,13 +103,7 @@ export function TopTradesTable({ attribution }) {
                 className="border-b border-neutral-900/60 hover:bg-neutral-900/40"
               >
                 <td className="px-3 py-2">
-                  <button
-                    onClick={(e) => { e.stopPropagation(); setSelected(r); }}
-                    title={`Open ${r.ticker} full profile`}
-                    className="text-neutral-200 font-semibold hover:text-emerald-300 transition-colors"
-                  >
-                    {r.ticker}
-                  </button>
+                  <Ticker symbol={r.ticker} row={r} board="backtest" className="text-neutral-200 font-semibold" />
                 </td>
                 <td className="px-3 py-2 text-neutral-400 text-[10px]">{r.rebalanceDate}</td>
                 <td className="px-3 py-2 text-right tabular-nums text-neutral-300">

@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ShoppingCart } from 'lucide-react';
 import { queryKeys } from '../lib/queryKeys.js';
 import { getIdToken } from '../lib/auth.js';
+import { Ticker } from './Ticker.jsx';
 
 // Pending agentic orders. Renders inside the Journal — fills land below as
 // journal entries, so the loop closes here. Cancel and "Mark filled" both
@@ -102,7 +103,7 @@ export function TradeQueuePanel() {
         {[...rows, ...recent].map((r) => (
           <div key={r.id} className="px-4 py-2 flex items-center gap-3 text-[12px] font-mono flex-wrap">
             <span className={`px-1.5 py-0.5 text-[9px] uppercase tracking-wider border ${statusStyle(r.status)}`}>{r.status}</span>
-            <span className="font-serif font-bold text-sm">{r.ticker}</span>
+            <Ticker symbol={r.ticker} board="queue" className="font-serif font-bold text-sm text-neutral-100" />
             <span className={r.side === 'sell' ? 'text-rose-300' : 'text-neutral-400'}>
               {r.side ?? 'buy'} {r.qty ?? '—'}{r.limitPrice ? ` @ ≤$${r.limitPrice}` : ' @ mkt'}
               {(r.stopPrice || r.stopLossPct) && (

@@ -5,6 +5,7 @@
 
 import React from 'react';
 import { useSortable, SortableTh } from '../../lib/useSortable.jsx';
+import { Ticker } from '../Ticker.jsx';
 
 const dash = <span className="text-neutral-600">—</span>;
 
@@ -57,7 +58,7 @@ export function EarningsRadarPanel({ radarByTicker, focusTicker, onFocus }) {
                     focusTicker === r.ticker ? 'bg-emerald-500/5' : ''
                   }`}
                 >
-                  <td className="px-3 py-1.5 font-semibold text-neutral-200">{r.ticker}</td>
+                  <td className="px-3 py-1.5 font-semibold text-neutral-200"><Ticker symbol={r.ticker} board="desk" className="text-inherit" /></td>
                   <td className={`px-3 py-1.5 text-right tabular-nums ${cls}`}>{r.daysUntil}d</td>
                   <td className="px-3 py-1.5 text-neutral-400">{r.date}</td>
                   <td className="px-3 py-1.5 text-right tabular-nums text-neutral-300">

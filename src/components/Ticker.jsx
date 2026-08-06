@@ -22,7 +22,9 @@
 //     unit test rendering a panel in isolation still works.
 //   - It is a <button>, so it is keyboard-reachable and screen-reader
 //     announced, and it carries a visible underline affordance because an
-//     invisible tap target is the same as no tap target.
+//     invisible tap target is the same as no tap target. Deliberately NO
+//     title tooltip: tooltips do not exist on iOS touch, and this repo has
+//     already shipped one "affordance" nobody on a phone could reach.
 //   - `stopPropagation` on click: tickers frequently sit inside rows that are
 //     themselves clickable, and opening the profile must not also fire the
 //     row's own select.
@@ -108,7 +110,6 @@ export function Ticker({
         onOpen?.(label);
         openTicker(label, { row, board });
       }}
-      title={`Open ${label.toUpperCase()} profile`}
       className={
         'inline underline decoration-dotted decoration-neutral-600 underline-offset-2 ' +
         'hover:text-emerald-400 hover:decoration-emerald-400 focus-visible:outline-none ' +

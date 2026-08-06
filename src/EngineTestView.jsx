@@ -4,6 +4,7 @@ import { tierColor } from './lib/formatters.jsx';
 import { ConvictionBadge, DirectionPill } from './components/Badges.jsx';
 import { useEngineTest } from './hooks/useEngineTest.js';
 import { FundamentalsStrip } from './components/detail/FundamentalsStrip.jsx';
+import { Ticker } from './components/Ticker.jsx';
 
 export const EngineTestView = () => {
   const [ticker, setTicker] = useState('NVDA');
@@ -66,7 +67,7 @@ export const EngineTestView = () => {
         <div className="space-y-4">
           <div className="border border-neutral-800 p-5">
             <div className="flex items-baseline gap-4 mb-3">
-              <h2 className="font-serif font-bold text-2xl">{result.ticker}</h2>
+              <h2 className="font-serif font-bold text-2xl"><Ticker symbol={result.ticker} board="engine" className="text-inherit" /></h2>
               <span className="font-mono text-neutral-300">${result.price?.toFixed(2)}</span>
               <span className={`font-mono text-sm ${result.priceChangePct >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
                 {result.priceChangePct >= 0 ? '+' : ''}{result.priceChangePct?.toFixed(2)}%
@@ -129,7 +130,7 @@ export const EngineTestView = () => {
                 {result.sectorRanking.map(s => (
                   <div key={s.etf} className="flex items-center justify-between text-[12px] font-mono border border-neutral-800/60 px-2 py-1">
                     <span className="text-neutral-500">#{s.rank}</span>
-                    <span className="text-neutral-200">{s.etf}</span>
+                    <Ticker symbol={s.etf} board="engine" className="text-neutral-200" />
                     <span className={(s.composite ?? 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'}>
                       {Number.isFinite(s.composite) ? `${s.composite >= 0 ? '+' : ''}${(s.composite * 100).toFixed(1)}%` : '—'}
                     </span>

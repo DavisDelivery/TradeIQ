@@ -11,6 +11,7 @@ import { useLiveRows } from './hooks/useLiveQuotes.js';
 import { FundamentalsStrip } from './components/detail/FundamentalsStrip.jsx';
 import { MasterDetail } from './layout/MasterDetail.jsx';
 import { StockDetailPanel } from './components/detail/StockDetailPanel.jsx';
+import { Ticker } from './components/Ticker.jsx';
 
 const FILTER_OPTIONS = [
   { id: 'all', label: 'Any catalyst', desc: 'Any signal active' },
@@ -181,7 +182,7 @@ const CatalystRow = ({ pick, expanded, onToggle, onOpen }) => {
                 >
                   {pick.ticker}
                 </button>
-                <span className="text-[11px] text-neutral-500 truncate">{pick.name}</span>
+                <Ticker symbol={pick.ticker} row={pick} board="catalyst" className="text-[11px] text-neutral-500 truncate">{pick.name}</Ticker>
               </div>
               <div className="text-right flex-shrink-0">
                 <div className="text-[13px] text-neutral-200 font-mono">${pick.price?.toFixed(2)}</div>
@@ -198,7 +199,7 @@ const CatalystRow = ({ pick, expanded, onToggle, onOpen }) => {
             Same hook as everywhere else; lazy-fetched via intersection
             observer. */}
         <div className="mt-2 pt-2 border-t border-neutral-800/60 ml-[60px]">
-          <FundamentalsStrip ticker={pick.ticker} showExpandIcon={false} />
+          <FundamentalsStrip ticker={pick.ticker} showExpandIcon onExpand={() => onOpen?.(pick)} />
         </div>
       </div>
       {expanded && <CatalystDetail pick={pick} onOpen={onOpen} />}

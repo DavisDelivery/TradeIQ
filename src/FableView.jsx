@@ -14,6 +14,7 @@ import { MasterDetail } from './layout/MasterDetail.jsx';
 import { StockDetailPanel } from './components/detail/StockDetailPanel.jsx';
 import { FABLE_LEGEND, FABLE_ENTRY_LEGEND } from './components/detail/FablePillarsSection.jsx';
 import { useLiveRows } from './hooks/useLiveQuotes.js';
+import { Ticker } from './components/Ticker.jsx';
 
 const PILLARS = Object.entries(FABLE_LEGEND).map(([key, m]) => [key, m.label, m.short]);
 
@@ -63,7 +64,7 @@ function FableCard({ row, rank, onOpen }) {
             >
               {row.ticker}
             </button>
-            <span className="truncate text-xs text-neutral-500">{row.name}</span>
+            <Ticker symbol={row.ticker} row={row} board="fable" className="truncate text-xs text-neutral-500">{row.name}</Ticker>
           </div>
           <div className="mt-0.5 text-[11px] text-neutral-500">
             {row.sector} · <span className="text-neutral-300">${row.price?.toFixed(2)}</span>

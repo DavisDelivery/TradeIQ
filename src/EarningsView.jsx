@@ -275,7 +275,7 @@ export const EarningsPlaysView = () => {
                     {/* PR-G — fundamentals strip beneath every earnings row */}
                     <tr className="bg-neutral-950/40">
                       <td colSpan={9} className="px-3 py-1.5">
-                        <FundamentalsStrip ticker={e.ticker} showExpandIcon={false} />
+                        <FundamentalsStrip ticker={e.ticker} showExpandIcon onExpand={() => setSelected(e)} />
                       </td>
                     </tr>
                     {isOpen && (

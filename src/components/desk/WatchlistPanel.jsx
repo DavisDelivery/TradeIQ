@@ -17,6 +17,7 @@ import { useSortable, SortableTh } from '../../lib/useSortable.jsx';
 import { fmtMcap, fmtCompact } from '../../lib/formatters.jsx';
 import { Spark } from './Spark.jsx';
 import { SignalCell } from './SignalCell.jsx';
+import { Ticker } from '../Ticker.jsx';
 
 const dash = <span className="text-neutral-600">—</span>;
 
@@ -197,9 +198,14 @@ export function WatchlistPanel({
                   }`}
                 >
                   <td className="px-3 py-1.5">
-                    <span className={`font-semibold ${focusTicker === row.ticker ? 'text-emerald-400' : 'text-neutral-200'}`}>
-                      {row.ticker}
-                    </span>
+                    {/* TICKER-1: the row click FOCUSES the Desk pane; the
+                        symbol itself opens the full profile. Both gestures
+                        survive — <Ticker> stops propagation. */}
+                    <Ticker
+                      symbol={row.ticker}
+                      board="desk"
+                      className={`font-semibold ${focusTicker === row.ticker ? 'text-emerald-400' : 'text-neutral-200'}`}
+                    />
                     {row.pendingSync && <span className="ml-1 text-[8px] text-neutral-600" title="Not yet synced to cloud">●</span>}
                   </td>
                   <td className="px-3 py-1.5 text-right tabular-nums text-neutral-200">{num(row.last)}</td>

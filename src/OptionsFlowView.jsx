@@ -165,7 +165,7 @@ export const OptionsFlowView = () => {
               <p className="text-[12px] text-neutral-400 leading-relaxed">{o.rationale}</p>
               {/* PR-G — fundamentals strip beneath each options-flow card */}
               <div className="mt-3 pt-2 border-t border-neutral-800/60">
-                <FundamentalsStrip ticker={o.ticker} showExpandIcon={false} />
+                <FundamentalsStrip ticker={o.ticker} showExpandIcon onExpand={() => setSelected(o)} />
               </div>
             </div>
           );

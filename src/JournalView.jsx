@@ -293,7 +293,7 @@ export const JournalView = () => {
                       entry so the logged trade has current fundamentals
                       context at-a-glance. */}
                   <div className="border-t border-neutral-800/60 px-3 py-1.5 bg-neutral-950/40">
-                    <FundamentalsStrip ticker={t.ticker} showExpandIcon={false} />
+                    <FundamentalsStrip ticker={t.ticker} showExpandIcon onExpand={() => setSelected(t)} />
                   </div>
                   {isOpen && (
                     <div className="border-t border-neutral-800 p-3 sm:p-4 bg-black/40 space-y-3">
