@@ -127,6 +127,11 @@
 [functions."quotes"]
   timeout = 26
 
+# SECTOR-1 — cold cache fans out to 12 sector ETFs + SPY for ~420 days of
+# bars each. Warm calls are in-process cache hits and return instantly.
+[functions."sector-performance"]
+  timeout = 26
+
 # ==========================================================================
 # API redirects — rewrite /api/<endpoint> to /.netlify/functions/<endpoint>
 # ==========================================================================
@@ -142,6 +147,12 @@
 [[redirects]]
   from = "/api/screens-board"
   to = "/.netlify/functions/screens-board"
+  status = 200
+
+# SECTOR-1 — cross-sector strength table (one payload serves every profile).
+[[redirects]]
+  from = "/api/sector-performance"
+  to = "/.netlify/functions/sector-performance"
   status = 200
 
 # STOP-1 — observed stop breaches from the scheduled watcher.
