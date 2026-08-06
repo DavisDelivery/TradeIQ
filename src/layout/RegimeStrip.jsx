@@ -16,7 +16,7 @@ export function RegimeStrip({ regime, universeStats }) {
   // render-time snapshot that never updated.
   const etTime = useEtClock();
   return (
-    <div className="h-8 bg-[#090a0c] text-[11px] font-mono overflow-x-auto scrollbar-hide">
+    <div className="h-8 bg-strip text-[11px] font-mono overflow-x-auto scrollbar-hide">
       <div className="flex items-center h-full gap-3 sm:gap-6 px-3 sm:px-6 text-neutral-400 whitespace-nowrap min-w-max">
         <div className="flex items-center gap-2">
           <StatusDot status={regime?.regime === 'risk_off' ? 'warning' : 'healthy'} />
@@ -28,13 +28,13 @@ export function RegimeStrip({ regime, universeStats }) {
             {regimeLabel}
           </span>
         </div>
-        <span className="text-neutral-700">│</span>
+        <span aria-hidden="true" className="inline-block w-px h-3 align-middle bg-neutral-700" />
         <div>VIX <span className="text-neutral-200">{regime?.vol?.level?.toFixed(1) ?? '—'}</span></div>
-        <span className="text-neutral-700">│</span>
+        <span aria-hidden="true" className="inline-block w-px h-3 align-middle bg-neutral-700" />
         <div>10Y <span className="text-neutral-200">{regime?.rates?.tenYear?.toFixed(2) ?? '—'}%</span></div>
-        <span className="text-neutral-700">│</span>
+        <span aria-hidden="true" className="inline-block w-px h-3 align-middle bg-neutral-700" />
         <div>2Y10Y <span className="text-neutral-200">{regime?.rates?.twoTenSpread ?? '—'}bp</span> <span className="text-neutral-500">{regime?.rates?.curveRegime ?? ''}</span></div>
-        <span className="text-neutral-700">│</span>
+        <span aria-hidden="true" className="inline-block w-px h-3 align-middle bg-neutral-700" />
         <div>
           <span className="uppercase tracking-wider">Universe</span>
           <span className="text-neutral-200 ml-1.5">{universeStats?.core || 0}</span>

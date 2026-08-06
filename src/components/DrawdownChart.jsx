@@ -9,6 +9,7 @@ import {
   ResponsiveContainer,
 } from 'recharts';
 import { ChartPanel } from './ChartPanel.jsx';
+import { chartTheme } from '../lib/chartTheme.js';
 
 // Phase 4b — drawdown ("underwater") chart.
 //
@@ -56,6 +57,7 @@ function TooltipBody({ active, payload, label }) {
 }
 
 export function DrawdownChart({ dailyEquity }) {
+  const pal = chartTheme();
   const data = useMemo(() => {
     const rows = Array.isArray(dailyEquity) ? dailyEquity : [];
     const underwater = computeUnderwater(rows);
@@ -87,21 +89,21 @@ export function DrawdownChart({ dailyEquity }) {
           <AreaChart data={data} margin={{ top: 5, right: 5, left: 0, bottom: 0 }}>
             <defs>
               <linearGradient id="ddGradient" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stopColor="#f43f5e" stopOpacity={0.05} />
-                <stop offset="100%" stopColor="#f43f5e" stopOpacity={0.45} />
+                <stop offset="0%" stopColor={pal.down} stopOpacity={0.05} />
+                <stop offset="100%" stopColor={pal.down} stopOpacity={0.45} />
               </linearGradient>
             </defs>
-            <CartesianGrid stroke="#262626" strokeDasharray="3 3" vertical={false} />
+            <CartesianGrid stroke={pal.grid} strokeDasharray="3 3" vertical={false} />
             <XAxis
               dataKey="date"
-              stroke="#525252"
-              tick={{ fontSize: 9, fill: '#737373', fontFamily: 'monospace' }}
+              stroke={pal.axis}
+              tick={{ fontSize: 9, fill: pal.tick, fontFamily: 'monospace' }}
               tickMargin={4}
               minTickGap={40}
             />
             <YAxis
-              stroke="#525252"
-              tick={{ fontSize: 9, fill: '#737373', fontFamily: 'monospace' }}
+              stroke={pal.axis}
+              tick={{ fontSize: 9, fill: pal.tick, fontFamily: 'monospace' }}
               tickFormatter={(v) => `${v}%`}
               width={45}
               domain={[(dataMin) => Math.floor(dataMin), 0]}
@@ -110,7 +112,7 @@ export function DrawdownChart({ dailyEquity }) {
             <Area
               type="monotone"
               dataKey="drawdownPct"
-              stroke="#f43f5e"
+              stroke={pal.down}
               strokeWidth={1.25}
               fill="url(#ddGradient)"
               isAnimationActive={false}

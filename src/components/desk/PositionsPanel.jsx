@@ -15,7 +15,7 @@ import { isClosed, rMultiple } from '../../lib/baseRates.js';
 import { useSortable, SortableTh } from '../../lib/useSortable.jsx';
 import { useStopWatch } from '../../hooks/useStopWatch.js';
 
-const dash = <span className="text-neutral-700">—</span>;
+const dash = <span className="text-neutral-600">—</span>;
 
 /** ET wall-clock for a breach timestamp — the only clock a US-session trader reads. */
 export function etTime(iso) {

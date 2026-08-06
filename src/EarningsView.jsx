@@ -9,11 +9,12 @@ import { readLog, logTrade } from './tradeLog.js';
 import { FundamentalsStrip } from './components/detail/FundamentalsStrip.jsx';
 import { MasterDetail } from './layout/MasterDetail.jsx';
 import { StockDetailPanel } from './components/detail/StockDetailPanel.jsx';
+import { chartTheme } from './lib/chartTheme.js';
 
 const DetailStat = ({ label, value, color }) => (
   <div>
     <div className="text-neutral-500 uppercase tracking-widest text-[9px] font-mono mb-0.5">{label}</div>
-    <div className="text-sm font-mono" style={color ? { color } : { color: '#e5e5e5' }}>{value}</div>
+    <div className="text-sm font-mono" style={color ? { color } : { color: chartTheme().ink }}>{value}</div>
   </div>
 );
 
@@ -31,14 +32,14 @@ const PLAY_TYPE_LABELS = {
 };
 
 const PLAY_TYPE_COLORS = {
-  long_volatility: '#a78bfa',
-  short_volatility: '#4dbaf2',
-  directional_long: '#14e89a',
-  directional_short: '#f87171',
-  pead_long: '#34d399',
-  pead_short: '#fb7185',
-  reversal: '#fbbf24',
-  skip: '#737373',
+  long_volatility: 'violet',
+  short_volatility: 'accent',
+  directional_long: 'up',
+  directional_short: 'down',
+  pead_long: 'up',
+  pead_short: 'down',
+  reversal: 'amber',
+  skip: 'tick',
 };
 
 const fmtUsdEarnings = (n) => {
@@ -228,9 +229,9 @@ export const EarningsPlaysView = () => {
               {sorted.map((e) => {
                 const cardKey = `${e.ticker ?? '?'}|${e.reportDate ?? '?'}`;
                 const isOpen = expandedKey === cardKey;
-                const ptColor = PLAY_TYPE_COLORS[e.playType] || '#737373';
+                const ptColor = chartTheme()[PLAY_TYPE_COLORS[e.playType]] ?? chartTheme().tick;
                 const ptLabel = PLAY_TYPE_LABELS[e.playType] || e.playType || '—';
-                const compColor = e.composite >= 80 ? '#14e89a' : e.composite >= 70 ? '#4dbaf2' : '#a3a3a3';
+                const compColor = e.composite >= 80 ? chartTheme().up : e.composite >= 70 ? chartTheme().accent : chartTheme().tick;
                 return (
                   <React.Fragment key={cardKey}>
                     <tr
@@ -367,7 +368,7 @@ const fmtCompact = (n) => {
 };
 
 const EarningsSetupDetail = ({ setup: e, alreadyLogged, onLog }) => {
-  const ptColor = PLAY_TYPE_COLORS[e.playType] || '#737373';
+  const ptColor = chartTheme()[PLAY_TYPE_COLORS[e.playType]] ?? chartTheme().tick;
   const t = e.triggers ?? null;
   const edge = e.historicalEdge ?? null;
   const opts = t?.options ?? null;
@@ -417,13 +418,13 @@ const EarningsSetupDetail = ({ setup: e, alreadyLogged, onLog }) => {
           <DetailStat
             label="Max risk"
             value={opts?.maxLossPerContract ? fmtCompact(opts.maxLossPerContract) + '/ctr' : '—'}
-            color="#f87171"
+            color={chartTheme().down}
           />
         ) : (
           <DetailStat
             label="R:R"
             value={t?.riskReward ? `${t.riskReward.toFixed(2)}` : '—'}
-            color={t?.riskReward && t.riskReward >= 2 ? '#14e89a' : t?.riskReward && t.riskReward < 1 ? '#f59e0b' : undefined}
+            color={t?.riskReward && t.riskReward >= 2 ? chartTheme().up : t?.riskReward && t.riskReward < 1 ? chartTheme().amber : undefined}
           />
         )}
       </div>
@@ -441,10 +442,10 @@ const EarningsSetupDetail = ({ setup: e, alreadyLogged, onLog }) => {
                 For vol plays, the real risk lives in the options structure block below. */}
             {!isVolPlay && (
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-2">
-                <DetailStat label="Stop" value={t.stop ? fmtUsdEarnings(t.stop) : '—'} color="#f87171" />
-                <DetailStat label="T1" value={t.targets?.t1 ? fmtUsdEarnings(t.targets.t1) : '—'} color="#14e89a" />
-                <DetailStat label="T2" value={t.targets?.t2 ? fmtUsdEarnings(t.targets.t2) : '—'} color="#14e89a" />
-                <DetailStat label="T3" value={t.targets?.t3 ? fmtUsdEarnings(t.targets.t3) : '—'} color="#14e89a" />
+                <DetailStat label="Stop" value={t.stop ? fmtUsdEarnings(t.stop) : '—'} color={chartTheme().down} />
+                <DetailStat label="T1" value={t.targets?.t1 ? fmtUsdEarnings(t.targets.t1) : '—'} color={chartTheme().up} />
+                <DetailStat label="T2" value={t.targets?.t2 ? fmtUsdEarnings(t.targets.t2) : '—'} color={chartTheme().up} />
+                <DetailStat label="T3" value={t.targets?.t3 ? fmtUsdEarnings(t.targets.t3) : '—'} color={chartTheme().up} />
               </div>
             )}
           </div>
@@ -481,25 +482,25 @@ const EarningsSetupDetail = ({ setup: e, alreadyLogged, onLog }) => {
                 <DetailStat
                   label="Est. credit"
                   value={`$${opts.estCreditPerContract.toFixed(2)}`}
-                  color="#14e89a"
+                  color={chartTheme().up}
                 />
               )}
               {opts.estDebitPerContract !== null && opts.estDebitPerContract !== undefined && (
                 <DetailStat
                   label="Est. debit"
                   value={`$${opts.estDebitPerContract.toFixed(2)}`}
-                  color="#a78bfa"
+                  color={chartTheme().violet}
                 />
               )}
               <DetailStat
                 label="Max profit"
                 value={opts.maxProfitPerContract === null ? 'Unbounded' : fmtCompact(opts.maxProfitPerContract)}
-                color="#14e89a"
+                color={chartTheme().up}
               />
               <DetailStat
                 label="Max loss"
                 value={opts.maxLossPerContract ? fmtCompact(opts.maxLossPerContract) : '—'}
-                color="#f87171"
+                color={chartTheme().down}
               />
               <DetailStat
                 label="Breakevens"
@@ -575,7 +576,7 @@ const EarningsSetupDetail = ({ setup: e, alreadyLogged, onLog }) => {
         <div className="border border-neutral-800 bg-neutral-900/30 p-3">
           <div className="font-mono uppercase tracking-widest text-[9px] text-neutral-500 mb-1">Historical Edge</div>
           <div className="flex items-center gap-3">
-            <div className="font-mono text-2xl font-bold" style={{ color: edge.ratePct >= 60 ? '#14e89a' : edge.ratePct >= 40 ? '#4dbaf2' : '#f59e0b' }}>
+            <div className="font-mono text-2xl font-bold" style={{ color: edge.ratePct >= 60 ? chartTheme().up : edge.ratePct >= 40 ? chartTheme().accent : chartTheme().amber }}>
               {edge.ratePct}%
             </div>
             <div className="text-[12px] text-neutral-400">{edge.description}</div>

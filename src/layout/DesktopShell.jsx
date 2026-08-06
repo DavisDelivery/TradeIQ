@@ -15,7 +15,7 @@ export function DesktopShell({ sidebar, topStrip, children }) {
       {sidebar}
       <div className="flex-1 min-w-0 flex flex-col">
         {topStrip && (
-          <div className="sticky top-0 z-30 border-b border-neutral-800/80 bg-[#0a0b0d]/95 backdrop-blur-xl">
+          <div className="sticky top-0 z-30 border-b border-neutral-800/80 bg-chrome/95 backdrop-blur-xl">
             {topStrip}
           </div>
         )}

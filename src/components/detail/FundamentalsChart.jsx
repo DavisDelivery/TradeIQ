@@ -272,10 +272,10 @@ function FundamentalsBody({ tab, rows, ...dims }) {
   if (tab.kind === 'bar') {
     return (
       <ComposedChart {...dims} data={rows} margin={{ top: 6, right: 8, left: 0, bottom: 0 }}>
-        <CartesianGrid strokeDasharray="2 2" stroke="#1f1f23" />
-        <XAxis dataKey="period" stroke="#525252" fontSize={9} minTickGap={20} />
-        <YAxis stroke="#525252" fontSize={10} width={56} orientation="right" tickFormatter={yTickFmt} />
-        <Tooltip content={<CustomTooltip unit={tab.unit} />} cursor={{ fill: '#ffffff08' }} />
+        <CartesianGrid strokeDasharray="2 2" stroke={pal.grid} />
+        <XAxis dataKey="period" stroke={pal.axis} fontSize={9} minTickGap={20} />
+        <YAxis stroke={pal.axis} fontSize={10} width={56} orientation="right" tickFormatter={yTickFmt} />
+        <Tooltip content={<CustomTooltip unit={tab.unit} />} cursor={{ fill: pal.cursor + '14' }} />
         <Bar dataKey={tab.field} name={tab.label} fill={pal[tab.color] ?? tab.color} isAnimationActive={false} />
       </ComposedChart>
     );
@@ -283,10 +283,10 @@ function FundamentalsBody({ tab, rows, ...dims }) {
   if (tab.kind === 'line') {
     return (
       <LineChart {...dims} data={rows} margin={{ top: 6, right: 8, left: 0, bottom: 0 }}>
-        <CartesianGrid strokeDasharray="2 2" stroke="#1f1f23" />
-        <XAxis dataKey="period" stroke="#525252" fontSize={9} minTickGap={20} />
-        <YAxis stroke="#525252" fontSize={10} width={56} orientation="right" tickFormatter={yTickFmt} />
-        <Tooltip content={<CustomTooltip unit={tab.unit} />} cursor={{ stroke: '#1e5b92' }} />
+        <CartesianGrid strokeDasharray="2 2" stroke={pal.grid} />
+        <XAxis dataKey="period" stroke={pal.axis} fontSize={9} minTickGap={20} />
+        <YAxis stroke={pal.axis} fontSize={10} width={56} orientation="right" tickFormatter={yTickFmt} />
+        <Tooltip content={<CustomTooltip unit={tab.unit} />} cursor={{ stroke: pal.accent }} />
         <Line type="monotone" dataKey={tab.field} name={tab.label} stroke={pal[tab.color] ?? tab.color} strokeWidth={1.5} dot={false} isAnimationActive={false} />
       </LineChart>
     );
@@ -294,17 +294,17 @@ function FundamentalsBody({ tab, rows, ...dims }) {
   // 'lines' (margins overlay)
   return (
     <LineChart {...dims} data={rows} margin={{ top: 6, right: 8, left: 0, bottom: 0 }}>
-      <CartesianGrid strokeDasharray="2 2" stroke="#1f1f23" />
-      <XAxis dataKey="period" stroke="#525252" fontSize={9} minTickGap={20} />
-      <YAxis stroke="#525252" fontSize={10} width={56} orientation="right" tickFormatter={yTickFmt} domain={['auto', 'auto']} />
-      <Tooltip content={<CustomTooltip unit={tab.unit} />} cursor={{ stroke: '#1e5b92' }} />
+      <CartesianGrid strokeDasharray="2 2" stroke={pal.grid} />
+      <XAxis dataKey="period" stroke={pal.axis} fontSize={9} minTickGap={20} />
+      <YAxis stroke={pal.axis} fontSize={10} width={56} orientation="right" tickFormatter={yTickFmt} domain={['auto', 'auto']} />
+      <Tooltip content={<CustomTooltip unit={tab.unit} />} cursor={{ stroke: pal.accent }} />
       <Legend
         verticalAlign="bottom"
         height={20}
-        wrapperStyle={{ fontFamily: 'IBM Plex Mono, monospace', fontSize: 10, color: '#737373' }}
+        wrapperStyle={{ fontFamily: 'IBM Plex Mono, monospace', fontSize: 10, color: pal.tick }}
         iconType="plainline"
       />
-      <ReferenceLine y={0} stroke="#525252" strokeDasharray="3 3" />
+      <ReferenceLine y={0} stroke={pal.axis} strokeDasharray="3 3" />
       {tab.accessors.map((a) => (
         <Line key={a.key} type="monotone" dataKey={a.key} name={a.label} stroke={pal[a.color] ?? a.color} strokeWidth={1.5} dot={false} connectNulls isAnimationActive={false} />
       ))}

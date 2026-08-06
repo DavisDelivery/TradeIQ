@@ -40,10 +40,10 @@ export function MasterDetail({
             onClick={onClose}
           >
             <div
-              className="relative w-full max-w-5xl max-h-[92vh] overflow-y-auto bg-[#0a0b0d] border border-neutral-800"
+              className="relative w-full max-w-5xl max-h-[92vh] overflow-y-auto bg-chrome border border-neutral-800"
               onClick={(e) => e.stopPropagation()}
             >
-              <div className="sticky top-0 z-10 bg-[#0a0b0d] border-b border-neutral-800 px-6 py-4 flex items-start justify-between gap-4">
+              <div className="sticky top-0 z-10 bg-chrome border-b border-neutral-800 px-6 py-4 flex items-start justify-between gap-4">
                 <div className="min-w-0 flex-1">{detailHeader}</div>
                 <button
                   type="button"
@@ -73,9 +73,9 @@ export function MasterDetail({
       {isOpen && (
         <aside
           data-testid="master-detail-panel"
-          className="w-[440px] xl:w-[480px] 2xl:w-[560px] flex-shrink-0 sticky top-8 self-start max-h-[calc(100vh-2.25rem)] overflow-y-auto bg-[#070809] border-l border-neutral-800/60"
+          className="w-[440px] xl:w-[480px] 2xl:w-[560px] flex-shrink-0 sticky top-8 self-start max-h-[calc(100vh-2.25rem)] overflow-y-auto bg-rail border-l border-neutral-800/60"
         >
-          <div className="sticky top-0 z-10 bg-[#070809]/95 backdrop-blur-xl border-b border-neutral-800 px-4 py-3 flex items-start justify-between gap-3">
+          <div className="sticky top-0 z-10 bg-rail/95 backdrop-blur-xl border-b border-neutral-800 px-4 py-3 flex items-start justify-between gap-3">
             <div className="min-w-0 flex-1">{detailHeader}</div>
             <button
               type="button"

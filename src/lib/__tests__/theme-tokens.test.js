@@ -11,8 +11,19 @@
 // undo that: a family losing its tokens, and a light value drifting below AA.
 
 import { describe, it, expect } from 'vitest';
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { resolve, join } from 'node:path';
+
+/** Every .js/.jsx under src/, excluding tests. */
+function sourceFiles(dir = 'src', out = []) {
+  for (const e of readdirSync(dir)) {
+    const p = join(dir, e);
+    if (statSync(p).isDirectory()) { if (e !== '__tests__') sourceFiles(p, out); }
+    else if (/\.jsx?$/.test(e)) out.push(p);
+  }
+  return out;
+}
+const SOURCES = sourceFiles().map((p) => [p, readFileSync(p, 'utf8')]);
 
 const css = readFileSync(resolve('src/index.css'), 'utf8');
 const cfg = readFileSync(resolve('tailwind.config.js'), 'utf8');
@@ -55,27 +66,75 @@ describe('every colour family is tokenised', () => {
 });
 
 describe('light-mode legibility (WCAG AA on the real page background)', () => {
-  // The shades actually used as TEXT in the codebase.
-  const TEXT_SHADES = ['200', '300', '400'];
-  const TEXT_FAMILIES = ['emerald', 'rose', 'amber', 'sky', 'violet', 'neutral'];
-
-  for (const fam of TEXT_FAMILIES) {
-    for (const shade of TEXT_SHADES) {
-      it(`text-${fam}-${shade} clears 4.5:1`, () => {
-        const v = lightTokens[`${fam}-${shade}`];
-        expect(v, `missing light token ${fam}-${shade}`).toBeTruthy();
-        expect(contrast(v, LIGHT_BG)).toBeGreaterThanOrEqual(4.5);
-      });
+  // Derived from ACTUAL usage, not a hand-kept list. The previous version of
+  // this test hardcoded shades 200/300/400 and passed while the two most-used
+  // text shades in the app were failing: text-neutral-500 (435 uses) at
+  // 4.38:1 and text-neutral-600 (179 uses) at 2.33:1. A list you maintain by
+  // hand tests the list, not the app.
+  const used = new Map();
+  for (const [, src] of SOURCES) {
+    for (const m of src.matchAll(/\btext-([a-z]+)-(\d{2,3})\b/g)) {
+      const key = `${m[1]}-${m[2]}`;
+      used.set(key, (used.get(key) ?? 0) + 1);
     }
   }
 
+  it('finds the text shades by scanning src, so new usage is covered automatically', () => {
+    expect(used.size).toBeGreaterThan(15);
+    expect(used.get('neutral-500')).toBeGreaterThan(100);
+  });
+
+  for (const [tokenName, count] of [...used.entries()].sort((x, y) => y[1] - x[1])) {
+    const v = lightTokens[tokenName];
+    if (!v) continue; // not a palette colour
+    it(`text-${tokenName} (${count} uses) clears 4.5:1 on the light page`, () => {
+      expect(contrast(v, LIGHT_BG)).toBeGreaterThanOrEqual(4.5);
+    });
+  }
+
   it('gains are not harder to read than losses — the original defect', () => {
-    // Before this change: gains 3.48:1, losses 5.81:1. The app was literally
-    // less legible when the number was good.
     const gain = contrast(lightTokens['emerald-400'], LIGHT_BG);
     const loss = contrast(lightTokens['rose-400'], LIGHT_BG);
     expect(gain).toBeGreaterThanOrEqual(4.5);
     expect(Math.abs(gain - loss)).toBeLessThan(3);
+  });
+});
+
+describe('surfaces are themeable (THEME-2)', () => {
+  // The palette was already token-driven when the light theme still rendered
+  // as a black page: every SURFACE was an arbitrary Tailwind value —
+  // bg-[#050607], bg-[#0a0b0d] — which no theme can reach. Light repainted
+  // the text and left the background, i.e. dark ink on near-black.
+  for (const name of ['page', 'chrome', 'strip', 'rail']) {
+    it(`--c-${name} is defined in both themes and exposed to Tailwind`, () => {
+      expect(rootBlock).toContain(`--c-${name}:`);
+      expect(lightBlock).toContain(`--c-${name}:`);
+      expect(cfg).toContain(`var(--c-${name})`);
+    });
+  }
+
+  it('no component paints a surface with an arbitrary hex value', () => {
+    const offenders = [];
+    for (const [path, src] of SOURCES) {
+      for (const m of src.matchAll(/\b(?:bg|text|border|from|via|to|ring|divide)-\[#[0-9a-fA-F]{3,8}\]/g)) {
+        offenders.push(`${path}: ${m[0]}`);
+      }
+    }
+    expect(offenders.join('\n')).toBe('');
+  });
+
+  it('no chart hardcodes a colour outside chartTheme', () => {
+    // Charts take colours as JS values, so they cannot inherit from CSS. They
+    // must resolve through chartTheme(), which reads the same tokens.
+    const offenders = [];
+    for (const [path, src] of SOURCES) {
+      if (path.endsWith('chartTheme.js')) continue; // owns the fallback table
+      for (const line of src.split('\n')) {
+        if (/^\s*(\/\/|\*|\/\*)/.test(line)) continue; // prose may cite a hex
+        if (/#[0-9a-fA-F]{6}\b/.test(line)) offenders.push(`${path}: ${line.trim().slice(0, 90)}`);
+      }
+    }
+    expect(offenders.join('\n')).toBe('');
   });
 });
 

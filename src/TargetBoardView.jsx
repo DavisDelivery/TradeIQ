@@ -23,6 +23,7 @@ import { useTargetBoard } from './hooks/useTargetBoard.js';
 import { useLiveRows } from './hooks/useLiveQuotes.js';
 import { useBreakpoint } from './hooks/useBreakpoint.js';
 import { MasterDetail } from './layout/MasterDetail.jsx';
+import { chartTheme } from './lib/chartTheme.js';
 
 // ---------------------------------------------------------------------------
 // TargetCard — single ticker card on the grid
@@ -83,7 +84,7 @@ const TargetCard = ({ target, onOpen }) => {
         <div className="flex items-center gap-1 mb-3">
           {target.analystContributions?.slice(0, 8).map((c) => {
             const Icon = analystIcon[c.analyst] || Circle;
-            const color = c.direction === 'long' ? '#14e89a' : c.direction === 'short' ? '#ff5577' : '#9ca3af';
+            const color = c.direction === 'long' ? chartTheme().up : c.direction === 'short' ? chartTheme().down : chartTheme().muted;
             return (
               <div
                 key={c.analyst}
@@ -199,7 +200,7 @@ const TargetTable = ({ targets, onOpenTarget, selectedTicker }) => {
                   {t.companyName && t.companyName !== t.ticker ? t.companyName : <span className="text-neutral-600">—</span>}
                 </td>
                 <td className="px-3 py-1.5 text-neutral-400 text-[11px] uppercase tracking-widest max-w-[140px] truncate">
-                  {t.sector ?? <span className="text-neutral-700">—</span>}
+                  {t.sector ?? <span className="text-neutral-600">—</span>}
                 </td>
                 <td className="px-3 py-1.5">
                   <span
@@ -229,7 +230,7 @@ const TargetTable = ({ targets, onOpenTarget, selectedTicker }) => {
                       {t.conflictLevel}
                     </span>
                   ) : (
-                    <span className="text-neutral-700">—</span>
+                    <span className="text-neutral-600">—</span>
                   )}
                 </td>
                 {/* PR-G — sortable fundamentals cells (data from
@@ -590,20 +591,20 @@ const TargetDetailBody = ({ target }) => {
           <div className="h-64">
             <ResponsiveContainer width="100%" height="100%">
               <RadarChart data={radarData}>
-                <PolarGrid stroke="#2a2b2e" />
+                <PolarGrid stroke={chartTheme().grid} />
                 <PolarAngleAxis
                   dataKey="subject"
-                  tick={{ fill: '#9ca3af', fontSize: 11, fontFamily: 'IBM Plex Mono' }}
+                  tick={{ fill: chartTheme().muted, fontSize: 11, fontFamily: 'IBM Plex Mono' }}
                 />
                 <PolarRadiusAxis
                   domain={[0, 100]}
-                  tick={{ fill: '#525252', fontSize: 9 }}
-                  stroke="#2a2b2e"
+                  tick={{ fill: chartTheme().axis, fontSize: 9 }}
+                  stroke={chartTheme().grid}
                 />
                 <Radar
                   dataKey="score"
-                  stroke="#14e89a"
-                  fill="#14e89a"
+                  stroke={chartTheme().up}
+                  fill={chartTheme().up}
                   fillOpacity={0.2}
                   strokeWidth={1.5}
                 />

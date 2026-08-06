@@ -56,13 +56,35 @@ export function chartTheme() {
     accent: token('sky-400', FALLBACK.accent),
     violet: token('violet-400', FALLBACK.violet),
     amber: token('amber-400', FALLBACK.amber),
-    /** Axis labels and tick text. */
+    cyan: token('sky-300', FALLBACK.accent),
+    fuchsia: token('fuchsia-400', FALLBACK.violet),
+    /** Axis lines. */
     axis: token('neutral-500', FALLBACK.axis),
+    /** Tick labels and legend text — one step lighter than body copy. */
+    tick: token('neutral-500', FALLBACK.axis),
+    /** Body/label text drawn inside a chart. */
+    ink: token('neutral-200', '#262626'),
+    /** Deliberately de-emphasised text (n/a markers, footnotes). */
+    muted: token('neutral-600', FALLBACK.axis),
     /** Gridlines and hairline separators. */
     grid: token('neutral-800', FALLBACK.grid),
+    /** Hover cursor wash behind the focused column/row. */
+    cursor: token('neutral-900', '#e5e5e5'),
     /** Chart background — transparent inherits the panel, which is usually right. */
     surface: 'transparent',
   };
+}
+
+/**
+ * Conviction-tier accents (A/B/C/D), theme-aware.
+ *
+ * Lives here rather than in formatters so there is exactly one place where a
+ * chart-adjacent colour is chosen. The old literals were dark-mode hexes that
+ * measured under 2:1 on the light page.
+ */
+export function tierPalette() {
+  const t = chartTheme();
+  return { A: t.up, B: t.accent, C: t.amber, D: t.muted };
 }
 
 /** True when the light theme is active (charts occasionally need to branch). */

@@ -9,6 +9,7 @@ import {
   ResponsiveContainer,
 } from 'recharts';
 import { ChartPanel } from './ChartPanel.jsx';
+import { chartTheme } from '../lib/chartTheme.js';
 
 // Phase 4b — equity curve over the backtest window.
 //
@@ -60,6 +61,7 @@ function TooltipBody({ active, payload, label }) {
 }
 
 export function EquityCurveChart({ dailyEquity }) {
+  const pal = chartTheme();
   const data = useMemo(() => {
     const rows = Array.isArray(dailyEquity) ? dailyEquity : [];
     return downsampleStride(rows, DOWNSAMPLE_THRESHOLD);
@@ -85,17 +87,17 @@ export function EquityCurveChart({ dailyEquity }) {
       <div className="h-[250px]" data-testid="equity-curve-chart">
         <ResponsiveContainer width="100%" height="100%">
           <LineChart data={data} margin={{ top: 5, right: 5, left: 0, bottom: 0 }}>
-            <CartesianGrid stroke="#262626" strokeDasharray="3 3" vertical={false} />
+            <CartesianGrid stroke={pal.grid} strokeDasharray="3 3" vertical={false} />
             <XAxis
               dataKey="date"
-              stroke="#525252"
-              tick={{ fontSize: 9, fill: '#737373', fontFamily: 'monospace' }}
+              stroke={pal.axis}
+              tick={{ fontSize: 9, fill: pal.tick, fontFamily: 'monospace' }}
               tickMargin={4}
               minTickGap={40}
             />
             <YAxis
-              stroke="#525252"
-              tick={{ fontSize: 9, fill: '#737373', fontFamily: 'monospace' }}
+              stroke={pal.axis}
+              tick={{ fontSize: 9, fill: pal.tick, fontFamily: 'monospace' }}
               tickFormatter={formatDollars}
               width={50}
               domain={['auto', 'auto']}
@@ -104,7 +106,7 @@ export function EquityCurveChart({ dailyEquity }) {
             <Line
               type="monotone"
               dataKey="value"
-              stroke="#34d399"
+              stroke={pal.up}
               strokeWidth={1.5}
               dot={false}
               isAnimationActive={false}
@@ -114,7 +116,7 @@ export function EquityCurveChart({ dailyEquity }) {
               <Line
                 type="monotone"
                 dataKey="benchmarkValue"
-                stroke="#737373"
+                stroke={pal.tick}
                 strokeWidth={1}
                 strokeDasharray="3 3"
                 dot={false}

@@ -16,6 +16,7 @@ import { MasterDetail } from './layout/MasterDetail.jsx';
 import { StockDetailPanel } from './components/detail/StockDetailPanel.jsx';
 import { useGenerateNarrative } from './hooks/useGenerateNarrative.js';
 import { FundamentalsStrip } from './components/detail/FundamentalsStrip.jsx';
+import { chartTheme } from './lib/chartTheme.js';
 
 const UNIVERSE_OPTIONS = [
   { id: 'largecap', label: 'Large Cap', desc: 'S&P 500 + NDX + Dow (~230)' },
@@ -394,10 +395,10 @@ const ProphetDetail = ({ pick }) => {
     {/* Entry/stop/targets */}
     {pick.entry && (
       <div className="grid grid-cols-4 gap-2 text-[11px]">
-        <TradeStat label="Entry" value={`$${pick.entry}`} color="#e5e5e5" />
-        <TradeStat label="Stop" value={`$${pick.stop}`} color="#f43f5e" />
-        <TradeStat label="T1 / T2" value={pick.targets?.length >= 2 ? `$${pick.targets[0]} / $${pick.targets[1]}` : '—'} color="#10b981" />
-        <TradeStat label="Invalidation" value={pick.invalidation ? `$${pick.invalidation}` : '—'} color="#737373" />
+        <TradeStat label="Entry" value={`$${pick.entry}`} color={chartTheme().ink} />
+        <TradeStat label="Stop" value={`$${pick.stop}`} color={chartTheme().down} />
+        <TradeStat label="T1 / T2" value={pick.targets?.length >= 2 ? `$${pick.targets[0]} / $${pick.targets[1]}` : '—'} color={chartTheme().up} />
+        <TradeStat label="Invalidation" value={pick.invalidation ? `$${pick.invalidation}` : '—'} color={chartTheme().tick} />
       </div>
     )}
 
@@ -406,11 +407,11 @@ const ProphetDetail = ({ pick }) => {
     <AdvancedPriceChart
       ticker={pick.ticker}
       priceLines={[
-        pick.entry && { price: pick.entry, color: '#38bdf8', title: 'entry' },
-        pick.stop && { price: pick.stop, color: '#f43f5e', title: 'stop' },
-        pick.targets?.[0] && { price: pick.targets[0], color: '#10b981', title: 'T1' },
-        pick.targets?.[1] && { price: pick.targets[1], color: '#10b981', title: 'T2' },
-        pick.invalidation && { price: pick.invalidation, color: '#737373', title: 'invalidation' },
+        pick.entry && { price: pick.entry, color: chartTheme().accent, title: 'entry' },
+        pick.stop && { price: pick.stop, color: chartTheme().down, title: 'stop' },
+        pick.targets?.[0] && { price: pick.targets[0], color: chartTheme().up, title: 'T1' },
+        pick.targets?.[1] && { price: pick.targets[1], color: chartTheme().up, title: 'T2' },
+        pick.invalidation && { price: pick.invalidation, color: chartTheme().tick, title: 'invalidation' },
       ].filter(Boolean)}
     />
 

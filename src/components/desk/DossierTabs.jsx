@@ -32,7 +32,7 @@ import { OrderButtons } from '../OrderButtons.jsx';
 
 const TABS = ['RATIONALE', 'FUNDAMENTALS', 'INSIDER', 'EARNINGS', 'AI BRIEF'];
 
-const dash = <span className="text-neutral-700">—</span>;
+const dash = <span className="text-neutral-600">—</span>;
 
 function fmtDollars(n) {
   if (typeof n !== 'number' || !Number.isFinite(n)) return '—';

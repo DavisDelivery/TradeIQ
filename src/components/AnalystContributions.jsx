@@ -23,6 +23,7 @@ import React, { useState } from 'react';
 import { Circle, ChevronDown, ChevronRight } from 'lucide-react';
 import { analystIcon, analystLabel } from '../lib/formatters.jsx';
 import { useTargetRationale } from '../hooks/useTargetRationale.js';
+import { chartTheme } from '../lib/chartTheme.js';
 
 const PERMANENTLY_REMOVED = new Set(['macro-regime', 'patent-analyst']);
 
@@ -109,9 +110,9 @@ function AnalystRow({ contribution, status, detail, detailLoading, detailError }
     : c.direction === 'short' ? 'text-rose-400'
     : 'text-neutral-400';
   const fill =
-    c.direction === 'long' ? '#14e89a'
-    : c.direction === 'short' ? '#ff5577'
-    : '#9ca3af';
+    c.direction === 'long' ? chartTheme().up
+    : c.direction === 'short' ? chartTheme().down
+    : chartTheme().muted;
   const label = analystLabel[c.analyst] ?? c.analyst;
   const rowOpacity = status === 'live' ? '' : 'opacity-70';
   const labelCls = status === 'removed' ? 'line-through text-neutral-500' : 'text-neutral-300';

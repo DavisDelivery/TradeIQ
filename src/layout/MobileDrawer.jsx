@@ -60,7 +60,7 @@ export function MobileDrawer({ open, onClose, views, activeView, setActiveView, 
         aria-modal="true"
         aria-label="Navigation"
         data-testid="mobile-drawer"
-        className={`absolute left-0 top-0 bottom-0 w-[82vw] max-w-[320px] flex flex-col bg-[#0a0b0d] border-r border-neutral-800 shadow-2xl outline-none transition-transform duration-200 ease-out ${
+        className={`absolute left-0 top-0 bottom-0 w-[82vw] max-w-[320px] flex flex-col bg-chrome border-r border-neutral-800 shadow-2xl outline-none transition-transform duration-200 ease-out ${
           open ? 'translate-x-0' : '-translate-x-full'
         }`}
       >

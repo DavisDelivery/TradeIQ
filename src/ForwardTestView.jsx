@@ -123,7 +123,7 @@ const LeagueTable = ({ league, onOpenBoard }) => {
             {HORIZON_LABELS.map(([key, label]) => {
               const h = r.horizons?.[key];
               return (
-                <span key={key} className={`px-1.5 py-0.5 text-[9px] font-mono border ${h ? 'border-neutral-700 text-neutral-300' : 'border-neutral-800/60 text-neutral-700'}`}>
+                <span key={key} className={`px-1.5 py-0.5 text-[9px] font-mono border ${h ? 'border-neutral-700 text-neutral-300' : 'border-neutral-800/60 text-neutral-600'}`}>
                   {label} {h ? `${fmtPct(h.avgAlpha)}α · ${h.winRate.toFixed(0)}%w` : '—'}
                 </span>
               );

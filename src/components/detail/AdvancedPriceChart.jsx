@@ -29,24 +29,26 @@ const RANGES = ['1M', '3M', '6M', '1Y', '5Y'];
 const DEFAULT_RANGE = '6M';
 const TYPES = ['Candles', 'Line', 'Area'];
 const SMA_DEFS = [
-  { key: 'sma20', period: 20, color: '#38bdf8', label: 'MA20' },
-  { key: 'sma50', period: 50, color: '#f59e0b', label: 'MA50' },
-  { key: 'sma150', period: 150, color: '#a78bfa', label: 'MA150' },
-  { key: 'sma200', period: 200, color: '#f43f5e', label: 'MA200' },
+  { key: 'sma20', period: 20, role: 'accent', label: 'MA20' },
+  { key: 'sma50', period: 50, role: 'amber', label: 'MA50' },
+  { key: 'sma150', period: 150, role: 'violet', label: 'MA150' },
+  { key: 'sma200', period: 200, role: 'down', label: 'MA200' },
 ];
 const EMA_DEFS = [
-  { key: 'ema9', period: 9, color: '#22d3ee', label: 'EMA9' },
-  { key: 'ema21', period: 21, color: '#e879f9', label: 'EMA21' },
+  { key: 'ema9', period: 9, role: 'cyan', label: 'EMA9' },
+  { key: 'ema21', period: 21, role: 'fuchsia', label: 'EMA21' },
 ];
 // THEME-1: resolved per render from the CSS tokens so the chart follows the
 // active theme. The old literals (#14e89a / #ff5577) sat at 1.49:1 and
 // 2.85:1 on the light page — the default theme — i.e. invisible.
 const chartPalette = () => {
   const t = chartTheme();
-  return { UP: t.up, DOWN: t.down, AXIS: t.axis, GRID: t.grid };
+  return { UP: t.up, DOWN: t.down, AXIS: t.axis, GRID: t.grid, ACCENT: t.accent, AMBER: t.amber };
 };
-const BB_COLOR = '#8b9467';
-const VWAP_COLOR = '#eab308';
+// Overlays resolve through the palette at draw time. Bollinger bands sit on
+// the muted rail deliberately — they are context, not a signal.
+const BB_COLOR = () => chartTheme().muted;
+const VWAP_COLOR = () => chartTheme().amber;
 
 // ---- persisted indicator prefs ----
 const IND_KEY = 'tradeiq-chart-indicators';
@@ -226,7 +228,7 @@ export function AdvancedPriceChart({ ticker, priceLines = [] }) {
   useEffect(() => {
     const el = elRef.current;
     if (!el || bars.length === 0) return undefined;
-    const { UP, DOWN, AXIS } = chartPalette();
+    const { UP, DOWN, AXIS, GRID, ACCENT, AMBER } = chartPalette();
 
     const chart = createChart(el, {
       autoSize: true,
@@ -241,7 +243,7 @@ export function AdvancedPriceChart({ ticker, priceLines = [] }) {
         background: { color: 'transparent' },
         textColor: AXIS,
         fontSize: 10,
-        panes: { separatorColor: '#262626', enableResize: false },
+        panes: { separatorColor: GRID, enableResize: false },
       },
       grid: {
         vertLines: { color: 'rgba(64,64,64,0.18)' },
@@ -249,10 +251,10 @@ export function AdvancedPriceChart({ ticker, priceLines = [] }) {
       },
       crosshair: { mode: CrosshairMode.Normal },
       rightPriceScale: {
-        borderColor: '#262626',
+        borderColor: GRID,
         mode: logScale ? PriceScaleMode.Logarithmic : PriceScaleMode.Normal,
       },
-      timeScale: { borderColor: '#262626', timeVisible: bars[0]?.date?.length > 10 },
+      timeScale: { borderColor: GRID, timeVisible: bars[0]?.date?.length > 10 },
     });
     chartRef.current = chart;
     const closes = bars.map((b) => b.close);
@@ -284,15 +286,15 @@ export function AdvancedPriceChart({ ticker, priceLines = [] }) {
     }
 
     // Overlays: SMA, EMA, Bollinger, VWAP
-    for (const d of SMA_DEFS) if (ind[d.key]) overlay(sma(closes, d.period), { color: d.color });
-    for (const d of EMA_DEFS) if (ind[d.key]) overlay(ema(closes, d.period), { color: d.color });
+    for (const d of SMA_DEFS) if (ind[d.key]) overlay(sma(closes, d.period), { color: chartTheme()[d.role] });
+    for (const d of EMA_DEFS) if (ind[d.key]) overlay(ema(closes, d.period), { color: chartTheme()[d.role] });
     if (ind.bb) {
       const b = bollinger(closes, 20, 2);
-      overlay(b.upper, { color: BB_COLOR });
-      overlay(b.lower, { color: BB_COLOR });
-      overlay(b.mid, { color: BB_COLOR, lineStyle: 2 });
+      overlay(b.upper, { color: BB_COLOR() });
+      overlay(b.lower, { color: BB_COLOR() });
+      overlay(b.mid, { color: BB_COLOR(), lineStyle: 2 });
     }
-    if (ind.vwap) overlay(vwapSeries(bars), { color: VWAP_COLOR, lineWidth: 2 });
+    if (ind.vwap) overlay(vwapSeries(bars), { color: VWAP_COLOR(), lineWidth: 2 });
 
     // Strategy price lines (entry pivot / stop). The on-line title tags them
     // ("entry pivot", "stop"); the exact price is in the footnote below. We
@@ -301,7 +303,7 @@ export function AdvancedPriceChart({ ticker, priceLines = [] }) {
     for (const pl of priceLines) {
       if (pl?.price == null || !Number.isFinite(Number(pl.price))) continue;
       priceSeries.createPriceLine({
-        price: Number(pl.price), color: pl.color ?? '#38bdf8', lineWidth: 1, lineStyle: 2,
+        price: Number(pl.price), color: pl.color ?? ACCENT, lineWidth: 1, lineStyle: 2,
         axisLabelVisible: false, title: pl.title ?? '',
       });
     }
@@ -327,7 +329,7 @@ export function AdvancedPriceChart({ ticker, priceLines = [] }) {
     if (rsiPane != null) {
       const r = rsi14(closes);
       const rsiSeries = chart.addSeries(
-        LineSeries, { color: '#e2b93b', lineWidth: 1, priceLineVisible: false, lastValueVisible: true }, rsiPane,
+        LineSeries, { color: AMBER, lineWidth: 1, priceLineVisible: false, lastValueVisible: true }, rsiPane,
       );
       rsiSeries.setData(bars.map((b, i) => ({ time: b.time, value: r[i] })).filter((p) => p.value != null));
       for (const level of [30, 70]) {
@@ -343,9 +345,9 @@ export function AdvancedPriceChart({ ticker, priceLines = [] }) {
       histSeries.setData(bars.map((b, i) => ({
         time: b.time, value: m.hist[i], color: (m.hist[i] ?? 0) >= 0 ? 'rgba(20,232,154,0.5)' : 'rgba(255,85,119,0.5)',
       })).filter((p) => p.value != null));
-      const macdLine = chart.addSeries(LineSeries, { color: '#38bdf8', lineWidth: 1, priceLineVisible: false, lastValueVisible: false }, macdPane);
+      const macdLine = chart.addSeries(LineSeries, { color: ACCENT, lineWidth: 1, priceLineVisible: false, lastValueVisible: false }, macdPane);
       macdLine.setData(bars.map((b, i) => ({ time: b.time, value: m.line[i] })).filter((p) => p.value != null));
-      const sigLine = chart.addSeries(LineSeries, { color: '#f59e0b', lineWidth: 1, priceLineVisible: false, lastValueVisible: false }, macdPane);
+      const sigLine = chart.addSeries(LineSeries, { color: AMBER, lineWidth: 1, priceLineVisible: false, lastValueVisible: false }, macdPane);
       sigLine.setData(bars.map((b, i) => ({ time: b.time, value: m.sig[i] })).filter((p) => p.value != null));
     }
 
@@ -419,10 +421,10 @@ export function AdvancedPriceChart({ ticker, priceLines = [] }) {
         <span className="mx-1 h-3 w-px bg-neutral-800" />
         {TYPES.map((t) => <Chip key={t} active={type === t} onClick={() => setType(t)}>{t}</Chip>)}
         <span className="mx-1 h-3 w-px bg-neutral-800" />
-        {SMA_DEFS.map((d) => <Chip key={d.key} color={d.color} active={ind[d.key]} onClick={() => toggle(d.key)}>{d.label}</Chip>)}
-        {EMA_DEFS.map((d) => <Chip key={d.key} color={d.color} active={ind[d.key]} onClick={() => toggle(d.key)}>{d.label}</Chip>)}
-        <Chip color={BB_COLOR} active={ind.bb} onClick={() => toggle('bb')}>BB</Chip>
-        <Chip color={VWAP_COLOR} active={ind.vwap} onClick={() => toggle('vwap')}>VWAP</Chip>
+        {SMA_DEFS.map((d) => <Chip key={d.key} color={chartTheme()[d.role]} active={ind[d.key]} onClick={() => toggle(d.key)}>{d.label}</Chip>)}
+        {EMA_DEFS.map((d) => <Chip key={d.key} color={chartTheme()[d.role]} active={ind[d.key]} onClick={() => toggle(d.key)}>{d.label}</Chip>)}
+        <Chip color={BB_COLOR()} active={ind.bb} onClick={() => toggle('bb')}>BB</Chip>
+        <Chip color={VWAP_COLOR()} active={ind.vwap} onClick={() => toggle('vwap')}>VWAP</Chip>
         <span className="mx-1 h-3 w-px bg-neutral-800" />
         <Chip active={ind.volume} onClick={() => toggle('volume')}>Vol</Chip>
         <Chip active={ind.rsi} onClick={() => toggle('rsi')}>RSI</Chip>
