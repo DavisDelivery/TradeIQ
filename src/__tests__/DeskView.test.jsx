@@ -12,7 +12,6 @@ const mockUseRegime = vi.fn();
 const mockUseLiveQuotes = vi.fn();
 const mockUseDeskStats = vi.fn();
 const mockUseEarningsRadar = vi.fn();
-const mockUseTargetBoard = vi.fn();
 const mockUseProphet = vi.fn();
 const mockUseStopWatch = vi.fn();
 
@@ -27,7 +26,6 @@ vi.mock('../hooks/useLiveQuotes.js', () => ({
 }));
 vi.mock('../hooks/useDeskStats.js', () => ({ useDeskStats: (...a) => mockUseDeskStats(...a) }));
 vi.mock('../hooks/useEarningsRadar.js', () => ({ useEarningsRadar: (...a) => mockUseEarningsRadar(...a) }));
-vi.mock('../hooks/useTargetBoard.js', () => ({ useTargetBoard: (...a) => mockUseTargetBoard(...a) }));
 // BrokerPanel uses a raw useQuery (needs a QueryClientProvider this harness
 // deliberately omits) — stub it; it renders null until a broker sync exists
 // anyway, and has no assertions here.
@@ -84,10 +82,8 @@ function seedDefaults() {
     isLoading: false,
     error: null,
   });
-  mockUseTargetBoard.mockReturnValue({
-    data: { targets: [{ ticker: 'AAPL', tier: 'A', composite: 78 }] },
-  });
-  mockUseProphet.mockReturnValue({ data: { picks: [] } });
+  // Target board retired (AUDIT-1) — prophet is the remaining signal source.
+  mockUseProphet.mockReturnValue({ data: { picks: [{ ticker: 'AAPL', conviction: 'high' }] } });
   mockUseStopWatch.mockReturnValue({
     breaches: [], breachByTradeId: {}, lastObserved: null,
     stale: false, watching: true, error: null, isLoading: false,
@@ -148,8 +144,8 @@ describe('DeskView — desktop', () => {
   it('signal cell carries the board verdict chip (evidence, not prediction)', () => {
     render(<DeskView />);
     const aapl = screen.getByTestId('watch-row-AAPL');
-    expect(within(aapl).getByText('TGT A·78')).toBeInTheDocument();
-    expect(within(aapl).getByTestId('verdict-chip-target')).toBeInTheDocument();
+    expect(within(aapl).getByText('PRO high')).toBeInTheDocument();
+    expect(within(aapl).getByTestId('verdict-chip-prophet')).toBeInTheDocument();
   });
 
   it('watchlist columns sort on header click (Last ascends/descends)', () => {
