@@ -18,9 +18,15 @@ export const ChartView = () => {
   const [ticker, setTicker] = useState('NVDA');
   const [input, setInput] = useState('NVDA');
 
-  const { data, error, isLoading: loading, refetch } = useChartAnalysis(ticker, 180);
+  // AI-1: the narrative is OPT-IN. Opening this tab used to fire a Claude
+  // call immediately (ticker defaults to 'NVDA', so it spent even before you
+  // typed anything). Reset on ticker change so switching symbols never
+  // silently inherits a paid read.
+  const [withAi, setWithAi] = useState(false);
+  const { data, error, isLoading: loading, refetch } = useChartAnalysis(ticker, 180, { withAi });
 
   const submit = () => {
+    setWithAi(false);
     const t = input.trim().toUpperCase();
     if (t && t !== ticker) setTicker(t);
     else refetch();
@@ -34,7 +40,7 @@ export const ChartView = () => {
           <h1 className="text-xl sm:text-2xl font-serif font-semibold text-neutral-100">Chart</h1>
         </div>
         <p className="text-[12px] text-neutral-500 leading-relaxed max-w-2xl">
-          Price + indicators + rule-stack signal + Claude narrative. One analysis per ticker, cached 10 minutes.
+          Price + indicators + rule-stack signal. AI read on request. Cached 10 minutes.
         </p>
       </header>
 
@@ -79,7 +85,7 @@ export const ChartView = () => {
 
       {loading && !data && (
         <div className="border border-neutral-800 p-8 text-center text-neutral-500 font-mono text-sm">
-          Fetching bars + computing indicators + Claude narrative…
+          Fetching bars + computing indicators…
         </div>
       )}
 
@@ -94,7 +100,12 @@ export const ChartView = () => {
           <VolumePanel data={data} />
           <RsiPanel data={data} />
           <MacdPanel data={data} />
-          <NarrativeCard data={data} />
+          <NarrativeCard
+            data={data}
+            withAi={withAi}
+            onGenerate={() => setWithAi(true)}
+            loading={loading && withAi}
+          />
           <SetupsCard data={data} />
         </>
       )}
@@ -276,8 +287,22 @@ const MacdPanel = ({ data }) => {
   );
 };
 
-const NarrativeCard = ({ data }) => {
-  if (!data.narrative) return null;
+const NarrativeCard = ({ data, withAi, onGenerate, loading }) => {
+  if (!data.narrative) {
+    // No automatic spend: the read is produced only when asked for.
+    return (
+      <div className="border border-neutral-800 bg-neutral-950/40 p-4">
+        <button
+          type="button"
+          onClick={onGenerate}
+          disabled={loading || withAi}
+          className="text-[12px] font-mono uppercase tracking-widest text-emerald-400 hover:text-emerald-300 disabled:opacity-60"
+        >
+          {loading ? 'Generating…' : '→ Generate AI read'}
+        </button>
+      </div>
+    );
+  }
   return (
     <div className="border border-emerald-500/20 bg-emerald-500/5 p-3 sm:p-4 mb-3">
       <div className="flex items-center gap-2 mb-2">
