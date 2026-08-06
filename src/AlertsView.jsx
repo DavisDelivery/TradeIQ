@@ -211,9 +211,8 @@ export const AlertsView = () => {
             <tbody>
               {alerts.map(a => (
                 <React.Fragment key={a.id}>
-                // The alert feed aggregates tickers from every board — the
-                // one place a user is most likely to tap through — and opened
-                // nothing at all (audit 2026-08-04).
+                {/* The alert feed aggregates tickers from every board — the
+                    one place a user is most likely to tap through. */}
                 <tr
                   onClick={() => setSelected(a)}
                   className={`border-b border-neutral-800/60 cursor-pointer transition-colors ${

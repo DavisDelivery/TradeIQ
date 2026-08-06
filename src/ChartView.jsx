@@ -178,7 +178,9 @@ const chartMargin = { top: 5, right: 10, bottom: 5, left: 0 };
 const gridProps = () => ({ stroke: chartTheme().grid, strokeDasharray: '2 2' });
 const axisProps = () => ({ stroke: chartTheme().axis, fontSize: 10, tick: { fill: chartTheme().tick } });
 
-const PricePanel = ({ data }) => (
+const PricePanel = ({ data }) => {
+  const pal = chartTheme();
+  return (
   <div className="border border-neutral-800 bg-neutral-950/40 mb-2">
     <div className="px-3 pt-2 flex items-center justify-between">
       <span className="text-[10px] font-mono uppercase tracking-widest text-neutral-500">Price · SMAs</span>
@@ -201,9 +203,12 @@ const PricePanel = ({ data }) => (
       </ResponsiveContainer>
     </div>
   </div>
-);
+  );
+};
 
-const VolumePanel = ({ data }) => (
+const VolumePanel = ({ data }) => {
+  const pal = chartTheme();
+  return (
   <div className="border border-neutral-800 bg-neutral-950/40 mb-2">
     <div className="px-3 pt-2">
       <span className="text-[10px] font-mono uppercase tracking-widest text-neutral-500">Volume</span>
@@ -224,9 +229,11 @@ const VolumePanel = ({ data }) => (
       </ResponsiveContainer>
     </div>
   </div>
-);
+  );
+};
 
 const RsiPanel = ({ data }) => {
+  const pal = chartTheme();
   const rsi = data?.indicators?.latest?.rsi;
   return (
   <div className="border border-neutral-800 bg-neutral-950/40 mb-2">
@@ -257,6 +264,7 @@ const RsiPanel = ({ data }) => {
 };
 
 const MacdPanel = ({ data }) => {
+  const pal = chartTheme();
   const macdHist = data?.indicators?.latest?.macdHist;
   return (
   <div className="border border-neutral-800 bg-neutral-950/40 mb-3">

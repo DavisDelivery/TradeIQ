@@ -43,6 +43,7 @@ import { ResearchPanel } from './components/ResearchPanel.jsx';
 import { Logo, StatusDot, ConvictionBadge, DirectionPill } from './components/Badges.jsx';
 import { ThemeToggle } from './components/ThemeToggle.jsx';
 import { TickerSearch } from './components/TickerSearch.jsx';
+import { TickerDetailProvider } from './components/Ticker.jsx';
 import { StopBreachBanner } from './components/StopBreachBanner.jsx';
 import { StockDetailPanel } from './components/detail/StockDetailPanel.jsx';
 import { fmt, safeTimestamp, tierColor, tierGlow, directionIcon, analystIcon, analystLabel } from './lib/formatters.jsx';
@@ -472,6 +473,9 @@ export default function App() {
 
   if (isDesktop) {
     return (
+      // TICKER-1 — the profile overlay lives at the root, so a <Ticker> works
+      // from any depth without its parent view holding state for it.
+      <TickerDetailProvider>
       <div className="app-glow min-h-screen bg-page text-neutral-200" style={rootStyle}>
         {fontsAndScrollbars}
         <DesktopShell
@@ -496,10 +500,12 @@ export default function App() {
           {footer}
         </DesktopShell>
       </div>
+      </TickerDetailProvider>
     );
   }
 
   return (
+    <TickerDetailProvider>
     <div className="app-glow min-h-screen bg-page text-neutral-200 overflow-x-hidden" style={rootStyle}>
       {fontsAndScrollbars}
 
@@ -518,5 +524,6 @@ export default function App() {
 
       {footer}
     </div>
+    </TickerDetailProvider>
   );
 }
