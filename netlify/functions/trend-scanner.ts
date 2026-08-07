@@ -65,6 +65,30 @@ function json(status: number, body: unknown) {
 }
 
 /**
+ * Is this request being served by the production deploy?
+ *
+ * DERIVED FROM THE REQUEST, NOT THE ENVIRONMENT, and that is the whole point.
+ * The first attempt at this guard tested `process.env.CONTEXT !== 'production'`,
+ * which reads correctly and does nothing: CONTEXT is a BUILD variable and is
+ * not present in the function runtime. Verified against the live preview —
+ * the endpoint reported `recorded: 'written'` from deploy-preview-196 with the
+ * guard supposedly in place. The Host header cannot be absent or wrong,
+ * because it is what routed the request here.
+ *
+ * Netlify's non-production hostnames are structural: `deploy-preview-<n>--`,
+ * `<branch>--`, and `<deploy-id>--`. All of them contain `--`, and no
+ * production hostname does. That is the test, so a custom domain added later
+ * still records rather than silently going quiet — the failure mode that
+ * matters here is a forward record that stops without anyone noticing.
+ */
+export function isProductionHost(host: string | undefined): boolean {
+  const h = (host ?? '').toLowerCase().split(':')[0].trim();
+  if (!h) return false;
+  if (h === 'localhost' || h.endsWith('.local')) return false;
+  return !h.includes('--');
+}
+
+/**
  * Record the day's flagged set and its control cohort.
  *
  * `create()` rather than `set()`: the FIRST scan of a day is the timestamped
@@ -78,18 +102,17 @@ function json(status: number, body: unknown) {
 async function recordPaperTrail(
   trail: { date: string; universeScanned: string[] },
   universe: string,
+  host: string | undefined,
 ): Promise<'written' | 'exists' | 'failed' | 'skipped-non-production'> {
   // PRODUCTION ONLY. Deploy previews share the production Firebase project
   // (FIREBASE_SERVICE_ACCOUNT is set across all contexts), so smoke-testing
   // this endpoint on a preview writes real, immutable rows into the forward
   // record — and `create()` means the first write wins permanently, so a
-  // probe against a half-built branch would own that day forever. That is not
-  // hypothetical: the pre-fix build of this very PR wrote a 7-name cohort for
-  // 2026-08-06, four of whose names were flagged by a source that has since
-  // been reclassified as saturation.
-  if (process.env.CONTEXT && process.env.CONTEXT !== 'production') {
-    return 'skipped-non-production';
-  }
+  // probe against a half-built branch owns that day forever. Not
+  // hypothetical: the pre-fix build of this PR wrote a 7-name cohort for
+  // 2026-08-06, four of whose names came from a source since reclassified as
+  // saturation.
+  if (!isProductionHost(host)) return 'skipped-non-production';
 
   // Keyed by the SHAPE of the scan, not just the date. A ?limit=5 probe and
   // the real 40-name sweep are different cohorts and both deserve a record;
@@ -150,7 +173,8 @@ export const handler: Handler = async (event) => {
 
     const result = await scanForTrends(input);
     const candidates = result.candidates.filter((c) => c.convergence >= minSources);
-    const recorded = await recordPaperTrail(result.paperTrail, universe);
+    const host = event.headers?.host ?? event.headers?.Host;
+    const recorded = await recordPaperTrail(result.paperTrail, universe, host);
 
     log.info('response', {
       status: 200, universe, scanned: rows.length,

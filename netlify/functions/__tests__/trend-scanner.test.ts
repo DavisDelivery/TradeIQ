@@ -24,13 +24,13 @@ vi.mock('../shared/firebase-admin', () => ({
   getAdminDb: () => ({ collection: () => ({ doc: () => ({ create: createMock }) }) }),
 }));
 
-import { handler } from '../trend-scanner';
+import { handler, isProductionHost } from '../trend-scanner';
 
-const evt = (params: Record<string, string> = {}) =>
-  ({ queryStringParameters: params, httpMethod: 'GET' }) as any;
+const evt = (params: Record<string, string> = {}, host = 'tradeiq-alpha.netlify.app') =>
+  ({ queryStringParameters: params, httpMethod: 'GET', headers: { host } }) as any;
 
-const call = (params: Record<string, string> = {}) =>
-  handler(evt(params), {} as any, () => {}) as Promise<any>;
+const call = (params: Record<string, string> = {}, host?: string) =>
+  handler(evt(params, host), {} as any, () => {}) as Promise<any>;
 
 const row = (ticker: string) => ({ ticker, marketCapM: 1000, price: 10, perfWeekPct: 1, perfMonthPct: 2, avgVolume: 1e6, shortFloatPct: 3, instOwnPct: 40, earningsDate: null });
 
@@ -176,20 +176,21 @@ describe('trend-scanner endpoint', () => {
       expect(body.paperTrail.recorded).toBe('exists');
     });
 
-    it('REFUSES to write from a non-production context', async () => {
-      // Deploy previews share the production Firebase project, and create()
-      // means the first write owns that day forever. A smoke test against a
-      // half-built branch must not be able to pin a cohort into the study.
-      process.env.CONTEXT = 'deploy-preview';
-      const body = JSON.parse((await call()).body);
+    it('REFUSES to write when served from a deploy preview', async () => {
+      // Previews share the production Firebase project, and create() means the
+      // first write owns that day forever. A smoke test against a half-built
+      // branch must not be able to pin a cohort into the study.
+      const body = JSON.parse((await call({}, 'deploy-preview-196--tradeiq-alpha.netlify.app')).body);
       expect(createMock).not.toHaveBeenCalled();
       expect(body.paperTrail.recorded).toBe('skipped-non-production');
     });
 
-    it('still records when CONTEXT is unset, as in local and test runs', async () => {
-      delete process.env.CONTEXT;
-      const body = JSON.parse((await call()).body);
-      expect(body.paperTrail.recorded).toBe('written');
+    it('refuses to write from a branch deploy or from localhost', async () => {
+      expect(JSON.parse((await call({}, 'my-branch--tradeiq-alpha.netlify.app')).body).paperTrail.recorded)
+        .toBe('skipped-non-production');
+      expect(JSON.parse((await call({}, 'localhost:8888')).body).paperTrail.recorded)
+        .toBe('skipped-non-production');
+      expect(createMock).not.toHaveBeenCalled();
     });
 
     it('still serves the board when the record cannot be written', async () => {
@@ -210,4 +211,37 @@ describe('trend-scanner endpoint', () => {
 afterAll(() => {
   if (ORIGINAL_CONTEXT === undefined) delete process.env.CONTEXT;
   else process.env.CONTEXT = ORIGINAL_CONTEXT;
+});
+
+describe('isProductionHost — derived from the request, because CONTEXT is a BUILD variable', () => {
+  it('accepts the production host', () => {
+    expect(isProductionHost('tradeiq-alpha.netlify.app')).toBe(true);
+  });
+
+  it('accepts a custom domain, so a rename does not silently stop the record', () => {
+    // The failure that matters here is a forward record that goes quiet
+    // without anyone noticing, so an unrecognised host records rather than
+    // being treated as suspect.
+    expect(isProductionHost('tradeiq.davisdelivery.com')).toBe(true);
+  });
+
+  it('rejects every Netlify non-production hostname shape', () => {
+    expect(isProductionHost('deploy-preview-196--tradeiq-alpha.netlify.app')).toBe(false);
+    expect(isProductionHost('some-branch--tradeiq-alpha.netlify.app')).toBe(false);
+    expect(isProductionHost('6a751d6d44b2f70007eb6492--tradeiq-alpha.netlify.app')).toBe(false);
+  });
+
+  it('rejects local development', () => {
+    expect(isProductionHost('localhost:8888')).toBe(false);
+    expect(isProductionHost('tradeiq.local')).toBe(false);
+  });
+
+  it('fails closed on a missing host rather than guessing', () => {
+    expect(isProductionHost(undefined)).toBe(false);
+    expect(isProductionHost('')).toBe(false);
+  });
+
+  it('ignores port and case', () => {
+    expect(isProductionHost('TradeIQ-Alpha.Netlify.App:443')).toBe(true);
+  });
 });
