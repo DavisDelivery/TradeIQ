@@ -15,7 +15,8 @@ import { readFileSync } from 'node:fs';
 const MUST_USE_TICKER = [
   // file, minimum <Ticker occurrences, note
   ['src/HistoryView.jsx', 1, 'snapshot replay ticker column'],
-  ['src/TrendExposureView.jsx', 1, 'filer company-name column'],
+  // TrendExposureView.jsx removed 2026-08-07 — the trend-exposure endpoint was
+  // retired (netlify/functions-retired/README.md) and the view deleted with it.
   ['src/ForwardTestView.jsx', 1, 'pick log'],
   ['src/EngineTestView.jsx', 2, 'result hero + sector ETF grid'],
   ['src/VectorView.jsx', 1, 'evaluator hero'],
