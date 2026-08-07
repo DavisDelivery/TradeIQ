@@ -6,15 +6,16 @@
 // your base rates + earnings radar. Mobile: the same modules stacked,
 // tape as a horizontal scroll strip.
 //
-// This tab presents EVIDENCE, not predictions — every model signal on
-// screen carries its verdict chip (FIX-1 W4). No AI call fires without
+// This tab presents EVIDENCE, not predictions. No AI call fires without
 // an explicit button press (the dossier AI BRIEF tab is button-gated).
 //
 // Budget discipline: quote polling (15s tape / 30s watchlist+positions)
 // pauses whenever the tab is hidden (TanStack focusManager +
 // refetchIntervalInBackground:false → visibilityState-aware), sparing
-// the Polygon budget. Signal chips derive from the ALREADY-FETCHED
-// target/prophet board caches — no per-ticker signal endpoint exists.
+// the Polygon budget.
+//
+// As of 2026-08-07 there are no signal chips: every ranking board has been
+// retired for want of a measured edge, so there is nothing left to chip.
 
 import React, { useEffect, useMemo, useState } from 'react';
 import { Monitor } from 'lucide-react';
@@ -23,14 +24,12 @@ import { useRegime } from './hooks/useRegime.js';
 import { useLiveQuotes } from './hooks/useLiveQuotes.js';
 import { useDeskStats } from './hooks/useDeskStats.js';
 import { useEarningsRadar } from './hooks/useEarningsRadar.js';
-import { useProphet } from './hooks/useProphet.js';
 import { readWatchlist } from './watchlist.js';
 import { readLog } from './tradeLog.js';
 import { isClosed } from './lib/baseRates.js';
 import { AdvancedPriceChart } from './components/detail/AdvancedPriceChart.jsx';
 import { TapeStrip } from './components/desk/TapeStrip.jsx';
 import { WatchlistPanel } from './components/desk/WatchlistPanel.jsx';
-import { buildSignalMap } from './components/desk/SignalCell.jsx';
 import { DossierTabs } from './components/desk/DossierTabs.jsx';
 import { PositionsPanel } from './components/desk/PositionsPanel.jsx';
 import { BrokerPanel } from './components/desk/BrokerPanel.jsx';
@@ -80,14 +79,11 @@ export function DeskView() {
   // but had not also starred reported with no warning at all.
   const { radarByTicker } = useEarningsRadar(quoteTickers);
 
-  // Signal chips from the already-fetched prophet board cache. The target
-  // leg was removed when that board retired (AUDIT-1: −74.2pp, negative IC
-  // — a chip derived from it was a recommendation wearing a costume).
-  const { data: prophetData } = useProphet('largecap');
-  const signalMap = useMemo(
-    () => buildSignalMap(undefined, prophetData),
-    [prophetData],
-  );
+  // Signal chips are GONE. Target was removed when that board retired, and
+  // prophet — the last remaining source — retired 2026-08-07 after its only
+  // positive number turned out to be an artifact and its measurement could
+  // not be completed. With no validated board left to derive one from, a
+  // chip on a watchlist row would be decoration implying evidence.
 
   // ── modules ─────────────────────────────────────────────────────────
   const watchlist = (
@@ -96,7 +92,6 @@ export function DeskView() {
       statsLoading={statsLoading}
       quotesByTicker={quotesByTicker}
       radarByTicker={radarByTicker}
-      signalMap={signalMap}
       focusTicker={focusTicker}
       onFocus={setFocusTicker}
     />

@@ -3,7 +3,10 @@
 // Firestore-synced single-user list (src/watchlist.js, tradeLog sync
 // pattern). Columns — ALL sortable (standing rule, useSortable +
 // SortableTh): Ticker | Last | Chg% | Spark 30d | vs 52wH | ATR% |
-// AvgVol | MktCap | Earnings | Signal.
+// AvgVol | MktCap | Earnings.
+//
+// The Signal column was removed 2026-08-07: every ranking board that could
+// have populated it has been retired for want of a measured edge.
 //
 // Live overlay contract: Last/Chg% overlay via the shared quotes map;
 // a missing quote falls back to the desk-stats daily close, and a
@@ -16,7 +19,6 @@ import { readWatchlist, addToWatchlist, removeFromWatchlist } from '../../watchl
 import { useSortable, SortableTh } from '../../lib/useSortable.jsx';
 import { fmtMcap, fmtCompact } from '../../lib/formatters.jsx';
 import { Spark } from './Spark.jsx';
-import { SignalCell } from './SignalCell.jsx';
 import { Ticker } from '../Ticker.jsx';
 
 const dash = <span className="text-neutral-600">—</span>;
@@ -43,14 +45,13 @@ function EarningsCell({ radar }) {
   );
 }
 
-/** Merge stats + quotes + radar + signals into flat sortable rows. Pure — exported for tests. */
-export function buildWatchlistRows(entries, statsByTicker, quotesByTicker, radarByTicker, signalMap) {
+/** Merge stats + quotes + radar into flat sortable rows. Pure — exported for tests. */
+export function buildWatchlistRows(entries, statsByTicker, quotesByTicker, radarByTicker) {
   return (entries || []).map((e) => {
     const t = e.ticker;
     const s = statsByTicker?.[t];
     const q = quotesByTicker?.[t];
     const r = radarByTicker?.[t];
-    const signals = signalMap?.[t] ?? [];
     const spark = s?.spark ?? null;
     const spark30dPct = spark && spark.length >= 2 && spark[0] > 0
       ? ((spark[spark.length - 1] - spark[0]) / spark[0]) * 100
@@ -68,15 +69,13 @@ export function buildWatchlistRows(entries, statsByTicker, quotesByTicker, radar
       marketCap: s?.marketCap ?? null,
       earningsDays: (r?.daysUntil != null && r.daysUntil >= 0) ? r.daysUntil : null,
       radar: r ?? null,
-      signals,
-      signalCount: signals.length,
       pendingSync: !!e._pendingSync,
     };
   });
 }
 
 export function WatchlistPanel({
-  statsByTicker, statsLoading, quotesByTicker, radarByTicker, signalMap,
+  statsByTicker, statsLoading, quotesByTicker, radarByTicker,
   focusTicker, onFocus,
 }) {
   const [entries, setEntries] = useState(() => readWatchlist());
@@ -92,8 +91,8 @@ export function WatchlistPanel({
   }, []);
 
   const rows = useMemo(
-    () => buildWatchlistRows(entries, statsByTicker, quotesByTicker, radarByTicker, signalMap),
-    [entries, statsByTicker, quotesByTicker, radarByTicker, signalMap],
+    () => buildWatchlistRows(entries, statsByTicker, quotesByTicker, radarByTicker),
+    [entries, statsByTicker, quotesByTicker, radarByTicker],
   );
   const sorted = sortRows(rows);
 
@@ -183,7 +182,6 @@ export function WatchlistPanel({
                 <SortableTh sortKey={sortKey} sortDir={sortDir} sortBy={sortBy} field="avgVol20" align="right">AvgVol</SortableTh>
                 <SortableTh sortKey={sortKey} sortDir={sortDir} sortBy={sortBy} field="marketCap" align="right">MktCap</SortableTh>
                 <SortableTh sortKey={sortKey} sortDir={sortDir} sortBy={sortBy} field="earningsDays" align="right">Earn</SortableTh>
-                <SortableTh sortKey={sortKey} sortDir={sortDir} sortBy={sortBy} field="signalCount">Signal</SortableTh>
                 <th className="w-6" aria-label="remove column" />
               </tr>
             </thead>
@@ -222,7 +220,6 @@ export function WatchlistPanel({
                     {row.marketCap != null ? fmtMcap(row.marketCap) : dash}
                   </td>
                   <td className="px-3 py-1.5 text-right tabular-nums"><EarningsCell radar={row.radar} /></td>
-                  <td className="px-3 py-1.5"><SignalCell signals={row.signals} /></td>
                   <td className="px-1 py-1.5">
                     <button
                       onClick={(ev) => handleRemove(row.ticker, ev)}

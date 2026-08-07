@@ -144,10 +144,16 @@ export const BOARD_VERDICTS: Record<VerdictBoard, BoardVerdict> = {
     runId: null,
     date: '2026-08-06',
     note:
-      'The previously shown +80.9 pp vs SPY came from a run that bought 14 names on day one ' +
-      'and never rebalanced (one stale snapshot served all 418 dates), with 6/20 slots in ' +
-      'cash; its "4/8 rolling windows" included an all-cash year credited as a win because ' +
-      'SPY fell. No valid full-window measurement of Prophet exists yet.',
+      'RETIRED 2026-08-07 — still unmeasured. The previously shown +80.9 pp vs SPY came from ' +
+      'a run that bought 14 names on day one and never rebalanced (one stale snapshot served ' +
+      'all 418 dates), with 6/20 slots in cash; its "4/8 rolling windows" included an ' +
+      'all-cash year credited as a win because SPY fell. Three attempts at a valid ' +
+      'ranked-engine measurement all died in the reinvoke chain — the engine dispatches the ' +
+      'next invocation, Netlify returns 202, and the invocation never lands (reinvokeAttempts ' +
+      '=== invocationCount === 3, lastReinvokeStatus 202, no error). Reproducible at ' +
+      'batchSize 8 and 2 alike, so it is a platform-level chain failure, not tuning. Prophet ' +
+      'retires UNMEASURED rather than disproved: its live forward-test alpha is −2.87pp at ' +
+      '26% alpha win rate, and no board in the app retains a validated edge.',
   },
   target: {
     board: 'target',
