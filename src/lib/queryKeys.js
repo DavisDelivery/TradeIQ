@@ -85,6 +85,11 @@ export const queryKeys = {
   earningsRadar: (key) => ['tradeiq', 'earningsRadar', key],
   insiderDetail: (ticker) => ['tradeiq', 'insiderDetail', ticker],
 
+  // SECTOR-1 — cross-sector strength table. NO parameter on purpose: the
+  // table is identical for every ticker, so one cache entry serves the whole
+  // app rather than one per profile open.
+  sectorPerformance: () => ['tradeiq', 'sectorPerformance'],
+
   // STOP-1 — server-side stop watcher record. No parameters: it is the whole
   // set of currently-observed breaches across the journal.
   stopWatch: () => ['tradeiq', 'stopWatch'],

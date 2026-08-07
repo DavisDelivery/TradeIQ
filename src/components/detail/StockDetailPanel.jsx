@@ -26,6 +26,7 @@ import { useTargetRationale } from '../../hooks/useTargetRationale.js';
 import { useStockDetail } from '../../hooks/useStockDetail.js';
 import { StockDetailHero } from './StockDetailHero.jsx';
 import { ThesisParagraph } from './ThesisParagraph.jsx';
+import { SectorContextPanel } from './SectorContextPanel.jsx';
 import { FablePillarsSection } from './FablePillarsSection.jsx';
 import { TridentPillarsSection } from './TridentPillarsSection.jsx';
 import { AdvancedPriceChart } from './AdvancedPriceChart.jsx';
@@ -127,6 +128,10 @@ export function StockDetailPanel({ board, ticker, row }) {
         }
       />
       <KeyMetricsPanel ticker={ticker} />
+      {/* SECTOR-1 — sits directly above the relative-strength chart it gives
+          context to: the table says how the sector is doing, the chart shows
+          the path. */}
+      <SectorContextPanel ticker={ticker} />
       <RelativeStrengthChart ticker={ticker} />
       <FundamentalsChart ticker={ticker} />
       <CatalystsFeed ticker={ticker} />
