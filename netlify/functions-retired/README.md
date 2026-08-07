@@ -8,6 +8,19 @@ AUDIT-1 evidence — see reports/research-2026-08/board-trust-audit.md):
   −1.68pp forward alpha) · trend (failed placebo — attribution tab only,
   which never had a scan)
 
+And on 2026-08-07, the last one:
+
+  prophet — retired UNMEASURED. Its only positive number was an artifact
+  (one basket bought on day one, never rebalanced, all-cash years counted
+  as rolling wins). Three attempts at a valid measurement died in the
+  engine's self-reinvoke chain: dispatch returns HTTP 202 and the next
+  invocation never lands, reproducible at batchSize 8 and 2. Live forward
+  alpha −2.87pp at a 26% win rate. Prophet carried the heaviest cron
+  footprint in the app — 8 scheduled functions including the portfolio
+  backtest cron that produced 20 consecutive all-cash runs.
+
+No ranking board remains in the app.
+
 This directory is NOT bundled by Netlify, so the schedules stop firing —
 which is the point: williams alone scanned every 30 minutes across four
 universes during market hours for a board measured 73 points behind SPY.

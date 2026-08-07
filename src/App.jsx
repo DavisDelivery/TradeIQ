@@ -16,7 +16,6 @@ import {
 import { CatalystView } from './CatalystView.jsx';
 import { ChartView } from './ChartView.jsx';
 import { JournalView } from './JournalView.jsx';
-import { ProphetView } from './ProphetView.jsx';
 import { InsiderBoardView } from './InsiderBoardView.jsx';
 import { HistoryView } from './HistoryView.jsx';
 import { LogButton } from './components/LogButton.jsx';
@@ -90,7 +89,6 @@ const VIEWS = [
   // a signal its own validation found NO_EDGE (IC −0.017, −73pp vs SPY).
   // Board + data kept in the repo; removed from the UI so it can't read as a
   // source of live picks.
-  { id: 'prophet', label: 'Prophet', shortLabel: 'Prophet', icon: Sparkles },
   { id: 'catalyst', label: 'Catalyst', shortLabel: 'Catalyst', icon: Zap },
   { id: 'insiders', label: 'Insiders', shortLabel: 'Insiders', icon: Eye },
   { id: 'earnings', label: 'Earnings', shortLabel: 'Earnings', icon: Zap },
@@ -410,7 +408,6 @@ export default function App() {
     <>
       {activeView === 'desk' && <ErrorBoundary label="Desk"><DeskView /></ErrorBoundary>}
       {activeView === 'trident' && <ErrorBoundary label="TRIDENT"><TridentView /></ErrorBoundary>}
-      {activeView === 'prophet' && <ErrorBoundary label="Prophet"><ProphetView /></ErrorBoundary>}
       {activeView === 'catalyst' && <ErrorBoundary label="Catalyst"><CatalystView universe={universe} onNavigate={setActiveView} /></ErrorBoundary>}
       {activeView === 'insiders' && <ErrorBoundary label="Insiders"><InsiderBoardView universe={universe} /></ErrorBoundary>}
       {activeView === 'earnings' && <ErrorBoundary label="Earnings"><EarningsPlaysView universe={universe} /></ErrorBoundary>}
