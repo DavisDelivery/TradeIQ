@@ -1,11 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import {
   DETECT_CAVEAT,
+  MIN_APP_HISTORY_DAYS,
   MIN_BASELINE_VIEWS,
   MIN_MENTION_HISTORY_DAYS,
   SATURATION,
   THRESHOLDS,
   WINDOW,
+  appRatingSeries,
+  appRatingSpikeOf,
   articleMatchesCompany,
   assessCandidate,
   controlCohort,
@@ -433,5 +436,120 @@ describe('the contract refuses to imply edge', () => {
     expect(SATURATION.offExchangeZ).toBe(1.0);
     expect(WINDOW).toEqual({ recentDays: 7, baseDays: 28 });
     expect(MIN_MENTION_HISTORY_DAYS).toBe(35);
+  });
+});
+
+// APP RATINGS — the "what consumers DO" leg. The trend study's own conclusion
+// is that do-signals do not reverse while look-at signals do, and until this
+// existed every leg here was look-at. `appRatingSnapshots` had been recording
+// the data daily since the cron went live with NOTHING reading it back.
+describe('appRatingSpikeOf — cumulative counts must be differenced first', () => {
+  const cum = (deltas: number[], start = 10_000) => {
+    const out = [start];
+    for (const d of deltas) out.push(out[out.length - 1] + d);
+    return out;
+  };
+
+  it('measures growth in NEW ratings per day, not in the lifetime total', () => {
+    // THE TRAP: Apple's count is lifetime cumulative. Comparing levels would
+    // report a fraction of a percent forever — a live feed that reads dead.
+    const series = cum([...new Array(WINDOW.baseDays).fill(100), ...new Array(WINDOW.recentDays).fill(300)]);
+    expect(appRatingSpikeOf(series)).toBeCloseTo(200);
+
+    // The same series compared as LEVELS moves by ~2%, which would never clear
+    // the 40% bar no matter how hard the app was actually growing.
+    const need = WINDOW.recentDays + WINDOW.baseDays;
+    const lvlRecent = series.slice(-WINDOW.recentDays).reduce((a, b) => a + b, 0) / WINDOW.recentDays;
+    const lvlBase = series.slice(-need, -WINDOW.recentDays).reduce((a, b) => a + b, 0) / WINDOW.baseDays;
+    expect((lvlRecent / lvlBase - 1) * 100).toBeLessThan(THRESHOLDS.appRatingSpikePct);
+  });
+
+  it('needs one MORE observation than the mention leg — N deltas need N+1 points', () => {
+    expect(MIN_APP_HISTORY_DAYS).toBe(MIN_MENTION_HISTORY_DAYS + 1);
+    expect(appRatingSpikeOf(cum(new Array(MIN_MENTION_HISTORY_DAYS - 1).fill(100)))).toBeNull();
+    expect(appRatingSpikeOf(cum(new Array(MIN_MENTION_HISTORY_DAYS).fill(100)))).not.toBeNull();
+  });
+
+  it('treats a FALLING lifetime count as a broken series, not as collapsing demand', () => {
+    // A lifetime total cannot fall. It means the app identity changed under us
+    // — a re-listing, a different appId matched. Averaging across that break
+    // invents a demand collapse and then an explosion the day after.
+    const series = cum(new Array(MIN_MENTION_HISTORY_DAYS).fill(100));
+    series[20] = 0;
+    expect(appRatingSpikeOf(series)).toBeNull();
+  });
+
+  it('reports a rise off a zero baseline as unbounded, like the other legs', () => {
+    const series = cum([...new Array(WINDOW.baseDays).fill(0), ...new Array(WINDOW.recentDays).fill(50)]);
+    expect(appRatingSpikeOf(series)).toBe(Number.POSITIVE_INFINITY);
+  });
+
+  it('is quiet, not moved, when the flow is flat', () => {
+    expect(appRatingSpikeOf(cum(new Array(MIN_MENTION_HISTORY_DAYS).fill(100)))).toBeCloseTo(0);
+  });
+});
+
+describe('appRatingSeries', () => {
+  const day = (date: string, rows: Array<[string, number | null]>) => ({
+    date,
+    rows: rows.map(([ticker, ratingCount]) => ({ ticker, appId: 1, appName: 'a', rating: 4.5, ratingCount })),
+  });
+
+  it('reads one ticker out of the daily rows, oldest first', () => {
+    expect(appRatingSeries('CROX', [
+      day('2026-08-01', [['CROX', 100], ['EAT', 5]]),
+      day('2026-08-02', [['CROX', 140], ['EAT', 6]]),
+    ])).toEqual([100, 140]);
+  });
+
+  it('SKIPS days with no HIGH-confidence match rather than filling a zero', () => {
+    // A day the app could not be matched is a missing observation. A zero
+    // would difference into a catastrophic negative and break the series.
+    expect(appRatingSeries('CROX', [
+      day('2026-08-01', [['CROX', 100]]),
+      day('2026-08-02', [['EAT', 6]]),
+      day('2026-08-03', [['CROX', 140]]),
+    ])).toEqual([100, 140]);
+  });
+
+  it('is case-insensitive and tolerates a null count', () => {
+    expect(appRatingSeries('crox', [day('2026-08-01', [['CROX', null]]), day('2026-08-02', [['CROX', 7]])]))
+      .toEqual([7]);
+  });
+});
+
+describe('the app leg is a first-class convergence source', () => {
+  it('counts toward convergence and reports its own window', () => {
+    const c = assessCandidate('CROX', 'Crocs', { appRatingSpikePct: 90 });
+    const a = c.observations.find((o) => o.source === 'appRatings')!;
+    expect(a.moved).toBe(true);
+    expect(a.checked).toBe(true);
+    expect(a.window).toBe('7d mean vs prior 28d mean');
+    expect(c.convergence).toBe(1);
+  });
+
+  it('honours its own threshold, which is lower than chatter on purpose', () => {
+    expect(THRESHOLDS.appRatingSpikePct).toBe(40);
+    expect(THRESHOLDS.appRatingSpikePct).toBeLessThan(THRESHOLDS.mentionSpikePct);
+    expect(assessCandidate('A', null, { appRatingSpikePct: 40 }).convergence).toBe(1);
+    expect(assessCandidate('B', null, { appRatingSpikePct: 39.9 }).convergence).toBe(0);
+  });
+
+  it('is UNCHECKED, not negative, when there is no recorded history', () => {
+    const c = assessCandidate('X', null, { wikiSpikePct: 60 });
+    const a = c.observations.find((o) => o.source === 'appRatings')!;
+    expect(a.checked).toBe(false);
+    expect(a.moved).toBe(false);
+    expect(a.reason).toMatch(/no recorded app-rating history/);
+  });
+
+  it('lets all three legs converge', () => {
+    const c = assessCandidate('CROX', 'Crocs', {
+      wikiSpikePct: 60,
+      mentions: { state: 'TRACKED', rank: 400, spikePct: 400 },
+      appRatingSpikePct: 90,
+    });
+    expect(c.convergence).toBe(3);
+    expect(c.sourcesAvailable).toBe(3);
   });
 });

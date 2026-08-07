@@ -52,6 +52,7 @@ function scanResult(candidates: any[] = [candidate('AAA', 1), candidate('ZZZ', 2
     order: 'alphabetical by ticker — this is NOT a ranking; sort client-side on any column',
     paperTrail: { date: '2026-08-06', seed: 's', candidates: candidates.map((c) => c.ticker), control: ['QQQ'], universeScanned: ['AAA', 'QQQ', 'ZZZ'] },
     mentionHistory: { daysRecorded: 2, daysRequired: 35, usable: false },
+    appRatingHistory: { daysRecorded: 2, daysRequired: 36, usable: false },
     degraded: [],
     caveat: 'A CANDIDATE GENERATOR, not a signal, and deliberately NOT RANKED.',
   };
@@ -163,10 +164,11 @@ describe('trend-scanner endpoint', () => {
     });
 
     it('clamps minSources to the number of convergence legs that exist', async () => {
-      // Off-exchange moved to saturation, so there are TWO legs. Asking for 3
-      // would otherwise return a permanently empty board.
-      const body = JSON.parse((await call({ minSources: '3' })).body);
-      expect(body.minSources).toBeLessThanOrEqual(2);
+      // THREE legs: wikipedia, recorded mentions, app ratings. Off-exchange is
+      // not one — it is saturation. Asking for 4 would otherwise return a
+      // permanently empty board.
+      const body = JSON.parse((await call({ minSources: '9' })).body);
+      expect(body.minSources).toBeLessThanOrEqual(3);
     });
   });
 

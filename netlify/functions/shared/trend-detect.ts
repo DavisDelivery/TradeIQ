@@ -91,7 +91,10 @@
 
 import { fetchOffExchange } from './quiver-offexchange';
 import { fetchPageviews, resolveArticle } from './trend-exposure';
-import { readMentionHistory, readTicker, type MentionSnapshot } from './social-mentions';
+import {
+  readAppRatingHistory, readMentionHistory, readTicker,
+  type AppRatingDay, type MentionSnapshot,
+} from './social-mentions';
 import { enrichTickerNames } from './ticker-reference';
 import { logger } from './logger';
 
@@ -111,6 +114,18 @@ export const PAGEVIEW_DAYS = 90;
 export const MIN_MENTION_HISTORY_DAYS = WINDOW.recentDays + WINDOW.baseDays;
 
 /**
+ * App ratings need ONE MORE DAY than the mention leg.
+ *
+ * Apple reports a LIFETIME CUMULATIVE rating count, so the series has to be
+ * first-differenced into "new ratings that day" before it means anything —
+ * and N differences need N+1 observations. Comparing the cumulative levels
+ * directly is the trap: a big app's count barely moves week to week, so the
+ * leg would report ~0% growth forever and look like a dead feed rather than a
+ * quiet one.
+ */
+export const MIN_APP_HISTORY_DAYS = WINDOW.recentDays + WINDOW.baseDays + 1;
+
+/**
  * A source has to clear this to be reported as "moved". NOT fitted — chosen
  * to be obviously material, and stated as constants so a reader can disagree
  * with the numbers rather than with the code.
@@ -120,6 +135,17 @@ export const THRESHOLDS = {
   wikiSpikePct: 25,
   /** Recorded retail mentions, 7d mean vs prior 28d mean. */
   mentionSpikePct: 100,
+  /**
+   * NEW app ratings per day, 7d mean vs prior 28d mean.
+   *
+   * Lower bar than chatter (100%) on purpose: forum mentions are spiky and
+   * routinely double on noise, whereas the number of people who open an app
+   * and tap a star is a slow, high-inertia quantity. A sustained 40% lift in
+   * daily new ratings is a much larger real-world event than a doubling of
+   * WSB posts, and holding both to the same number would have meant only ever
+   * seeing the app leg during an outright mania.
+   */
+  appRatingSpikePct: 40,
 } as const;
 
 /**
@@ -179,7 +205,7 @@ export const DETECT_CAVEAT =
  * velocity — a "what consumers DO" flow, the class the study found does not
  * reverse — is the next leg and the one that restores a second live source.
  */
-export type DetectSource = 'wikipedia' | 'mentions';
+export type DetectSource = 'wikipedia' | 'mentions' | 'appRatings';
 
 export interface SourceObservation {
   source: DetectSource;
@@ -266,6 +292,7 @@ export interface TrendDetectResult {
   order: string;
   paperTrail: PaperTrail;
   mentionHistory: { daysRecorded: number; daysRequired: number; usable: boolean };
+  appRatingHistory: { daysRecorded: number; daysRequired: number; usable: boolean };
   /** Sources that failed wholesale, so a thin result is explainable. */
   degraded: string[];
   caveat: string;
@@ -374,6 +401,9 @@ export interface AssessInputs {
     reason?: string | null;
   };
   offExchangeZ?: number | null;
+  /** 7d vs prior 28d growth in NEW app ratings per day. A "do" signal. */
+  appRatingSpikePct?: number | null;
+  appRatingReason?: string | null;
   context?: Partial<TrendCandidate['context']>;
 }
 
@@ -441,6 +471,21 @@ export function assessCandidate(
         ? 'below the tracking floor — quiet, which is the expected state for an undiscovered name'
         : 'no recorded mention history to compare against',
       m?.reason,
+    ),
+  );
+
+  // 3. APP RATINGS — new ratings per day, off our OWN recorded series.
+  //    The study's finding is that signals from what consumers DO do not
+  //    reverse, while signals from what people LOOK AT do. Wikipedia and forum
+  //    chatter are both look-at. This is the only do leg here: somebody opened
+  //    the app and tapped a star.
+  observations.push(
+    percentObservation(
+      'appRatings',
+      inputs.appRatingSpikePct,
+      THRESHOLDS.appRatingSpikePct,
+      'no recorded app-rating history to compare against',
+      inputs.appRatingReason,
     ),
   );
 
@@ -615,6 +660,58 @@ export function mentionSpikeOf(series: number[]): number | null {
   return pctChange(recent, base);
 }
 
+/**
+ * Per-ticker cumulative app-rating counts (oldest first), from the recorded
+ * daily snapshots. Days where this ticker had no HIGH-confidence app match are
+ * absent rather than zero — a missing observation is not a collapse to nought.
+ */
+export function appRatingSeries(ticker: string, history: AppRatingDay[]): number[] {
+  const t = ticker.toUpperCase();
+  const out: number[] = [];
+  for (const day of history) {
+    const row = (day.rows ?? []).find((r) => r.ticker?.toUpperCase() === t);
+    if (row?.ratingCount != null) out.push(row.ratingCount);
+  }
+  return out;
+}
+
+/**
+ * NEW ratings per day, from a cumulative series.
+ *
+ * A NEGATIVE delta is not a real-world event — a lifetime count cannot fall.
+ * It means the app identity changed underneath us (a re-listing, a different
+ * appId matched, Apple resetting a region). Averaging across that break would
+ * invent a demand collapse and then a demand explosion the day after, so the
+ * series is treated as broken and nothing is reported.
+ */
+export function dailyNewRatings(cumulative: number[]): number[] | null {
+  if (cumulative.length < 2) return null;
+  const deltas: number[] = [];
+  for (let i = 1; i < cumulative.length; i++) {
+    const d = cumulative[i] - cumulative[i - 1];
+    if (d < 0) return null;
+    deltas.push(d);
+  }
+  return deltas;
+}
+
+/**
+ * The app-rating leg: 7d mean of new ratings/day against the prior 28d mean.
+ *
+ * This is the study's "what consumers DO" class — the one it found does not
+ * reverse, unlike the look-at signals. Returns `Infinity` for a rise off a
+ * zero baseline, which `assessCandidate` renders as `unbounded`.
+ */
+export function appRatingSpikeOf(cumulative: number[]): number | null {
+  const deltas = dailyNewRatings(cumulative);
+  if (!deltas) return null;
+  const need = WINDOW.recentDays + WINDOW.baseDays;
+  if (deltas.length < need) return null;
+  const recent = mean(deltas.slice(-WINDOW.recentDays));
+  const base = mean(deltas.slice(-need, -WINDOW.recentDays));
+  return pctChange(recent, base);
+}
+
 export async function scanForTrends(
   universe: ScanInput[],
   opts: { concurrency?: number; asOf?: string } = {},
@@ -639,6 +736,24 @@ export async function scanForTrends(
     );
   }
   const latest: MentionSnapshot | null = history[0] ?? null;
+
+  // App-rating history — the "what consumers DO" leg. Read ONCE per run for
+  // the same reason as the mentions: it is a day-per-doc collection, not a
+  // per-ticker lookup.
+  let appHistory: AppRatingDay[] = [];
+  try {
+    appHistory = await readAppRatingHistory(MIN_APP_HISTORY_DAYS, asOf);
+  } catch (e: any) {
+    degraded.push(`app ratings history: ${String(e?.message ?? e)}`);
+  }
+  const appUsable = appHistory.length >= MIN_APP_HISTORY_DAYS;
+  if (!appUsable) {
+    degraded.push(
+      `app ratings: ${appHistory.length}/${MIN_APP_HISTORY_DAYS} days recorded — Apple reports a lifetime ` +
+        'cumulative count, so daily new-rating flow only exists once the snapshot cron has differenced enough ' +
+        'days. Reported as UNCHECKED, never as a negative.',
+    );
+  }
 
   // Bulk name lookup — ONE Firestore round trip for the whole universe rather
   // than forty. `enrichTickerNames` is the reader the scans already use for
@@ -716,9 +831,26 @@ export async function scanForTrends(
       }
     }
 
+    // --- App ratings, off our own recorded series.
+    let appRatingSpikePct: number | null = null;
+    let appRatingReason: string | null = null;
+    if (!appUsable) {
+      appRatingReason = `only ${appHistory.length} of ${MIN_APP_HISTORY_DAYS} required days recorded — UNCHECKED, not negative`;
+    } else {
+      const cumulative = appRatingSeries(t, appHistory);
+      appRatingSpikePct = appRatingSpikeOf(cumulative);
+      if (appRatingSpikePct == null) {
+        appRatingReason = cumulative.length < MIN_APP_HISTORY_DAYS
+          ? `only ${cumulative.length} recorded observations for this ticker — no HIGH-confidence app match on the rest`
+          : 'the cumulative rating count fell, so the app identity changed — series treated as broken rather than averaged across the break';
+      }
+    }
+
     return assessCandidate(t, usableName, {
       wikiSpikePct,
       wikiReason,
+      appRatingSpikePct,
+      appRatingReason,
       mentions: {
         state: read.state,
         rank: read.rank,
@@ -755,6 +887,7 @@ export async function scanForTrends(
   const seed = `${asOf}:${scanned.length}:${scanned[0] ?? ''}:${scanned[scanned.length - 1] ?? ''}`;
 
   log.info('scan', {
+    appDays: appHistory.length,
     universe: universe.length,
     assessed: assessed.length,
     candidates: candidates.length,
@@ -778,6 +911,11 @@ export async function scanForTrends(
       daysRecorded: history.length,
       daysRequired: MIN_MENTION_HISTORY_DAYS,
       usable: historyUsable,
+    },
+    appRatingHistory: {
+      daysRecorded: appHistory.length,
+      daysRequired: MIN_APP_HISTORY_DAYS,
+      usable: appUsable,
     },
     degraded,
     caveat: DETECT_CAVEAT,

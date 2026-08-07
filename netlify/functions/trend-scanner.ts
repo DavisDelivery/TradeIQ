@@ -48,7 +48,7 @@ const MIN_LIMIT = 5;
 const Query = z.object({
   universe: z.enum(['russell2k', 'sp500']).default('russell2k'),
   limit: z.coerce.number().int().min(MIN_LIMIT).max(MAX_LIMIT).catch(DEFAULT_WATCHLIST_LIMIT),
-  minSources: z.coerce.number().int().min(1).max(2).catch(1),
+  minSources: z.coerce.number().int().min(1).max(3).catch(1),
 });
 
 function json(status: number, body: unknown) {
@@ -202,6 +202,7 @@ export const handler: Handler = async (event) => {
       order: result.order,
       candidates,
       mentionHistory: result.mentionHistory,
+      appRatingHistory: result.appRatingHistory,
       paperTrail: { ...result.paperTrail, recorded },
       degraded: result.degraded,
       caveat: result.caveat,
