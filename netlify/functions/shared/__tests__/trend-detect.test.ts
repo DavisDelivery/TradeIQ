@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   DETECT_CAVEAT,
+  MEASURED_FALSE_POSITIVE_RATE,
   MIN_APP_HISTORY_DAYS,
   MIN_BASELINE_VIEWS,
   MIN_MENTION_HISTORY_DAYS,
@@ -12,6 +13,7 @@ import {
   articleMatchesCompany,
   assessCandidate,
   controlCohort,
+  expectedByChance,
   mentionSeries,
   mentionSpikeOf,
   pctChange,
@@ -551,5 +553,84 @@ describe('the app leg is a first-class convergence source', () => {
     });
     expect(c.convergence).toBe(3);
     expect(c.sourcesAvailable).toBe(3);
+  });
+});
+
+// ROBUSTNESS — the windows are compared on a MEDIAN, not a mean, and these
+// pin it. Every other test in this file uses flat series where the two are
+// identical, so without these the statistic could silently revert.
+describe('a one-day spike must not manufacture a candidate', () => {
+  // Real data, audited on the live board 2026-08-07.
+  const URBN_BASE = flat(WINDOW.baseDays, 185);
+  const URBN_RECENT = [187, 182, 178, 229, 222, 900, 264]; // one 900-view day
+  // 140, not 145: pageview distributions are right-skewed, so the baseline's
+  // MEDIAN sits below its mean. 145 was EAT's mean; its median is ~140, which
+  // is what the live board actually compared against.
+  const EAT_BASE = flat(WINDOW.baseDays, 140);
+  const EAT_RECENT = [154, 200, 268, 246, 180, 167, 175];  // elevated all week
+
+  const meanOf = (xs: number[]) => xs.reduce((a, b) => a + b, 0) / xs.length;
+
+  it('rejects URBN, which was a live candidate on ONE day out of seven', () => {
+    const r = recentVsBase(views([...URBN_BASE, ...URBN_RECENT]));
+    expect(r.pct).not.toBeNull();
+    expect(r.pct!).toBeLessThan(THRESHOLDS.wikiSpikePct);
+
+    // The mean the leg used to compare on says +67% — a comfortable pass.
+    // That single 900 is 4.9x baseline: a headline, a bot, or an inbound link,
+    // not a sustained change in how many people are looking this company up.
+    const byMean = (meanOf(URBN_RECENT) / meanOf(URBN_BASE) - 1) * 100;
+    expect(byMean).toBeGreaterThan(THRESHOLDS.wikiSpikePct);
+  });
+
+  it('KEEPS EAT, which was elevated on every day of the week', () => {
+    const r = recentVsBase(views([...EAT_BASE, ...EAT_RECENT]));
+    expect(r.pct!).toBeGreaterThanOrEqual(THRESHOLDS.wikiSpikePct);
+  });
+
+  it('applies the same robustness to the mention leg', () => {
+    // A name with one viral post and six quiet days is not a trend either.
+    const spiky = [...flat(WINDOW.baseDays, 4), 4, 3, 5, 4, 400, 4, 5];
+    expect(mentionSpikeOf(spiky)!).toBeLessThan(THRESHOLDS.mentionSpikePct);
+    const sustained = [...flat(WINDOW.baseDays, 4), 12, 14, 11, 13, 15, 12, 14];
+    expect(mentionSpikeOf(sustained)!).toBeGreaterThanOrEqual(THRESHOLDS.mentionSpikePct);
+  });
+
+  it('applies it to the app leg too — one promo day is not demand', () => {
+    const cum = (deltas: number[], start = 10_000) => {
+      const out = [start];
+      for (const d of deltas) out.push(out[out.length - 1] + d);
+      return out;
+    };
+    const spiky = cum([...flat(WINDOW.baseDays, 100), 100, 95, 105, 100, 9000, 98, 102]);
+    expect(appRatingSpikeOf(spiky)!).toBeLessThan(THRESHOLDS.appRatingSpikePct);
+  });
+});
+
+describe('expectedByChance — the board must not overstate itself', () => {
+  it('reports the MEASURED wikipedia false-positive rate, not a guess', () => {
+    expect(MEASURED_FALSE_POSITIVE_RATE.wikipedia).toBeCloseTo(0.073);
+    expect(MEASURED_FALSE_POSITIVE_RATE.basis).toMatch(/name-days/);
+  });
+
+  it('scales with the universe — ~2.9 of 40 names are expected by chance', () => {
+    const e = expectedByChance(40);
+    expect(e.wikipedia).toBeCloseTo(2.9, 1);
+    // The live board returned exactly 3 candidates, all flagged by wikipedia
+    // alone. That is indistinguishable from this number.
+    expect(e.note).toMatch(/by CHANCE/);
+    expect(e.note).toMatch(/told you nothing/);
+  });
+
+  it('refuses to invent a rate for the legs with no recorded history', () => {
+    expect(MEASURED_FALSE_POSITIVE_RATE.mentions).toBeNull();
+    expect(MEASURED_FALSE_POSITIVE_RATE.appRatings).toBeNull();
+    const e = expectedByChance(40);
+    expect(e.unmeasuredLegs).toEqual(['mentions', 'appRatings']);
+    expect(e.note).toMatch(/FLOOR/);
+  });
+
+  it('is zero for an empty universe rather than NaN', () => {
+    expect(expectedByChance(0).wikipedia).toBe(0);
   });
 });

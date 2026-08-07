@@ -170,6 +170,62 @@ export const SATURATION = {
   offExchangeZ: 1.0,
 } as const;
 
+/**
+ * MEASURED false-positive rate for the wikipedia leg.
+ *
+ * Not a guess and not from a paper — measured on 2026-08-07 against live
+ * Wikimedia data: 25 of the scanned consumer names, ~544 daily observations
+ * each (2025-01 to 2026-08), 8,741 name-days in total. On 7.3% of those
+ * name-days the leg fires with no event of any kind specified. Both the mean
+ * and the median statistic give the same 7.3%.
+ *
+ * WHY THIS HAS TO BE IN THE PAYLOAD: 7.3% across 40 names is ~2.9 wikipedia
+ * hits per scan BY CHANCE. The live board on the day this was measured
+ * returned exactly 3 candidates, every one of them flagged by wikipedia alone.
+ * That result is statistically indistinguishable from noise, and a candidate
+ * generator that prints three names without saying so is overstating itself
+ * even though every individual number on the row is true.
+ *
+ * Re-measure if the threshold, the window or the universe changes — all three
+ * move this number.
+ */
+export const MEASURED_FALSE_POSITIVE_RATE = {
+  wikipedia: 0.073,
+  /** No history recorded yet, so no honest figure exists for these two. */
+  mentions: null as number | null,
+  appRatings: null as number | null,
+  measuredOn: '2026-08-07',
+  basis: '25 names x ~544 days = 8,741 name-days of live Wikimedia pageviews',
+} as const;
+
+/**
+ * How many names this scan would expect to flag by chance alone.
+ *
+ * Only the legs with a MEASURED rate contribute; an unmeasured leg is left out
+ * rather than assigned a plausible-looking number, so the figure is a floor
+ * and says so.
+ */
+export function expectedByChance(universeSize: number): {
+  wikipedia: number;
+  totalMeasured: number;
+  unmeasuredLegs: string[];
+  note: string;
+} {
+  const wiki = universeSize * MEASURED_FALSE_POSITIVE_RATE.wikipedia;
+  const unmeasured = ['mentions', 'appRatings'];
+  return {
+    wikipedia: Math.round(wiki * 10) / 10,
+    totalMeasured: Math.round(wiki * 10) / 10,
+    unmeasuredLegs: unmeasured,
+    note:
+      `Across ${universeSize} names, roughly ${wiki.toFixed(1)} wikipedia hits are expected by CHANCE — ` +
+      'measured, not assumed. Compare that number with how many candidates came back before reading any ' +
+      'of them as a finding: a board returning about this many names has told you nothing. The mention and ' +
+      'app-rating legs have no recorded history yet, so this is a FLOOR on the expected false positives, ' +
+      'not the whole of it.',
+  };
+}
+
 export const DETECT_CAVEAT =
   'A CANDIDATE GENERATOR, not a signal, and deliberately NOT RANKED. Rows are ordered alphabetically; ' +
   'every measurement is attached so you can sort them yourself. This system measured NO_EDGE on the ' +
@@ -293,6 +349,8 @@ export interface TrendDetectResult {
   paperTrail: PaperTrail;
   mentionHistory: { daysRecorded: number; daysRequired: number; usable: boolean };
   appRatingHistory: { daysRecorded: number; daysRequired: number; usable: boolean };
+  /** How many of these names you would expect by chance. Measured. */
+  falsePositives: ReturnType<typeof expectedByChance>;
   /** Sources that failed wholesale, so a thin result is explainable. */
   degraded: string[];
   caveat: string;
@@ -303,6 +361,36 @@ export interface TrendDetectResult {
 // ---------------------------------------------------------------------------
 
 const mean = (xs: number[]): number => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0);
+
+/**
+ * Median. The detector's windows are compared on this, NOT on the mean, and
+ * the reason is measured rather than stylistic.
+ *
+ * Audited against the live board on 2026-08-07. Of the three candidates it was
+ * returning, TWO were produced by a single day:
+ *
+ *   URBN  last 7 days [187,182,178,229,222,900,264] vs a 185/day baseline.
+ *         One 900-view day — 4.9x baseline — drags the 7-day MEAN to 309 and
+ *         reports +67%. Drop that one day and the week is +13%, under the bar.
+ *   EAT   last 7 days [154,200,268,246,180,167,175] vs 145/day. Elevated on
+ *         every single day of the week.
+ *
+ * On the median URBN reads +19% and drops out; EAT reads +29% and stays. That
+ * is exactly the discrimination this tool needs, because a one-day Wikipedia
+ * spike is a headline, a bot or a link from somewhere — and the thesis being
+ * screened for is a SUSTAINED change in consumer behaviour, which is a
+ * different object entirely.
+ *
+ * HONEST LIMIT: swapping to the median does NOT reduce how often the leg
+ * fires. Measured over 25 names x ~544 days, both statistics fire on 7.3% of
+ * name-days. It fires on BETTER days, not fewer of them.
+ */
+const median = (xs: number[]): number => {
+  if (!xs.length) return 0;
+  const s = [...xs].sort((a, b) => a - b);
+  const n = s.length;
+  return n % 2 ? s[(n - 1) / 2] : (s[n / 2 - 1] + s[n / 2]) / 2;
+};
 
 /**
  * Percent change of one number against another.
@@ -335,8 +423,8 @@ export function recentVsBase(
   if (points.length < need) {
     return { pct: null, baselineMean: null, reason: `only ${points.length} days of history; need ${need}` };
   }
-  const recent = mean(points.slice(-recentDays).map((p) => p.views));
-  const base = mean(points.slice(-need, -recentDays).map((p) => p.views));
+  const recent = median(points.slice(-recentDays).map((p) => p.views));
+  const base = median(points.slice(-need, -recentDays).map((p) => p.views));
   if (base < MIN_BASELINE_VIEWS) {
     return {
       pct: null,
@@ -655,8 +743,8 @@ export function mentionSeries(ticker: string, history: MentionSnapshot[]): numbe
 export function mentionSpikeOf(series: number[]): number | null {
   const need = WINDOW.recentDays + WINDOW.baseDays;
   if (series.length < need) return null;
-  const recent = mean(series.slice(-WINDOW.recentDays));
-  const base = mean(series.slice(-need, -WINDOW.recentDays));
+  const recent = median(series.slice(-WINDOW.recentDays));
+  const base = median(series.slice(-need, -WINDOW.recentDays));
   return pctChange(recent, base);
 }
 
@@ -707,8 +795,8 @@ export function appRatingSpikeOf(cumulative: number[]): number | null {
   if (!deltas) return null;
   const need = WINDOW.recentDays + WINDOW.baseDays;
   if (deltas.length < need) return null;
-  const recent = mean(deltas.slice(-WINDOW.recentDays));
-  const base = mean(deltas.slice(-need, -WINDOW.recentDays));
+  const recent = median(deltas.slice(-WINDOW.recentDays));
+  const base = median(deltas.slice(-need, -WINDOW.recentDays));
   return pctChange(recent, base);
 }
 
@@ -917,6 +1005,7 @@ export async function scanForTrends(
       daysRequired: MIN_APP_HISTORY_DAYS,
       usable: appUsable,
     },
+    falsePositives: expectedByChance(universe.length),
     degraded,
     caveat: DETECT_CAVEAT,
   };

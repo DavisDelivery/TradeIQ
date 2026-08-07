@@ -203,6 +203,7 @@ export const handler: Handler = async (event) => {
       candidates,
       mentionHistory: result.mentionHistory,
       appRatingHistory: result.appRatingHistory,
+      falsePositives: result.falsePositives,
       paperTrail: { ...result.paperTrail, recorded },
       degraded: result.degraded,
       caveat: result.caveat,
