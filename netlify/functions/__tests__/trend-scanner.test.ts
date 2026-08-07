@@ -1,18 +1,17 @@
 import { describe, it, expect, vi, beforeEach, afterAll } from 'vitest';
 
 const finvizEnabledMock = vi.fn();
-const consumerWatchlistMock = vi.fn();
+const universeSnapshotMock = vi.fn();
 const scanForTrendsMock = vi.fn();
 const createMock = vi.fn();
 
 vi.mock('../shared/finviz', async (importOriginal) => {
   const real = await importOriginal<typeof import('../shared/finviz')>();
-  return { ...real, finvizEnabled: () => finvizEnabledMock() };
-});
-
-vi.mock('../shared/consumer-universe', async (importOriginal) => {
-  const real = await importOriginal<typeof import('../shared/consumer-universe')>();
-  return { ...real, consumerWatchlist: (...a: unknown[]) => consumerWatchlistMock(...a) };
+  return {
+    ...real,
+    finvizEnabled: () => finvizEnabledMock(),
+    getFinvizUniverseSnapshot: (...a: unknown[]) => universeSnapshotMock(...a),
+  };
 });
 
 vi.mock('../shared/trend-detect', async (importOriginal) => {
@@ -32,7 +31,12 @@ const evt = (params: Record<string, string> = {}, host = 'tradeiq-alpha.netlify.
 const call = (params: Record<string, string> = {}, host?: string) =>
   handler(evt(params, host), {} as any, () => {}) as Promise<any>;
 
-const row = (ticker: string) => ({ ticker, marketCapM: 1000, price: 10, perfWeekPct: 1, perfMonthPct: 2, avgVolume: 1e6, shortFloatPct: 3, instOwnPct: 40, earningsDate: null });
+// Must clear the ratified universe floors: cap >= $300M, price >= $5, and
+// avgVolume (thousands of shares) x price >= $3M/day.
+const row = (ticker: string, sector = 'Consumer Cyclical') => ({
+  ticker, sector, marketCapM: 1000, price: 10, perfWeekPct: 1, perfMonthPct: 2,
+  avgVolume: 500, shortFloatPct: 3, instOwnPct: 40, earningsDate: null,
+});
 
 const candidate = (ticker: string, convergence: number) => ({
   ticker, companyName: null, convergence, sourcesAvailable: 3,
@@ -58,7 +62,7 @@ const ORIGINAL_CONTEXT = process.env.CONTEXT;
 beforeEach(() => {
   process.env.CONTEXT = 'production';
   finvizEnabledMock.mockReset().mockReturnValue(true);
-  consumerWatchlistMock.mockReset().mockResolvedValue([row('AAA'), row('ZZZ')]);
+  universeSnapshotMock.mockReset().mockResolvedValue({ universe: 'russell2k', rows: [row('AAA'), row('ZZZ')], fetchedAt: '', source: 'cache', missingHeaders: [] });
   scanForTrendsMock.mockReset().mockResolvedValue(scanResult());
   createMock.mockReset().mockResolvedValue(undefined);
 });
@@ -92,7 +96,7 @@ describe('trend-scanner endpoint', () => {
     });
 
     it('does NOT cache a 502', async () => {
-      consumerWatchlistMock.mockResolvedValue(null);
+      universeSnapshotMock.mockResolvedValue(null);
       const res = await call();
       expect(res.statusCode).toBe(502);
       expect(res.headers['cache-control']).toBe('private, no-store');
@@ -116,7 +120,7 @@ describe('trend-scanner endpoint', () => {
   it('returns 502 on a dead universe feed rather than an empty board', async () => {
     // An empty "nothing is trending" is a claim about the world. We did not
     // measure it, so we must not print it.
-    consumerWatchlistMock.mockResolvedValue(null);
+    universeSnapshotMock.mockResolvedValue(null);
     const res = await call();
     expect(res.statusCode).toBe(502);
     expect(JSON.parse(res.body).candidates).toBeUndefined();
@@ -126,22 +130,26 @@ describe('trend-scanner endpoint', () => {
     it('clamps a negative limit instead of slicing from the end', async () => {
       // `.slice(0, -5)` would silently drop the LAST five names.
       await call({ limit: '-5' });
-      expect(consumerWatchlistMock.mock.calls[0][0]).toBeGreaterThanOrEqual(5);
+      expect(scanForTrendsMock.mock.calls[0][0].length).toBe(2); // both rows, not a negative slice
     });
 
     it('clamps a zero limit', async () => {
       await call({ limit: '0' });
-      expect(consumerWatchlistMock.mock.calls[0][0]).toBeGreaterThanOrEqual(5);
+      expect(scanForTrendsMock.mock.calls[0][0].length).toBe(2);
     });
 
     it('caps an oversized limit', async () => {
+      const many = Array.from({ length: 200 }, (_, i) => row(`T${String(i).padStart(3, '0')}`));
+      universeSnapshotMock.mockResolvedValue({ rows: many } as any);
       await call({ limit: '5000' });
-      expect(consumerWatchlistMock.mock.calls[0][0]).toBeLessThanOrEqual(60);
+      expect(scanForTrendsMock.mock.calls[0][0].length).toBeLessThanOrEqual(60);
     });
 
     it('falls back to the default on junk', async () => {
+      const many = Array.from({ length: 100 }, (_, i) => row(`T${String(i).padStart(3, '0')}`));
+      universeSnapshotMock.mockResolvedValue({ rows: many } as any);
       await call({ limit: 'banana' });
-      expect(consumerWatchlistMock.mock.calls[0][0]).toBe(40);
+      expect(scanForTrendsMock.mock.calls[0][0].length).toBe(40);
     });
 
     it('rejects an unknown universe rather than guessing', async () => {
@@ -204,7 +212,24 @@ describe('trend-scanner endpoint', () => {
   it('passes trader context columns through to the scan', async () => {
     await call();
     const input = scanForTrendsMock.mock.calls[0][0];
-    expect(input[0].context).toMatchObject({ marketCapM: 1000, price: 10, avgVolume: 1e6, shortFloatPct: 3 });
+    expect(input[0].context).toMatchObject({ marketCapM: 1000, price: 10, avgVolume: 500, shortFloatPct: 3 });
+  });
+
+  it('reports what the ratified universe policy removed, so the cut is not silent', async () => {
+    universeSnapshotMock.mockResolvedValue({
+      rows: [row('GOOD'), { ...row('TINY'), marketCapM: 50 }, { ...row('PENNY'), price: 1 }],
+    } as any);
+    const body = JSON.parse((await call()).body);
+    expect(body.universePolicy.excludedCounts.microcap).toBe(1);
+    expect(body.universePolicy.excludedCounts['price-floor']).toBe(1);
+    expect(body.universePolicy.version).toBeTruthy();
+    expect(scanForTrendsMock.mock.calls[0][0].map((i: any) => i.ticker)).toEqual(['GOOD']);
+  });
+
+  it('does not scan non-consumer sectors', async () => {
+    universeSnapshotMock.mockResolvedValue({ rows: [row('EAT'), row('AAPL', 'Technology')] } as any);
+    await call();
+    expect(scanForTrendsMock.mock.calls[0][0].map((i: any) => i.ticker)).toEqual(['EAT']);
   });
 });
 

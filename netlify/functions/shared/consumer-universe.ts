@@ -24,6 +24,7 @@
 // and it is the first thing to revisit if the detect pass ever earns its keep.
 
 import { getFinvizUniverseSnapshot, type FinvizRow, type FinvizUniverse } from './finviz';
+import { applyUniversePolicy, type ExclusionReason } from './research-policy';
 
 /** Finviz sectors that count as consumer-facing for this strategy. */
 export const CONSUMER_SECTORS = ['Consumer Cyclical', 'Consumer Defensive'] as const;
@@ -45,18 +46,59 @@ export async function consumerWatchlist(
 ): Promise<FinvizRow[] | null> {
   const snap = await getFinvizUniverseSnapshot(universe).catch(() => null);
   if (!snap) return null;
-  return selectConsumerRows(snap.rows ?? [], limit);
+  return selectConsumerRows(snap.rows ?? [], limit).kept;
 }
 
 /**
- * Pure selection, split out so the ordering rule is testable without a
- * network or a Finviz key.
+ * Finviz reports "Average Volume" in THOUSANDS of shares — see
+ * `camillo-research.ts`, which renders it as `${avgVolume}k`. The research
+ * policy wants a dollar figure, so it is shares x 1000 x price.
+ *
+ * NOTE THE SUBSTITUTION, because the field is named for a median: this is an
+ * AVERAGE, which is the only volume statistic the screener exposes. For a name
+ * with one enormous print it reads higher than the median would, so the
+ * liquidity floor is very slightly more permissive here than the policy
+ * intends. Stated rather than silently glossed.
  */
-export function selectConsumerRows(rows: FinvizRow[], limit: number): FinvizRow[] {
+export function dollarVolumeOf(row: FinvizRow): number | null {
+  const vol = row.avgVolume;
+  const px = row.price;
+  if (!Number.isFinite(vol as number) || !Number.isFinite(px as number)) return null;
+  return (vol as number) * 1000 * (px as number);
+}
+
+export interface ConsumerSelection {
+  kept: FinvizRow[];
+  /** Ticker -> why it was dropped, so the cut is never silent. */
+  excluded: Record<string, ExclusionReason>;
+  counts: Record<ExclusionReason, number>;
+}
+
+/**
+ * Pure selection, split out so the rules are testable without a network or a
+ * Finviz key.
+ *
+ * The ratified universe policy (`shared/research-policy.ts`, PR #198) is
+ * applied BEFORE the cap sort, not after: filtering after the truncation would
+ * mean a dropped name silently shrinks the watchlist below `limit` instead of
+ * letting the next eligible name take its place. Those floors are code rather
+ * than documentation precisely because a rule in a comment already drifted
+ * once in this repo.
+ */
+export function selectConsumerRows(rows: FinvizRow[], limit: number): ConsumerSelection {
   const cap = Math.max(0, Math.floor(limit));
-  return rows
-    .filter((r) => CONSUMER_SECTORS.includes(r.sector as (typeof CONSUMER_SECTORS)[number]))
-    .filter((r) => typeof r.marketCapM === 'number' && (r.marketCapM as number) > 0)
+  const consumer = rows.filter((r) =>
+    CONSUMER_SECTORS.includes(r.sector as (typeof CONSUMER_SECTORS)[number]));
+
+  const policy = applyUniversePolicy(
+    consumer.map((r) => ({ ...r, medianDollarVol: dollarVolumeOf(r) })),
+  );
+
+  const kept = policy.kept
     .sort((a, b) => (b.marketCapM ?? 0) - (a.marketCapM ?? 0) || a.ticker.localeCompare(b.ticker))
-    .slice(0, cap);
+    .slice(0, cap)
+    // Drop the derived field again so callers get a plain FinvizRow.
+    .map(({ medianDollarVol: _ignored, ...row }) => row as FinvizRow);
+
+  return { kept, excluded: policy.excluded, counts: policy.counts };
 }

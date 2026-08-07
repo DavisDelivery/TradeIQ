@@ -20,7 +20,9 @@
 import type { Handler } from '@netlify/functions';
 import { z } from 'zod';
 import { finvizEnabled } from './shared/finviz';
-import { consumerWatchlist, DEFAULT_WATCHLIST_LIMIT } from './shared/consumer-universe';
+import { DEFAULT_WATCHLIST_LIMIT, selectConsumerRows } from './shared/consumer-universe';
+import { getFinvizUniverseSnapshot } from './shared/finviz';
+import { POLICY_VERSION } from './shared/research-policy';
 import { scanForTrends, type ScanInput } from './shared/trend-detect';
 import { getAdminDb } from './shared/firebase-admin';
 import { logger } from './shared/logger';
@@ -147,15 +149,18 @@ export const handler: Handler = async (event) => {
   }
 
   try {
-    const rows = await consumerWatchlist(limit, universe);
+    const snap = await getFinvizUniverseSnapshot(universe).catch(() => null);
 
     // A dead universe feed is a 502, never an empty board. An empty
     // "nothing is trending" is a claim about the world, and we did not
     // measure it.
-    if (!rows) {
+    if (!snap) {
       log.error('universe_fetch_failed', { universe });
       return json(502, { ok: false, error: 'finviz universe fetch failed' });
     }
+
+    const selection = selectConsumerRows(snap.rows ?? [], limit);
+    const rows = selection.kept;
 
     const input: ScanInput[] = rows.map((r) => ({
       ticker: r.ticker,
@@ -189,6 +194,10 @@ export const handler: Handler = async (event) => {
       asOf: result.asOf,
       universeChecked: result.universeChecked,
       sectorFilter: ['Consumer Cyclical', 'Consumer Defensive'],
+      // The ratified floors (PR #198) and exactly what they removed. A
+      // universe that claims to be the consumer universe has to be able to
+      // show its own cut.
+      universePolicy: { version: POLICY_VERSION, excludedCounts: selection.counts },
       minSources,
       order: result.order,
       candidates,
