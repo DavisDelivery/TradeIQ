@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterAll } from 'vitest';
 
 const finvizEnabledMock = vi.fn();
 const consumerWatchlistMock = vi.fn();
@@ -53,7 +53,10 @@ function scanResult(candidates: any[] = [candidate('AAA', 1), candidate('ZZZ', 2
   };
 }
 
+const ORIGINAL_CONTEXT = process.env.CONTEXT;
+
 beforeEach(() => {
+  process.env.CONTEXT = 'production';
   finvizEnabledMock.mockReset().mockReturnValue(true);
   consumerWatchlistMock.mockReset().mockResolvedValue([row('AAA'), row('ZZZ')]);
   scanForTrendsMock.mockReset().mockResolvedValue(scanResult());
@@ -173,6 +176,22 @@ describe('trend-scanner endpoint', () => {
       expect(body.paperTrail.recorded).toBe('exists');
     });
 
+    it('REFUSES to write from a non-production context', async () => {
+      // Deploy previews share the production Firebase project, and create()
+      // means the first write owns that day forever. A smoke test against a
+      // half-built branch must not be able to pin a cohort into the study.
+      process.env.CONTEXT = 'deploy-preview';
+      const body = JSON.parse((await call()).body);
+      expect(createMock).not.toHaveBeenCalled();
+      expect(body.paperTrail.recorded).toBe('skipped-non-production');
+    });
+
+    it('still records when CONTEXT is unset, as in local and test runs', async () => {
+      delete process.env.CONTEXT;
+      const body = JSON.parse((await call()).body);
+      expect(body.paperTrail.recorded).toBe('written');
+    });
+
     it('still serves the board when the record cannot be written', async () => {
       createMock.mockRejectedValue(new Error('firestore down'));
       const res = await call();
@@ -186,4 +205,9 @@ describe('trend-scanner endpoint', () => {
     const input = scanForTrendsMock.mock.calls[0][0];
     expect(input[0].context).toMatchObject({ marketCapM: 1000, price: 10, avgVolume: 1e6, shortFloatPct: 3 });
   });
+});
+
+afterAll(() => {
+  if (ORIGINAL_CONTEXT === undefined) delete process.env.CONTEXT;
+  else process.env.CONTEXT = ORIGINAL_CONTEXT;
 });

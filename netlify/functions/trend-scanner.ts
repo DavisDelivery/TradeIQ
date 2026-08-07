@@ -78,7 +78,19 @@ function json(status: number, body: unknown) {
 async function recordPaperTrail(
   trail: { date: string; universeScanned: string[] },
   universe: string,
-): Promise<'written' | 'exists' | 'failed'> {
+): Promise<'written' | 'exists' | 'failed' | 'skipped-non-production'> {
+  // PRODUCTION ONLY. Deploy previews share the production Firebase project
+  // (FIREBASE_SERVICE_ACCOUNT is set across all contexts), so smoke-testing
+  // this endpoint on a preview writes real, immutable rows into the forward
+  // record — and `create()` means the first write wins permanently, so a
+  // probe against a half-built branch would own that day forever. That is not
+  // hypothetical: the pre-fix build of this very PR wrote a 7-name cohort for
+  // 2026-08-06, four of whose names were flagged by a source that has since
+  // been reclassified as saturation.
+  if (process.env.CONTEXT && process.env.CONTEXT !== 'production') {
+    return 'skipped-non-production';
+  }
+
   // Keyed by the SHAPE of the scan, not just the date. A ?limit=5 probe and
   // the real 40-name sweep are different cohorts and both deserve a record;
   // keying on the date alone let whichever ran first silently own the day.
