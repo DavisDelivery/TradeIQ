@@ -21,6 +21,10 @@ export function TickerDetailModal({ ticker, row = null, board = 'search', onClos
   return (
     <div
       data-testid="ticker-detail-modal"
+      // Marks this as a top-layer overlay. MasterDetail's Escape handler
+      // stands down while one is mounted, so the key cannot silently resize
+      // the panel underneath an open modal.
+      data-overlay="modal"
       className="fixed inset-0 z-50 flex items-center justify-center p-4 md:p-8 bg-black/70 backdrop-blur-sm"
       onClick={onClose}
     >

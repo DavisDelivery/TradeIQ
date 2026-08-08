@@ -275,6 +275,53 @@ export async function snapshotAppRatings(date: string, rows: AppRatingObservatio
   return usable.length;
 }
 
+/** One recorded day of cumulative app-rating counts. */
+export interface AppRatingDay {
+  date: string;
+  rows: AppRatingObservation[];
+}
+
+/**
+ * Read the last `days` recorded days of app-rating counts, oldest first.
+ *
+ * The counterpart to `readMentionHistory`, and the reader this collection has
+ * been waiting for: `snapshotAppRatings` has been writing a row per consumer
+ * name every day since the cron went live and NOTHING has ever read it back.
+ *
+ * Why it matters more than the mention leg: the trend study's own conclusion
+ * is that "signals from what consumers DO (sales rank, review velocity,
+ * downloads) do not reverse; signals from what people LOOK AT do". Wikipedia
+ * pageviews and forum chatter are both look-at signals. An app-rating count is
+ * a do signal — somebody opened the app and tapped a star.
+ *
+ * Reads by constructed doc id, so no composite index and one `getAll` round
+ * trip. A day the cron did not run is simply absent; the caller is given the
+ * count so it can refuse to compute on too thin a history.
+ */
+export async function readAppRatingHistory(
+  days: number,
+  asOf: string = new Date().toISOString().slice(0, 10),
+): Promise<AppRatingDay[]> {
+  const n = Math.max(1, Math.floor(days));
+  const db = getAdminDb();
+  const base = Date.parse(`${asOf}T00:00:00Z`);
+  const ids: string[] = [];
+  for (let i = 0; i < n; i++) {
+    ids.push(new Date(base - i * 86_400_000).toISOString().slice(0, 10));
+  }
+  const docs = await db.getAll(...ids.map((id) => db.collection(APP_RATING_COLLECTION).doc(id)));
+  const out: AppRatingDay[] = [];
+  for (const doc of docs) {
+    if (!doc.exists) continue;
+    const d = doc.data() as any;
+    out.push({ date: d.date, rows: (d.rows ?? []) as AppRatingObservation[] });
+  }
+  // Oldest first — a series, not a stack.
+  out.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+  log.info('app_rating_history_read', { requested: n, found: out.length });
+  return out;
+}
+
 /** Read a stored day back. Null when that day was never recorded. */
 export async function readMentionSnapshot(date: string, filter = 'all-stocks'): Promise<MentionSnapshot | null> {
   const db = getAdminDb();
@@ -285,6 +332,52 @@ export async function readMentionSnapshot(date: string, filter = 'all-stocks'): 
     date: d.date, filter: d.filter, available: true, rows: d.rows ?? [],
     floor: d.floor ?? null, reason: null, fetchedAt: d.fetchedAt,
   };
+}
+
+/**
+ * Read the last `days` recorded days, newest first, skipping days that were
+ * never written.
+ *
+ * The header of this file says there is deliberately no range reader "until
+ * enough days have accumulated to be worth reading". That day is arriving:
+ * `trend-detect.ts` needs a mention SERIES to compare a recent window against
+ * a baseline, and the only place that series can come from is the docs this
+ * module has been writing since the snapshot cron went live.
+ *
+ * It reads by CONSTRUCTED DOC ID rather than by query, so it needs no
+ * composite index and costs one `getAll` round trip. Missing days are simply
+ * absent from the result — a day the cron did not run is not a day with no
+ * chatter, and the caller is given the count so it can refuse to compute on
+ * too thin a history.
+ */
+export async function readMentionHistory(
+  days: number,
+  filter = 'all-stocks',
+  asOf: string = new Date().toISOString().slice(0, 10),
+): Promise<MentionSnapshot[]> {
+  const n = Math.max(1, Math.floor(days));
+  const db = getAdminDb();
+  const base = Date.parse(`${asOf}T00:00:00Z`);
+  const ids: string[] = [];
+  for (let i = 0; i < n; i++) {
+    const d = new Date(base - i * 86_400_000).toISOString().slice(0, 10);
+    ids.push(`${d}_${filter}`);
+  }
+  const refs = ids.map((id) => db.collection(MENTION_COLLECTION).doc(id));
+  const docs = await db.getAll(...refs);
+  const out: MentionSnapshot[] = [];
+  for (const doc of docs) {
+    if (!doc.exists) continue;
+    const d = doc.data() as any;
+    out.push({
+      date: d.date, filter: d.filter, available: true, rows: d.rows ?? [],
+      floor: d.floor ?? null, reason: null, fetchedAt: d.fetchedAt,
+    });
+  }
+  // Newest first regardless of the order Firestore returns them in.
+  out.sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
+  log.info('mention_history_read', { requested: n, found: out.length });
+  return out;
 }
 
 /**
