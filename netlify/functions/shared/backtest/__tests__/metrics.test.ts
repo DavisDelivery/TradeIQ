@@ -110,6 +110,25 @@ describe('computeMetrics — synthetic equity curves', () => {
     expect(m.maxDrawdownPct).toBeCloseTo(25, 4);
   });
 
+  it('recoveryDays measures recovery to the pre-DD peak, not a later all-time high', () => {
+    // Peak 120 (idx 1) → trough 60 (idx 2, -50% DD) → recovers above 120
+    // at 121 (idx 3) → then climbs to a brand-new high of 200 (idx 5).
+    // Recovery from the drawdown is the FIRST day back above the
+    // pre-drawdown peak (idx 3 → 1 day), NOT the distance to the later
+    // all-time high (idx 5 → 3 days).
+    const eq: DailyEquityPoint[] = [
+      { date: '2024-01-01', value: 100 },
+      { date: '2024-01-02', value: 120 },
+      { date: '2024-01-03', value: 60 },
+      { date: '2024-01-04', value: 121 },
+      { date: '2024-01-05', value: 80 },
+      { date: '2024-01-06', value: 200 },
+    ];
+    const m = computeMetrics({ ...emptyInputs, dailyEquity: eq });
+    expect(m.maxDrawdownPct).toBeCloseTo(50, 4);
+    expect(m.recoveryDays).toBe(1);
+  });
+
   it('win/profit-factor: 3 wins + 1 loss summed correctly', () => {
     const att: AttributionRecord[] = [
       { rebalanceDate: '2024-01-01', ticker: 'A', weight: 0.25, segmentReturn: 0.10, contribution: 0.025, layers: {}, composite: 60, regime: null },
