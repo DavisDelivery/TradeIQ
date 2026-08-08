@@ -28,13 +28,15 @@
 [functions."vector-evaluate"]
   timeout = 26
 
-# Trend exposure makes up to THREE sequential upstream calls in one request —
-# EDGAR full-text search, then a Wikipedia article resolve, then pageviews.
-# On the 10s default a slow EDGAR returns 502, and 502 IS in fetchWithRetry's
-# retry list, so one slow SEC response becomes three more requests against
-# SEC's shared 10 req/sec budget — exactly the amplification the handler's
-# throttle-to-429 mapping exists to prevent.
-[functions."trend-exposure"]
+# Trend scanner sweeps ~40 consumer names, each costing a Wikipedia article
+# resolve, a 90-day pageview pull and a Quiver off-exchange call, plus one
+# Firestore read of the recorded mention history. (The retired trend-exposure
+# endpoint carried the same override for the same reason at a fortieth of the
+# fan-out.) The trend study's own post-mortem lists "no function timeout" as a
+# defect it caught before merge last time — a 10s kill here surfaces as a 502,
+# and 502 IS in fetchWithRetry's retry list, so the failure amplifies instead
+# of stopping.
+[functions."trend-scanner"]
   timeout = 26
 
 # Anthropic-backed generators + serial bar fetchers — all can exceed the
@@ -203,6 +205,15 @@
   to = "/.netlify/functions/camillo-research"
   status = 200
 
+# TREND SCANNER — step 1 of the workflow: what CHANGED this week, swept across
+# the consumer watchlist. Trend-first, unlike every other Camillo surface,
+# which needs you to bring a ticker. Returns an ALPHABETICAL list, never a
+# ranking — see shared/trend-detect.ts and reports/trend/social-arb-study.md.
+[[redirects]]
+  from = "/api/trend-scanner"
+  to = "/.netlify/functions/trend-scanner"
+  status = 200
+
 # DIAG — does this Quiver plan include the SOCIAL datasets (WSB, twitter,
 # app ratings)? Read-only probe with known-good/known-gated controls.
 [[redirects]]
@@ -222,18 +233,6 @@
   to = "/.netlify/functions/symbol-search"
   status = 200
 
-# TREND-1 — EDGAR filing-mention attribution.
-#
-# REQUIRED, not optional. There is no `/api/*` wildcard in this file; every
-# endpoint is routed explicitly. Without this rule the request falls through
-# to the SPA catch-all (`/*` -> /index.html, status 200), so the client gets
-# HTML at HTTP 200 — fetchWithRetry only retries 502/503/504, so a 200 sails
-# through and `r.json()` throws "Unexpected token '<'". The tab dies with an
-# error that points nowhere near the cause.
-[[redirects]]
-  from = "/api/trend-exposure"
-  to = "/.netlify/functions/trend-exposure"
-  status = 200
 
 # News-sentiment board (Most Bullish / Most Bearish screener).
 [[redirects]]

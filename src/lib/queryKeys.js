@@ -108,9 +108,6 @@ export const queryKeys = {
   camilloResearch: (ticker, universe) =>
     ['tradeiq', 'camilloResearch', ticker ?? '', universe ?? 'russell2k'],
 
-  trendExposure: (phrase, forms, days) =>
-    ['tradeiq', 'trendExposure', phrase ?? '', forms ?? '10-K', days ?? 730],
-
   // FVZ-3 — published screening strategies. The catalog is static; results
   // are parameterised by screen AND universe, so both belong in the key.
   screenCatalog: () => ['tradeiq', 'screenCatalog'],
