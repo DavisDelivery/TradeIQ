@@ -499,6 +499,14 @@
   to = "/.netlify/functions/trident-board"
   status = 200
 
+# QS-1 — Quiet Strength (residual momentum). There is no /api/* wildcard, so
+# an endpoint without a stanza here falls through to the SPA catch-all and
+# returns HTML with status 200 — it looks like it works and serves garbage.
+[[redirects]]
+  from = "/api/quiet-strength-board"
+  to = "/.netlify/functions/quiet-strength-board"
+  status = 200
+
 # FABLE — Claude's own board (reports/fable/design.md).
 [[redirects]]
   from = "/api/fable-board"

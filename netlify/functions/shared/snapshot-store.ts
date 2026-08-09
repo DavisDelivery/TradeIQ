@@ -39,7 +39,11 @@ export type BoardName =
   | 'crosses'
   | 'trident'
   | 'sentiment'
-  | 'screens';
+  | 'screens'
+  // QS-1 — residual momentum ("Quiet Strength"). Keyed 'all' because the
+  // scan reads grouped-daily, which covers the whole US tape, and then cuts
+  // it down with the research-policy floors rather than to an index list.
+  | 'quiet-strength';
 
 export type UniverseKey =
   | 'sp500'
@@ -146,6 +150,10 @@ export const FRESHNESS_BUDGETS_MS: Record<BoardName, number> = {
   // league can track them. 26h matches the other daily boards so weekends
   // serve Friday's snapshot un-flagged.
   screens: 26 * 60 * 60_000,
+  // QS-1 — residual momentum rebalances MONTHLY, but the scan runs nightly
+  // so the forward league has a fresh cohort to log every session. 26h is
+  // therefore the right budget (the scan's cadence), not the signal's.
+  'quiet-strength': 26 * 60 * 60_000,
 };
 
 // ====================================================================
@@ -576,6 +584,12 @@ const DAILY_CLOSE_SLOTS: Partial<
   sentiment: { slot: { hourUtc: 12, minuteUtc: 20 }, universes: ['sp500'] },
   // FVZ-6 — screens scan at 23:50 UTC, after every other board has landed.
   screens: { slot: { hourUtc: 23, minuteUtc: 50 } },
+  // QS-1 — 22:40 UTC, in the gap between trident (22:15) and target-board
+  // (23:00). Registered here from day one rather than after the fact: the
+  // 2026-08-03 audit above is the record of what omitting this costs — four
+  // boards flagged stale every weekend while their snapshots were exactly
+  // as fresh as the schedule allows.
+  'quiet-strength': { slot: { hourUtc: 22, minuteUtc: 40 }, universes: ['all'] },
 };
 
 /**

@@ -45,6 +45,12 @@ export const queryKeys = {
   // input silently serves the previous filter's rows within staleTime).
   crosses: (type, days) => ['tradeiq', 'crosses', type ?? 'all', days ?? 365],
   lynch: (universe) => ['tradeiq', 'lynch', universe],
+  // QS-1 — Quiet Strength takes no server-side filter today; `limit` is the
+  // only query param and the view does not vary it. Keyed on it anyway, so
+  // that adding a band/sector filter later cannot reproduce the catalyst-M1
+  // bug above (a queryFn input missing from the key is a silent no-op
+  // inside staleTime).
+  quietStrength: (limit) => ['tradeiq', 'quietStrength', limit ?? 40],
   earnings: (windowDays, universe) =>
     ['tradeiq', 'earnings', windowDays, universe ?? 'all'],
 
