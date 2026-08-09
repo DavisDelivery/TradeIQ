@@ -66,6 +66,19 @@ export const FORWARD_BOARDS: ForwardBoardConfig[] = [
   { board: 'crosses', universe: 'sp500', take: 20, filter: (r) => r?.type === 'golden' },
   { board: 'trident', universe: 'sp500', take: 20 },
   { board: 'sentiment', universe: 'sp500', take: 20, filter: (r) => r?.label === 'bullish' },
+  // QS-1 — residual momentum enters the league on the day it ships, with no
+  // backfill, like everything else here.
+  //
+  // WHAT THE LEAGUE DOES AND DOES NOT MEASURE FOR THIS BOARD. The cohort log
+  // scores an equal-weighted list of names. Quiet Strength's sleeve rules —
+  // the vol-scaled exposure, the three staggered tranches, the bear dimmer —
+  // are PORTFOLIO constructs and none of them are represented here. So this
+  // cohort measures the SIGNAL (do the top-ranked names beat SPY?), not the
+  // sleeve a user would actually hold. That is the right split: the sleeve
+  // rules exist to cut drawdown, and a name-cohort log cannot see drawdown
+  // control. The distinction is stated in the board payload too, so the
+  // league number is not read as the strategy's return.
+  { board: 'quiet-strength', universe: 'all', take: 20 },
   // FVZ-6 — every published screen enters the league as its own cohort, with
   // the screen id standing in for the universe key (scan-screens-background
   // writes one snapshot per screen).

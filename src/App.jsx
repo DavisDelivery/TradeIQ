@@ -4,7 +4,7 @@ import {
   Activity, TrendingUp, TrendingDown, Zap, Layers, Settings,
   AlertTriangle, ChevronRight, CircleCheck, CircleX, Circle, Gauge,
   BarChart3, Brain, Newspaper, Globe2, Eye, Target, Clock, ArrowUpRight,
-  ArrowDownRight, Minus, Shield, Cpu, LineChart as LineChartIcon, Filter, X,
+  ArrowDownRight, Minus, Shield, Cpu, LineChart as LineChartIcon, Filter, X, Waves,
   Inbox, Bell, ExternalLink, Info, BookMarked, Sparkles, Landmark, FlaskConical,
   Monitor, Menu, Crosshair, Trophy, ScanSearch
 } from 'lucide-react';
@@ -54,6 +54,7 @@ import { RegimeStrip } from './layout/RegimeStrip.jsx';
 import { MobileDrawer } from './layout/MobileDrawer.jsx';
 import { CrossesView } from './CrossesView.jsx';
 import { ScreensView } from './ScreensView.jsx';
+import { QuietStrengthView } from './QuietStrengthView.jsx';
 import { ForwardTestView } from './ForwardTestView.jsx';
 
 
@@ -134,6 +135,16 @@ const VIEWS = [
   // forward-test league is what will eventually tell us which ones work on
   // our data.
   { id: 'screens', label: 'Screens', shortLabel: 'Screens', icon: Filter, section: 'unvalidated' },
+  // QS-1 — Quiet Strength (residual momentum). Unvalidated on purpose: the
+  // evidence is replicated but EXTERNAL, and we have measured nothing on our
+  // own universe yet. #194 retired six boards on measured evidence, so a
+  // board arriving with somebody else's numbers starts here and earns its
+  // way out through the forward league, not before.
+  //
+  // Placed AFTER screens deliberately: TopBar/Sidebar/MobileDrawer detect the
+  // section divider positionally with `views[i-1]?.section !== 'unvalidated'`,
+  // so the unvalidated block has to stay contiguous and last.
+  { id: 'quiet-strength', label: 'Quiet Strength', shortLabel: 'Quiet', icon: Waves, section: 'unvalidated' },
 ];
 
 // ======================================================================
@@ -416,6 +427,7 @@ export default function App() {
       {activeView === 'earnings' && <ErrorBoundary label="Earnings"><EarningsPlaysView universe={universe} /></ErrorBoundary>}
       {activeView === 'crosses' && <ErrorBoundary label="Crosses"><CrossesView /></ErrorBoundary>}
       {activeView === 'screens' && <ErrorBoundary label="Screens"><ScreensView /></ErrorBoundary>}
+      {activeView === 'quiet-strength' && <ErrorBoundary label="Quiet Strength"><QuietStrengthView /></ErrorBoundary>}
       {activeView === 'forward' && <ErrorBoundary label="Forward Test"><ForwardTestView /></ErrorBoundary>}
       {activeView === 'history' && <ErrorBoundary label="History"><HistoryView /></ErrorBoundary>}
       {activeView === 'options' && <ErrorBoundary label="Options"><OptionsFlowView universe={universe} /></ErrorBoundary>}

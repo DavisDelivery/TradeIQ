@@ -34,6 +34,12 @@ const VALID_BOARDS: BoardName[] = [
   'trident',
   'sentiment',
   'screens',
+  // QS-1. Registered here at the same time as the board itself — the
+  // screens rollout is the cautionary tale (see
+  // __tests__/snapshot-history-screens.test.ts): the board was added to the
+  // union and the nightly worker wrote picks correctly, while every History
+  // request 400'd in production because this list was never updated.
+  'quiet-strength',
 ];
 
 const VALID_UNIVERSES: UniverseKey[] = [

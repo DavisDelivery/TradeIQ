@@ -35,6 +35,10 @@ const BOARD_UNIVERSES: Record<BoardName, UniverseKey[]> = {
   williams: ['sp500', 'ndx', 'dow', 'russell2k'],
   lynch: ['sp500', 'ndx', 'dow', 'russell2k'],
   earnings: ['all'],
+  // QS-1 — the residual-momentum scan writes ONE cross-universe snapshot
+  // under 'all' (see scan-quiet-strength-background.ts), so health probes
+  // 'all'. Listing index names here would reproduce the FIX-1 bug above.
+  'quiet-strength': ['all'],
   crosses: ['sp500'],
   trident: ['sp500', 'russell2k'],
   sentiment: ['sp500'],
