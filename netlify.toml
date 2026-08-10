@@ -514,6 +514,12 @@
   to = "/.netlify/functions/consensus-archive-status"
   status = 200
 
+# PROFILE-1 W3 — one metric's peer distribution, on drawer open.
+[[redirects]]
+  from = "/api/peer-stats"
+  to = "/.netlify/functions/peer-stats"
+  status = 200
+
 # FABLE — Claude's own board (reports/fable/design.md).
 [[redirects]]
   from = "/api/fable-board"

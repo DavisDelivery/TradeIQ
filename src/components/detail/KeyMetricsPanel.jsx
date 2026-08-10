@@ -29,6 +29,7 @@
 //    P/E is neutral and only margins/returns/bands may carry a treatment.
 
 import React, { useMemo, useState } from 'react';
+import { PeerDrawer } from './PeerDrawer.jsx';
 import { useStockDetail } from '../../hooks/useStockDetail.js';
 import {
   mayRenderVerdict,
@@ -196,6 +197,9 @@ export function partitionRows(items, metrics) {
 export function KeyMetricsPanel({ ticker }) {
   const { data, isLoading, isError, error, refetch } = useStockDetail(ticker);
   const [expanded, setExpanded] = useState(false);
+  // ONE drawer open at a time. Two open drawers push the page around twice
+  // and make the comparison harder, which is the opposite of the point.
+  const [openKey, setOpenKey] = useState(null);
 
   const metrics = data?.metrics ?? null;
   const sectorMedians = data?.sectorMedians ?? null;
@@ -270,7 +274,14 @@ export function KeyMetricsPanel({ ticker }) {
 
           <div className="space-y-4">
             {visible.map((c) => (
-              <MetricChunk key={c.title} chunk={c} medians={sectorMedians} />
+              <MetricChunk
+                key={c.title}
+                chunk={c}
+                medians={sectorMedians}
+                ticker={ticker}
+                openKey={openKey}
+                onToggle={setOpenKey}
+              />
             ))}
           </div>
 
@@ -313,7 +324,7 @@ export function KeyMetricsPanel({ ticker }) {
   );
 }
 
-function MetricChunk({ chunk, medians }) {
+function MetricChunk({ chunk, medians, ticker, openKey, onToggle }) {
   if (!chunk.present.length) return null;
   return (
     <div>
@@ -322,25 +333,42 @@ function MetricChunk({ chunk, medians }) {
       </div>
       <dl className="divide-y divide-neutral-900">
         {chunk.present.map((m) => (
-          <MetricRow key={m.label} def={m} medians={medians} />
+          <MetricRow
+            key={m.label}
+            def={m}
+            medians={medians}
+            ticker={ticker}
+            open={openKey === m.key}
+            onToggle={onToggle}
+          />
         ))}
       </dl>
     </div>
   );
 }
 
-function MetricRow({ def, medians }) {
+function MetricRow({ def, medians, ticker, open, onToggle }) {
   const median = pluck(medians, MEDIAN_PATH_MAP[def.path] ?? '');
   const displayValue = fmtValue(def.value, def.fmt);
   const displayMedian = fmtValue(median, def.fmt);
   const fav = favorability(def.key, def.value, median);
+  // Only rows mapped to the direction table can be compared to peers; the
+  // rest stay plain text rather than offering a drawer that would open onto
+  // an apology.
+  const drillable = Boolean(def.key && ticker);
 
-  return (
-    <div
-      data-testid={`metric-${def.path}`}
-      className="flex items-baseline justify-between gap-3 py-1.5"
-    >
-      <dt className="text-[12px] text-neutral-400">{def.label}</dt>
+  const inner = (
+    <>
+      <dt className="text-[12px] text-neutral-400">
+        {def.label}
+        {/* neutral-500, not 700: theme-tokens.test.js auto-discovers every
+            text-<family>-<shade> in src/ and generates a WCAG assertion per
+            shade against the LIGHT page background. 700 is a shade nobody had
+            used, so it minted a new assertion and failed it. */}
+        {drillable && (
+          <span aria-hidden className="ml-1 text-neutral-500">{open ? '▾' : '▸'}</span>
+        )}
+      </dt>
       <dd className="flex items-baseline gap-2 text-right">
         {displayMedian != null && (
           <span className="text-[10px] text-neutral-600">sector: {displayMedian}</span>
@@ -352,6 +380,25 @@ function MetricRow({ def, medians }) {
             magnitudes are comparable down the page. */}
         <span className="text-[13px] tabular-nums text-neutral-100">{displayValue}</span>
       </dd>
+    </>
+  );
+
+  return (
+    <div data-testid={`metric-${def.path}`}>
+      {drillable ? (
+        <button
+          type="button"
+          onClick={() => onToggle(open ? null : def.key)}
+          aria-expanded={open}
+          data-testid={`metric-toggle-${def.key}`}
+          className="flex w-full items-baseline justify-between gap-3 py-1.5 text-left hover:bg-neutral-900/40"
+        >
+          {inner}
+        </button>
+      ) : (
+        <div className="flex items-baseline justify-between gap-3 py-1.5">{inner}</div>
+      )}
+      {drillable && <PeerDrawer ticker={ticker} metricKey={def.key} open={open} />}
     </div>
   );
 }
