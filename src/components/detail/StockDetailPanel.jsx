@@ -33,6 +33,7 @@ import { AdvancedPriceChart } from './AdvancedPriceChart.jsx';
 import { RelativeStrengthChart } from './RelativeStrengthChart.jsx';
 import { FundamentalsChart } from './FundamentalsChart.jsx';
 import { KeyMetricsPanel } from './KeyMetricsPanel.jsx';
+import { EarningsBehaviorPanel } from './EarningsBehaviorPanel.jsx';
 import { CatalystsFeed } from './CatalystsFeed.jsx';
 import { RiskCallouts } from './RiskCallouts.jsx';
 import { ScoreBreakdown } from './ScoreBreakdown.jsx';
@@ -128,6 +129,11 @@ export function StockDetailPanel({ board, ticker, row }) {
         }
       />
       <KeyMetricsPanel ticker={ticker} />
+      {/* W2.1 order: grouped stats -> earnings behaviour -> ownership ->
+          sector. Sits directly under the stats it contextualises: the stats
+          say what the business is, this says what holding it through a print
+          has actually cost. */}
+      <EarningsBehaviorPanel ticker={ticker} />
       {/* SECTOR-1 — sits directly above the relative-strength chart it gives
           context to: the table says how the sector is doing, the chart shows
           the path. */}
