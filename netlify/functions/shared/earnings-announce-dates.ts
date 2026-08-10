@@ -69,7 +69,13 @@ const EARNINGS_ITEM = '2.02';
  * measured 2026-07-26, a threshold of 5 multiplied EDGAR calls during the very
  * cold-cache burst that was already failing, and coverage fell to 18%.
  */
-const MIN_ANNOUNCEMENTS = 4;
+// 8, not 4. The old value was explicitly calibrated to stock-detail's
+// 400-day bar window (~4-5 quarters); that window is now 820 days and the
+// profile renders eight quarters of earnings reactions. Left at 4, heavy
+// filers would stop shard-walking as soon as four dates were found and the
+// older half of the panel would be permanently blank for exactly the
+// companies that file the most.
+const MIN_ANNOUNCEMENTS = 8;
 /** Hard cap on shard pages per ticker — bounds cost for heavy filers. */
 const MAX_SHARDS = 3;
 

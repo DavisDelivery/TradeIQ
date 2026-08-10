@@ -191,11 +191,15 @@ describe('shard paging for heavy filers', () => {
   });
 
   it('does NOT page shards when recent already has enough', async () => {
+    // Eight rows, because MIN_ANNOUNCEMENTS went 4 -> 8 when stock-detail's
+    // bar window widened to 820 days and the profile began rendering eight
+    // quarters of earnings reactions. The intent of this test is unchanged —
+    // "enough" is simply a bigger number now.
     h.edgarFetch.mockImplementation(async () => ({ json: async () => ({ filings: {
       recent: {
-        form: Array(6).fill('8-K'),
-        filingDate: ['2026-04-29','2026-01-28','2025-10-29','2025-07-30','2025-04-30','2025-01-29'],
-        items: Array(6).fill('2.02,9.01'),
+        form: Array(8).fill('8-K'),
+        filingDate: ['2026-04-29','2026-01-28','2025-10-29','2025-07-30','2025-04-30','2025-01-29','2024-10-30','2024-07-31'],
+        items: Array(8).fill('2.02,9.01'),
       },
       files: [{ name: 'CIK0000789019-submissions-001.json' }],
     } }) }) as any);

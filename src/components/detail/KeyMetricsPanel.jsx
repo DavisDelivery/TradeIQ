@@ -159,6 +159,24 @@ const DOT_CLASS = {
   none: 'bg-transparent',
 };
 
+/**
+ * Normalise `_degraded` into a display list.
+ *
+ * The server sends `Record<string, string>` (dep -> reason). An array is
+ * accepted too, purely so an older cached payload or a hand-written fixture
+ * cannot blank the banner — but the object form is the real contract.
+ */
+export function degradedList(degraded) {
+  if (!degraded) return [];
+  if (Array.isArray(degraded)) return degraded.filter(Boolean).map(String);
+  if (typeof degraded === 'object') {
+    return Object.entries(degraded).map(([dep, reason]) =>
+      reason ? `${dep} (${reason})` : dep,
+    );
+  }
+  return [];
+}
+
 /** Rows with a value, and the labels of those without. */
 export function partitionRows(items, metrics) {
   const present = [];
@@ -275,10 +293,18 @@ export function KeyMetricsPanel({ ticker }) {
           )}
 
           {/* _degraded last — it explains the whole payload, so it reads as a
-              footer rather than competing with the numbers. */}
-          {Array.isArray(data?._degraded) && data._degraded.length > 0 && (
+              footer rather than competing with the numbers.
+
+              IT IS AN OBJECT, NOT AN ARRAY. stock-detail.ts:122 types it
+              `Record<string, string>` — dep name -> "<name>_timeout" |
+              "<name>_error". The first cut of this banner array-checked it,
+              so it silently never rendered against the real endpoint, and
+              the test passed because its fixture invented an array. Reading
+              the server's type instead of the fixture's is the whole lesson;
+              degradedList() below is written against the declared shape. */}
+          {degradedList(data?._degraded).length > 0 && (
             <p data-testid="key-metrics-degraded" className="mt-2 text-[10px] text-amber-400/80">
-              Degraded sources: {data._degraded.join(', ')}.
+              Degraded sources: {degradedList(data._degraded).join(', ')}.
             </p>
           )}
         </>

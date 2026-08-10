@@ -12,7 +12,7 @@ import { describe, it, expect, afterEach, vi } from 'vitest';
 import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import React from 'react';
-import { KeyMetricsPanel, favorability, partitionRows, fmtValue } from '../KeyMetricsPanel.jsx';
+import { KeyMetricsPanel, favorability, partitionRows, fmtValue, degradedList } from '../KeyMetricsPanel.jsx';
 
 function renderPanel(body, props = {}) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity, gcTime: Infinity } } });
@@ -137,12 +137,26 @@ describe('nulls are hidden, not shouted', () => {
     expect(screen.queryByText('Dividend')).not.toBeInTheDocument();
   });
 
-  it('renders _degraded last, when present', async () => {
-    const degraded = { ...fullMetrics, _degraded: ['finnhub', 'polygon'] };
+  it('renders _degraded last, in the shape the SERVER actually sends', async () => {
+    // stock-detail.ts:122 types this Record<string, string>, NOT an array.
+    // The first cut of this banner used Array.isArray() and therefore never
+    // rendered in production; this test passed anyway because its fixture
+    // invented an array. The fixture now matches the declared server type,
+    // which is the only reason the test is worth anything.
+    const degraded = { ...fullMetrics, _degraded: { insider: 'insider_timeout', news: 'news_error' } };
     renderPanel(degraded);
     await waitFor(() => expect(screen.getByText('Valuation')).toBeInTheDocument());
     fireEvent.click(screen.getByTestId('key-metrics-show-all'));
-    expect(screen.getByTestId('key-metrics-degraded').textContent).toMatch(/finnhub, polygon/);
+    const text = screen.getByTestId('key-metrics-degraded').textContent;
+    expect(text).toMatch(/insider \(insider_timeout\)/);
+    expect(text).toMatch(/news \(news_error\)/);
+  });
+
+  it('shows no degraded banner when every dep succeeded', async () => {
+    renderPanel(fullMetrics);
+    await waitFor(() => expect(screen.getByText('Valuation')).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId('key-metrics-show-all'));
+    expect(screen.queryByTestId('key-metrics-degraded')).not.toBeInTheDocument();
   });
 });
 
@@ -173,6 +187,22 @@ describe('no valuation metric renders a good/bad verdict', () => {
 
   it('renders no dot for a metric with no median', () => {
     expect(favorability('grossMargin', 70, null)).toBe('none');
+  });
+});
+
+describe('degradedList', () => {
+  it('reads the server object form', () => {
+    expect(degradedList({ insider: 'insider_timeout' })).toEqual(['insider (insider_timeout)']);
+  });
+
+  it('tolerates the array form without blanking', () => {
+    expect(degradedList(['finnhub'])).toEqual(['finnhub']);
+  });
+
+  it('is empty for absent or malformed input', () => {
+    for (const bad of [undefined, null, {}, 42, 'nope']) {
+      expect(degradedList(bad)).toEqual([]);
+    }
   });
 });
 
