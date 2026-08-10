@@ -25,6 +25,9 @@ import {
   type Bar,
 } from './shared/data-provider';
 import { getInsiderActivity } from './shared/insider-provider';
+// PROFILE-1 — the profile's first-ever finviz import. Fifty columns we
+// already pay for have never reached this endpoint (see finviz-row.ts).
+import { getFinvizProfileBlocks, type FinvizProfileBlocks } from './shared/finviz-row';
 import { getSectorMedians, type SectorMedians } from './shared/sector-medians';
 import { quarterlyFromStatements, type QuarterlyFundamental } from './shared/quarterly-fundamentals';
 import { findEntry, SECTOR_ETFS, SPY } from './shared/universe';
@@ -52,6 +55,7 @@ const DEP_TIMEOUTS = {
   insider: 6_000,             // Finnhub — W1c-style rate-limit retry could eat budget
   sectorMedians: 6_000,       // fans out to 16 peers; each peer bounded at 4s internally
   tickerInfo: 4_000,
+  finvizRow: 5_000,     // one small CSV export, cached 15 min per ticker
 };
 
 const log = createLogger('stock-detail');
@@ -96,6 +100,8 @@ interface StockDetailResponse {
       surprisePct: number | null;
       priceReactionPct: number | null;
     } | null;
+    /** All fetched quarters: surprise + session-agnostic reaction each. */
+    earningsBehavior: EarningsBehavior | null;
     nextEarnings: { date: string; daysUntil: number; epsEstimate: number | null } | null;
     news: Array<{ headline: string; source: string | null; date: string; url: string; sentiment: string | null }>;
     insider: {
@@ -114,6 +120,9 @@ interface StockDetailResponse {
     sectorEtf: string | null;
     _reason?: string;
   };
+  /** PROFILE-1 — tradability, ownership, growth and analyst blocks off the
+   *  Finviz row. Null when the row is unavailable; never a row of zeros. */
+  finviz?: FinvizProfileBlocks | null;
   /** Phase 6 PR-G0 — per-section degradation map. Keys are dep names that
    *  hit the per-dep timeout or rejected during fetch; values are short
    *  reason strings ("<name>_timeout" | "<name>_error"). Absent when every
@@ -136,7 +145,12 @@ export const handler: Handler = async (event) => {
     const sectorEtf = SECTOR_ETFS[sector] ?? null;
 
     const to = new Date().toISOString().slice(0, 10);
-    const from = new Date(Date.now() - 400 * 86400000).toISOString().slice(0, 10);
+    // 820 days ~= 8 fiscal quarters plus a session of pad on each side, which
+    // is what the per-quarter earnings reactions need. Widening is free: with
+    // Finviz bars on, the fetch is UNRANGED (one cached ~10y payload per
+    // ticker that every window slices), and the Polygon fallback is a single
+    // limit=5000 call. Consumers that want a year MUST slice — see computeBeta.
+    const from = new Date(Date.now() - 820 * 86400000).toISOString().slice(0, 10);
 
     // Fire everything in parallel, each individually bounded by DEP_TIMEOUTS.
     // PR-G0: any single hanging/slow provider degrades to its fallback +
@@ -154,6 +168,7 @@ export const handler: Handler = async (event) => {
       insiderR,
       sectorMedianR,
       infoR,
+      finvizR,
     ] = await Promise.all([
       withTimeoutStatus(getDailyBars(ticker, from, to), DEP_TIMEOUTS.bars, [] as Bar[]),
       withTimeoutStatus(getDailyBars(SPY, from, to), DEP_TIMEOUTS.spyBars, [] as Bar[]),
@@ -171,6 +186,7 @@ export const handler: Handler = async (event) => {
         { medians: {} as SectorMedians, sampleSize: 0, sector, cached: false },
       ),
       withTimeoutStatus(getTickerInfo(ticker), DEP_TIMEOUTS.tickerInfo, null),
+      withTimeoutStatus(getFinvizProfileBlocks(ticker), DEP_TIMEOUTS.finvizRow, null),
     ]);
 
     const bars = barsR.value;
@@ -198,6 +214,7 @@ export const handler: Handler = async (event) => {
     flagDegraded('upcoming', upcomingR);
     flagDegraded('news', newsR);
     flagDegraded('insider', insiderR);
+    flagDegraded('finviz', finvizR);
     flagDegraded('sectorMedians', sectorMedianR);
     flagDegraded('tickerInfo', infoR);
     if (Object.keys(degraded).length > 0) {
@@ -307,6 +324,8 @@ export const handler: Handler = async (event) => {
 
     // --- Catalysts ---
     const lastEarnings = buildLastEarnings(earnings, bars);
+    // Eight quarters were already being fetched and seven thrown away.
+    const earningsBehavior = buildEarningsBehavior(earnings, bars);
     const nextEarnings = buildNextEarnings(upcoming);
     const newsItems = (news ?? [])
       .filter((n) => withinDays(n.publishedUtc, 30))
@@ -358,6 +377,7 @@ export const handler: Handler = async (event) => {
       sectorMedians,
       catalysts: {
         lastEarnings,
+        earningsBehavior,
         nextEarnings,
         news: newsItems,
         insider: insiderBlock,
@@ -368,6 +388,7 @@ export const handler: Handler = async (event) => {
         ...(quarterly.length === 0 ? { _reason: 'quarterly_history_unavailable' } : {}),
       },
       relativeStrength,
+      finviz: finvizR.value ?? null,
       ...(Object.keys(degraded).length > 0 ? { _degraded: degraded } : {}),
     };
 
@@ -396,9 +417,22 @@ function compute52wRange(bars: Bar[]): { low: number; high: number; currentPctil
   return { low: round(low, 2), high: round(high, 2), currentPctile: pctile };
 }
 
+/**
+ * One-year beta.
+ *
+ * PINNED TO 252 SESSIONS ON PURPOSE. This used to consume the whole `bars`
+ * array, so its lookback was whatever happened to fall inside the fetch
+ * window — an accident of `from`, not a definition. Widening that window to
+ * 820 days for the earnings panel would silently have turned the profile's
+ * beta into a two-year beta with no other code change and no visible cause.
+ * A one-year beta is now a stated definition, matching compute52wRange.
+ *
+ * The displayed number moves slightly versus the old ~275-session accident;
+ * that is the correction, not a regression.
+ */
 function computeBeta(bars: Bar[], spyBars: Bar[]): number | null {
-  const stock = returnsByDate(bars);
-  const spy = returnsByDate(spyBars);
+  const stock = returnsByDate(bars.slice(-252));
+  const spy = returnsByDate(spyBars.slice(-252));
   const xs: number[] = [];
   const ys: number[] = [];
   for (const [date, r] of stock) {
@@ -462,15 +496,113 @@ function buildLastEarnings(
   };
 }
 
-function priceReactionAround(date: string, bars: Bar[]): number | null {
-  // Find the first bar on/after the earnings date and the one before it; the
-  // 1-day reaction is the close-to-close change spanning the report.
+/**
+ * The move spanning an earnings report, WITHOUT assuming the session.
+ *
+ * THE BUG THIS REPLACES. The previous implementation took close[D-1] →
+ * close[D], where D is the announcement date. That is right for a BMO
+ * reporter — announced before the open on D, so the market reacts on D. It
+ * is WRONG for an AMC reporter, which announces after D's close: the market
+ * reacts on D+1, so close[D-1] → close[D] measures the day BEFORE the
+ * reaction and reports it as the reaction. AMC is the more common session
+ * for large caps, so the field was quietly wrong for much of the universe.
+ *
+ * WHY NOT JUST READ THE SESSION. It is not available for historical
+ * quarters. Finnhub's calendar carries `hour` ('bmo' | 'amc'), but only for
+ * the UPCOMING report — the historical join drops it, and that entitlement
+ * serves no historical calendar rows at all (which is why the SEC 8-K path
+ * exists). The SEC filing gives a date and no session.
+ *
+ * So the honest measure is a straddle: close[D-1] → close[D+1], which
+ * contains the reaction under either session. It is the same construction
+ * scan-earnings.ts already uses. The cost is one extra session of ordinary
+ * drift inside the window, which is a known, bounded overstatement of
+ * |move| — and far better than a number that is simply the wrong day.
+ */
+export function priceReactionAround(date: string, bars: Bar[]): number | null {
   const idx = bars.findIndex((b) => new Date(b.t).toISOString().slice(0, 10) >= date);
-  if (idx <= 0 || idx >= bars.length) return null;
+  // Needs a bar on each side of the announcement.
+  if (idx <= 0 || idx + 1 >= bars.length) return null;
   const before = bars[idx - 1].c;
-  const after = bars[idx].c;
-  if (before <= 0) return null;
+  const after = bars[idx + 1].c;
+  if (!(before > 0) || !Number.isFinite(after)) return null;
   return round(((after - before) / before) * 100, 1);
+}
+
+export interface EarningsQuarter {
+  period: string;
+  announceDate: string | null;
+  epsActual: number | null;
+  epsEstimate: number | null;
+  surprisePct: number | null;
+  /** Session-agnostic straddle around the print. Null when unanchored. */
+  reactionPct: number | null;
+}
+
+export interface EarningsBehavior {
+  quarters: EarningsQuarter[];
+  /** Mean absolute reaction across quarters that have one. */
+  avgAbsMovePct: number | null;
+  /** Largest absolute reaction, signed as it occurred. */
+  worstMovePct: number | null;
+  /** Quarters with a usable reaction, out of those returned. */
+  measured: number;
+  total: number;
+}
+
+const surpriseOf = (e: { epsActual: number; epsEstimate: number; surprisePct?: number }): number | null =>
+  e.surprisePct !== undefined && Number.isFinite(e.surprisePct)
+    ? round(e.surprisePct, 1)
+    : e.epsEstimate !== 0 && Number.isFinite(e.epsEstimate) && Number.isFinite(e.epsActual)
+      ? round(((e.epsActual - e.epsEstimate) / Math.abs(e.epsEstimate)) * 100, 1)
+      : null;
+
+/**
+ * How this name trades around earnings — all fetched quarters, not just the
+ * latest one.
+ *
+ * Eight quarters were already being fetched and seven were thrown away. The
+ * aggregate is the point: one surprise is an anecdote, while "the average
+ * absolute move is 7.4% and the worst was −19%" is a position-sizing fact.
+ *
+ * Quarters with no resolved announcement date keep their EPS figures and
+ * carry `reactionPct: null` — a period-end window measures a random two-day
+ * move about a month from the print, so it degrades rather than guesses.
+ */
+export function buildEarningsBehavior(
+  earnings: Array<{ period: string; announceDate: string | null; epsActual: number; epsEstimate: number; surprisePct?: number }>,
+  bars: Bar[],
+): EarningsBehavior | null {
+  if (!earnings || earnings.length === 0) return null;
+  const sorted = [...earnings].sort((a, b) => b.period.localeCompare(a.period));
+
+  const quarters: EarningsQuarter[] = sorted.map((e) => ({
+    period: e.period,
+    announceDate: e.announceDate ?? null,
+    epsActual: Number.isFinite(e.epsActual) ? e.epsActual : null,
+    epsEstimate: Number.isFinite(e.epsEstimate) ? e.epsEstimate : null,
+    surprisePct: surpriseOf(e),
+    reactionPct: e.announceDate ? priceReactionAround(e.announceDate, bars) : null,
+  }));
+
+  const moves = quarters
+    .map((q) => q.reactionPct)
+    .filter((v): v is number => typeof v === 'number' && Number.isFinite(v));
+
+  const avgAbsMovePct = moves.length
+    ? round(moves.reduce((s, v) => s + Math.abs(v), 0) / moves.length, 1)
+    : null;
+  const worstMovePct = moves.length
+    ? moves.reduce((w, v) => (Math.abs(v) > Math.abs(w) ? v : w), moves[0])
+    : null;
+
+  return {
+    quarters,
+    avgAbsMovePct,
+    worstMovePct,
+    measured: moves.length,
+    total: quarters.length,
+  };
 }
 
 function buildNextEarnings(

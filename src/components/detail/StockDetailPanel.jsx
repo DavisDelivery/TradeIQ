@@ -33,6 +33,9 @@ import { AdvancedPriceChart } from './AdvancedPriceChart.jsx';
 import { RelativeStrengthChart } from './RelativeStrengthChart.jsx';
 import { FundamentalsChart } from './FundamentalsChart.jsx';
 import { KeyMetricsPanel } from './KeyMetricsPanel.jsx';
+import { EarningsBehaviorPanel } from './EarningsBehaviorPanel.jsx';
+import { TradabilityStrip } from './TradabilityStrip.jsx';
+import { OwnershipPanel } from './OwnershipPanel.jsx';
 import { CatalystsFeed } from './CatalystsFeed.jsx';
 import { RiskCallouts } from './RiskCallouts.jsx';
 import { ScoreBreakdown } from './ScoreBreakdown.jsx';
@@ -87,6 +90,12 @@ export function StockDetailPanel({ board, ticker, row }) {
         thesis={thesis}
       />
 
+      {/* W2.1 — the tradability strip sits directly under the hero, above
+          everything else. It is the CONSTRAINT on the trade (how much can I
+          buy, how far does it move), and a constraint discovered after the
+          thesis is a constraint discovered too late. */}
+      <TradabilityStrip ticker={ticker} />
+
       {/* One-tap execution log — captures live price + timestamp at tap. */}
       <TradeTakenButton ticker={ticker} />
 
@@ -128,6 +137,13 @@ export function StockDetailPanel({ board, ticker, row }) {
         }
       />
       <KeyMetricsPanel ticker={ticker} />
+      {/* W2.1 order: grouped stats -> earnings behaviour -> ownership ->
+          sector. Sits directly under the stats it contextualises: the stats
+          say what the business is, this says what holding it through a print
+          has actually cost. */}
+      <EarningsBehaviorPanel ticker={ticker} />
+      {/* W2.1 order: ... earnings behaviour -> ownership -> sector. */}
+      <OwnershipPanel ticker={ticker} />
       {/* SECTOR-1 — sits directly above the relative-strength chart it gives
           context to: the table says how the sector is doing, the chart shows
           the path. */}

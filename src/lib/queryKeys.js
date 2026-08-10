@@ -51,6 +51,10 @@ export const queryKeys = {
   // bug above (a queryFn input missing from the key is a silent no-op
   // inside staleTime).
   quietStrength: (limit) => ['tradeiq', 'quietStrength', limit ?? 40],
+  // PROFILE-1 W3 — one peer distribution per (ticker, metric). BOTH belong in
+  // the key: the endpoint reads both, so omitting metric would serve the
+  // first-opened drawer's distribution for every other metric on the page.
+  peerStat: (ticker, metric) => ['tradeiq', 'peerStat', ticker, metric],
   earnings: (windowDays, universe) =>
     ['tradeiq', 'earnings', windowDays, universe ?? 'all'],
 

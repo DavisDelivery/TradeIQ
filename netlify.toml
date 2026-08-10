@@ -507,6 +507,19 @@
   to = "/.netlify/functions/quiet-strength-board"
   status = 200
 
+# P1-S3 — consensus archive health. The archive is write-only and its payoff
+# is a year out, so this is the only way to see the clock is still ticking.
+[[redirects]]
+  from = "/api/consensus-archive-status"
+  to = "/.netlify/functions/consensus-archive-status"
+  status = 200
+
+# PROFILE-1 W3 — one metric's peer distribution, on drawer open.
+[[redirects]]
+  from = "/api/peer-stats"
+  to = "/.netlify/functions/peer-stats"
+  status = 200
+
 # FABLE — Claude's own board (reports/fable/design.md).
 [[redirects]]
   from = "/api/fable-board"

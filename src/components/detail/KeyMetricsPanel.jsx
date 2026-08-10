@@ -1,110 +1,124 @@
-// Phase 6 PR-E — KeyMetricsPanel for the StockDetailPanel.
+// PROFILE-1 W2.2 + W2.3 — KeyMetricsPanel, rebuilt as scannable rows.
 //
-// Grid layout grouped by category:
-//   Valuation    — P/E, P/B, P/S, EV/EBITDA, EV/Sales, Enterprise Value, Market Cap
-//   Profitability — Gross / Op / Net margin, ROE, ROA, EPS
-//   Liquidity     — Current / Quick / Cash ratio
-//   Leverage     — Debt / Equity, Long-term Debt
-//   Market       — Beta, Dividend Yield, Free Cash Flow, 52-week range position
+// WAS: a 23-tile grid (5 groups), every value in monospace, every null
+// printed as a literal "no data", and a favourability dot that painted a low
+// P/E emerald.
 //
-// Sector-median context: where /api/stock-detail.sectorMedians provides a
-// value for the same metric, it renders next to the stock value with a
-// directional dot (lower-is-better metrics get a flipped favorability
-// check). Where the median is null, the field is omitted rather than
-// printed as "sector: —".
+// NOW: two-column label/value rows chunked under real headings, numbers in
+// proportional sans with tabular-nums, null rows hidden behind one footnote,
+// and NO good/bad treatment on any metric the direction table calls neutral.
 //
-// Honest no-data: per-metric `null` → "no data" pill (with the bundle's
-// `_reason` surfaced once at the top if the whole metrics block is
-// unavailable). Never a fabricated zero.
+// THREE THINGS THIS FIXES, EACH FOR A STATED REASON:
+//
+// 1. TILES -> ROWS. A grid of equal-weight tiles has no reading order, so
+//    every value competes and the eye lands nowhere. Label-left/value-right
+//    rows give a single scan column; right-aligning with tabular-nums makes
+//    the digits line up so magnitudes are comparable at a glance, which is
+//    the entire job of a stats block.
+//
+// 2. NULLS DISAPPEAR. "no data" repeated fifteen times is fifteen rows of
+//    visual noise carrying no information. The old test asserted more than
+//    ten of them on a degraded payload, which is a good description of the
+//    problem. Missing rows are hidden and named once, quietly, at the end —
+//    the fact stays available and stops shouting.
+//
+// 3. NO VERDICT ON VALUATION. The old `favorability()` gave P/E dir:'lower'
+//    and rendered a cheap stock emerald. That is a claim about the future
+//    from a cross-sectional rank, and it is how a value trap looks like a
+//    bargain. Direction now comes from shared/metric-direction.ts, where
+//    P/E is neutral and only margins/returns/bands may carry a treatment.
 
-import React from 'react';
+import React, { useMemo, useState } from 'react';
+import { PeerDrawer } from './PeerDrawer.jsx';
 import { useStockDetail } from '../../hooks/useStockDetail.js';
+import {
+  mayRenderVerdict,
+  policyFor,
+} from '../../../netlify/functions/shared/metric-direction.ts';
 
 // ---------------------------------------------------------------------------
-// Metric definitions — keyed by path in /api/stock-detail.metrics
+// Chunks. 4-6 rows each, in the kickoff's order.
+// `key` maps the row onto the direction table; rows without one are
+// descriptive by default (mayRenderVerdict returns false for unknown keys).
 // ---------------------------------------------------------------------------
 
-// `dir: 'lower'` → lower-is-better (P/E, debt ratios); 'higher' → higher-
-// is-better (margins, ROE); 'none' → no obvious good/bad direction (beta).
-const GROUPS = [
+const CHUNKS = [
   {
     title: 'Valuation',
     items: [
-      { label: 'P/E',           path: 'valuation.pe',              fmt: 'num1',  dir: 'lower'  },
-      { label: 'P/B',           path: 'valuation.pb',              fmt: 'num1',  dir: 'lower'  },
-      { label: 'P/S',           path: 'valuation.ps',              fmt: 'num1',  dir: 'lower'  },
-      { label: 'EV/EBITDA',     path: 'valuation.evEbitda',        fmt: 'num1',  dir: 'lower'  },
-      { label: 'EV/Sales',      path: 'valuation.evToSales',       fmt: 'num1',  dir: 'lower'  },
-      { label: 'P/FCF',         path: 'valuation.pfcf',            fmt: 'num1',  dir: 'lower'  },
-      { label: 'Enterprise Val', path: 'valuation.enterpriseValue', fmt: 'usd',   dir: 'none'   },
-      { label: 'Market Cap',    path: 'valuation.marketCap',       fmt: 'usd',   dir: 'none'   },
+      { label: 'P/E', path: 'valuation.pe', fmt: 'num1', key: 'pe' },
+      { label: 'P/S', path: 'valuation.ps', fmt: 'num1', key: 'ps' },
+      { label: 'P/B', path: 'valuation.pb', fmt: 'num1', key: 'pb' },
+      { label: 'EV/EBITDA', path: 'valuation.evEbitda', fmt: 'num1', key: 'evEbitda' },
+      { label: 'P/FCF', path: 'valuation.pfcf', fmt: 'num1', key: 'pfcf' },
+      { label: 'Market cap', path: 'valuation.marketCap', fmt: 'usd' },
     ],
   },
   {
     title: 'Profitability',
     items: [
-      { label: 'Gross Margin',   path: 'profitability.grossMargin', fmt: 'pct1',  dir: 'higher' },
-      { label: 'Op Margin',      path: 'profitability.opMargin',    fmt: 'pct1',  dir: 'higher' },
-      { label: 'Net Margin',     path: 'profitability.netMargin',   fmt: 'pct1',  dir: 'higher' },
-      { label: 'ROE',            path: 'profitability.roe',         fmt: 'pct1',  dir: 'higher' },
-      { label: 'ROA',            path: 'profitability.roa',         fmt: 'pct1',  dir: 'higher' },
-      { label: 'EPS (basic)',    path: 'profitability.eps',         fmt: 'eps',   dir: 'higher' },
+      { label: 'Gross margin', path: 'profitability.grossMargin', fmt: 'pct1', key: 'grossMargin' },
+      { label: 'Operating margin', path: 'profitability.opMargin', fmt: 'pct1', key: 'opMargin' },
+      { label: 'Net margin', path: 'profitability.netMargin', fmt: 'pct1', key: 'netMargin' },
+      { label: 'ROE', path: 'profitability.roe', fmt: 'pct1', key: 'roe' },
+      { label: 'ROA', path: 'profitability.roa', fmt: 'pct1', key: 'roa' },
+      { label: 'EPS', path: 'profitability.eps', fmt: 'eps' },
     ],
   },
   {
-    title: 'Liquidity',
+    title: 'Balance sheet',
     items: [
-      { label: 'Current Ratio',  path: 'health.currentRatio',       fmt: 'num2',  dir: 'higher' },
-      { label: 'Quick Ratio',    path: 'health.quickRatio',         fmt: 'num2',  dir: 'higher' },
-      { label: 'Cash Ratio',     path: 'health.cashRatio',          fmt: 'num2',  dir: 'higher' },
+      { label: 'Current ratio', path: 'health.currentRatio', fmt: 'num2', key: 'currentRatio' },
+      { label: 'Quick ratio', path: 'health.quickRatio', fmt: 'num2', key: 'quickRatio' },
+      { label: 'Debt / equity', path: 'health.debtEquity', fmt: 'num2', key: 'debtEquity' },
+      { label: 'Long-term debt', path: 'health.longTermDebt', fmt: 'usd' },
+      { label: 'Free cash flow', path: 'market.freeCashFlow', fmt: 'usd' },
     ],
   },
   {
-    title: 'Leverage',
+    title: 'Trading',
     items: [
-      { label: 'Debt / Equity',  path: 'health.debtEquity',         fmt: 'num2',  dir: 'lower'  },
-      { label: 'Long-Term Debt', path: 'health.longTermDebt',       fmt: 'usd',   dir: 'lower'  },
+      { label: 'Beta', path: 'market.beta', fmt: 'num2', key: 'beta' },
+      { label: '52w position', path: 'market.range52w.currentPctile', fmt: 'pct0' },
+      { label: 'Enterprise value', path: 'valuation.enterpriseValue', fmt: 'usd' },
     ],
   },
   {
-    title: 'Market',
+    title: 'Dividend',
+    // Payers only — the whole chunk hides when the yield is null, rather than
+    // printing a dividend section for a company that does not pay one.
+    payersOnly: 'market.dividendYield',
     items: [
-      { label: 'Beta',           path: 'market.beta',               fmt: 'num2',  dir: 'none'   },
-      { label: 'Dividend Yield', path: 'market.dividendYield',      fmt: 'pctRaw',dir: 'higher' },
-      { label: 'Free Cash Flow', path: 'market.freeCashFlow',       fmt: 'usd',   dir: 'higher' },
-      { label: '52w Position',   path: 'market.range52w.currentPctile', fmt: 'pct0', dir: 'none' },
+      { label: 'Dividend yield', path: 'market.dividendYield', fmt: 'pctRaw', key: 'dividendYield' },
     ],
   },
 ];
 
-// Sector medians keys we actually compute (sector-medians.ts). Others fall
-// through as "no median" and the dot/comparison hides.
 const MEDIAN_PATH_MAP = {
-  'valuation.pe':            'valuation.pe',
+  'valuation.pe': 'valuation.pe',
   'profitability.grossMargin': 'profitability.grossMargin',
-  'profitability.opMargin':  'profitability.opMargin',
-  'health.debtEquity':       'health.debtEquity',
+  'profitability.opMargin': 'profitability.opMargin',
+  'health.debtEquity': 'health.debtEquity',
 };
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-function pluck(obj, path) {
+export function pluck(obj, path) {
   if (!obj || !path) return undefined;
-  const parts = path.split('.');
   let v = obj;
-  for (const k of parts) { if (v == null) return undefined; v = v[k]; }
+  for (const k of path.split('.')) { if (v == null) return undefined; v = v[k]; }
   return v;
 }
 
-function fmtValue(v, kind) {
+export function fmtValue(v, kind) {
   if (v == null || !Number.isFinite(v)) return null;
   if (kind === 'num1') return v.toFixed(1);
   if (kind === 'num2') return v.toFixed(2);
   if (kind === 'pct0') return `${v.toFixed(0)}%`;
   if (kind === 'pct1') return `${v.toFixed(1)}%`;
-  if (kind === 'pctRaw') return `${(v * 100).toFixed(2)}%`; // dividend yield is decimal (0.0043)
+  if (kind === 'pctRaw') return `${(v * 100).toFixed(2)}%`; // yield arrives as a decimal
   if (kind === 'eps') return `$${v.toFixed(2)}`;
   if (kind === 'usd') {
     const a = Math.abs(v);
@@ -117,22 +131,64 @@ function fmtValue(v, kind) {
   return String(v);
 }
 
-function favorability(value, median, dir) {
-  if (value == null || median == null || !Number.isFinite(value) || !Number.isFinite(median) || median === 0) return 'none';
-  if (dir === 'none') return 'none';
+/**
+ * Favourability, but ONLY where the direction table permits one.
+ *
+ * Returns 'none' for every neutral and flag metric, which is what stops a
+ * cheap P/E rendering as good news.
+ */
+export function favorability(metricKey, value, median) {
+  if (!metricKey || !mayRenderVerdict(metricKey)) return 'none';
+  if (!Number.isFinite(value) || !Number.isFinite(median) || median === 0) return 'none';
+  const p = policyFor(metricKey);
+  if (!p) return 'none';
+
+  if (p.direction === 'band') {
+    if (!p.band) return 'none';
+    return value >= p.band.low && value <= p.band.high ? 'favorable' : 'unfavorable';
+  }
+  // higher-in-industry
   const diffPct = ((value - median) / Math.abs(median)) * 100;
-  const better = dir === 'higher' ? diffPct > 0 : diffPct < 0;
-  const abs = Math.abs(diffPct);
-  if (abs < 5) return 'neutral';
-  return better ? 'favorable' : 'unfavorable';
+  if (Math.abs(diffPct) < 5) return 'neutral';
+  return diffPct > 0 ? 'favorable' : 'unfavorable';
 }
 
 const DOT_CLASS = {
   favorable: 'bg-emerald-400',
-  neutral:   'bg-neutral-500',
+  neutral: 'bg-neutral-500',
   unfavorable: 'bg-rose-400',
-  none:      'bg-transparent',
+  none: 'bg-transparent',
 };
+
+/**
+ * Normalise `_degraded` into a display list.
+ *
+ * The server sends `Record<string, string>` (dep -> reason). An array is
+ * accepted too, purely so an older cached payload or a hand-written fixture
+ * cannot blank the banner — but the object form is the real contract.
+ */
+export function degradedList(degraded) {
+  if (!degraded) return [];
+  if (Array.isArray(degraded)) return degraded.filter(Boolean).map(String);
+  if (typeof degraded === 'object') {
+    return Object.entries(degraded).map(([dep, reason]) =>
+      reason ? `${dep} (${reason})` : dep,
+    );
+  }
+  return [];
+}
+
+/** Rows with a value, and the labels of those without. */
+export function partitionRows(items, metrics) {
+  const present = [];
+  const missing = [];
+  for (const it of items) {
+    const v = pluck(metrics, it.path);
+    if (v == null || !Number.isFinite(v)) missing.push(it.label);
+    else present.push({ ...it, value: v });
+  }
+  return { present, missing };
+}
 
 // ---------------------------------------------------------------------------
 // Component
@@ -140,8 +196,33 @@ const DOT_CLASS = {
 
 export function KeyMetricsPanel({ ticker }) {
   const { data, isLoading, isError, error, refetch } = useStockDetail(ticker);
+  const [expanded, setExpanded] = useState(false);
+  // ONE drawer open at a time. Two open drawers push the page around twice
+  // and make the comparison harder, which is the opposite of the point.
+  const [openKey, setOpenKey] = useState(null);
+
   const metrics = data?.metrics ?? null;
   const sectorMedians = data?.sectorMedians ?? null;
+
+  const chunks = useMemo(() => {
+    if (!metrics) return [];
+    return CHUNKS
+      .filter((c) => {
+        if (!c.payersOnly) return true;
+        const v = pluck(metrics, c.payersOnly);
+        return v != null && Number.isFinite(v) && v > 0;
+      })
+      .map((c) => ({ ...c, ...partitionRows(c.items, metrics) }))
+      .filter((c) => c.present.length > 0 || c.missing.length > 0);
+  }, [metrics]);
+
+  const allMissing = useMemo(
+    () => chunks.flatMap((c) => c.missing),
+    [chunks],
+  );
+
+  const visible = expanded ? chunks : chunks.slice(0, 1);
+  const hiddenCount = chunks.length - visible.length;
 
   return (
     <section
@@ -183,56 +264,141 @@ export function KeyMetricsPanel({ ticker }) {
 
       {!isLoading && !isError && metrics && (
         <>
+          {/* Whole-group failure still gets a banner — that is a different
+              fact from an individual metric being unreported. */}
           {metrics._reason && (
             <div className="mb-3 text-[10px] font-mono uppercase tracking-widest text-amber-400/80">
               {metrics._reason}
             </div>
           )}
+
           <div className="space-y-4">
-            {GROUPS.map((g) => (
-              <MetricGroup key={g.title} group={g} metrics={metrics} medians={sectorMedians} />
+            {visible.map((c) => (
+              <MetricChunk
+                key={c.title}
+                chunk={c}
+                medians={sectorMedians}
+                ticker={ticker}
+                openKey={openKey}
+                onToggle={setOpenKey}
+              />
             ))}
           </div>
+
+          {hiddenCount > 0 && (
+            <button
+              type="button"
+              onClick={() => setExpanded(true)}
+              data-testid="key-metrics-show-all"
+              className="mt-3 text-[10px] font-mono uppercase tracking-widest text-neutral-300 hover:text-neutral-100 underline underline-offset-4"
+            >
+              Show all ({hiddenCount} more)
+            </button>
+          )}
+
+          {/* One quiet line instead of a wall of "no data". */}
+          {expanded && allMissing.length > 0 && (
+            <p data-testid="key-metrics-missing" className="mt-3 text-[10px] text-neutral-600">
+              Not reported: {allMissing.join(', ')}.
+            </p>
+          )}
+
+          {/* _degraded last — it explains the whole payload, so it reads as a
+              footer rather than competing with the numbers.
+
+              IT IS AN OBJECT, NOT AN ARRAY. stock-detail.ts:122 types it
+              `Record<string, string>` — dep name -> "<name>_timeout" |
+              "<name>_error". The first cut of this banner array-checked it,
+              so it silently never rendered against the real endpoint, and
+              the test passed because its fixture invented an array. Reading
+              the server's type instead of the fixture's is the whole lesson;
+              degradedList() below is written against the declared shape. */}
+          {degradedList(data?._degraded).length > 0 && (
+            <p data-testid="key-metrics-degraded" className="mt-2 text-[10px] text-amber-400/80">
+              Degraded sources: {degradedList(data._degraded).join(', ')}.
+            </p>
+          )}
         </>
       )}
     </section>
   );
 }
 
-function MetricGroup({ group, metrics, medians }) {
+function MetricChunk({ chunk, medians, ticker, openKey, onToggle }) {
+  if (!chunk.present.length) return null;
   return (
     <div>
-      <div className="text-[9px] uppercase tracking-widest font-mono text-neutral-600 mb-2">{group.title}</div>
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        {group.items.map((m) => (
-          <MetricCell key={m.label} def={m} metrics={metrics} medians={medians} />
-        ))}
+      <div className="text-[9px] uppercase tracking-widest font-mono text-neutral-600 mb-1.5">
+        {chunk.title}
       </div>
+      <dl className="divide-y divide-neutral-900">
+        {chunk.present.map((m) => (
+          <MetricRow
+            key={m.label}
+            def={m}
+            medians={medians}
+            ticker={ticker}
+            open={openKey === m.key}
+            onToggle={onToggle}
+          />
+        ))}
+      </dl>
     </div>
   );
 }
 
-function MetricCell({ def, metrics, medians }) {
-  const value = pluck(metrics, def.path);
+function MetricRow({ def, medians, ticker, open, onToggle }) {
   const median = pluck(medians, MEDIAN_PATH_MAP[def.path] ?? '');
-  const displayValue = fmtValue(value, def.fmt);
+  const displayValue = fmtValue(def.value, def.fmt);
   const displayMedian = fmtValue(median, def.fmt);
-  const fav = favorability(value, median, def.dir);
+  const fav = favorability(def.key, def.value, median);
+  // Only rows mapped to the direction table can be compared to peers; the
+  // rest stay plain text rather than offering a drawer that would open onto
+  // an apology.
+  const drillable = Boolean(def.key && ticker);
 
-  return (
-    <div data-testid={`metric-${def.path}`} className="bg-neutral-900/40 px-3 py-2 border border-neutral-800/60">
-      <div className="flex items-center justify-between gap-2">
-        <div className="text-[10px] uppercase tracking-widest text-neutral-500 font-mono">{def.label}</div>
+  const inner = (
+    <>
+      <dt className="text-[12px] text-neutral-400">
+        {def.label}
+        {/* neutral-500, not 700: theme-tokens.test.js auto-discovers every
+            text-<family>-<shade> in src/ and generates a WCAG assertion per
+            shade against the LIGHT page background. 700 is a shade nobody had
+            used, so it minted a new assertion and failed it. */}
+        {drillable && (
+          <span aria-hidden className="ml-1 text-neutral-500">{open ? '▾' : '▸'}</span>
+        )}
+      </dt>
+      <dd className="flex items-baseline gap-2 text-right">
+        {displayMedian != null && (
+          <span className="text-[10px] text-neutral-600">sector: {displayMedian}</span>
+        )}
         {fav !== 'none' && (
           <span aria-hidden className={`w-1.5 h-1.5 rounded-full ${DOT_CLASS[fav]}`} />
         )}
-      </div>
-      <div className={`mt-1 font-mono text-[14px] ${displayValue == null ? 'text-neutral-600' : 'text-neutral-100'}`}>
-        {displayValue ?? 'no data'}
-      </div>
-      {displayMedian != null && (
-        <div className="text-[10px] font-mono text-neutral-500">sector: {displayMedian}</div>
+        {/* tabular-nums: digits share a width, so the column aligns and
+            magnitudes are comparable down the page. */}
+        <span className="text-[13px] tabular-nums text-neutral-100">{displayValue}</span>
+      </dd>
+    </>
+  );
+
+  return (
+    <div data-testid={`metric-${def.path}`}>
+      {drillable ? (
+        <button
+          type="button"
+          onClick={() => onToggle(open ? null : def.key)}
+          aria-expanded={open}
+          data-testid={`metric-toggle-${def.key}`}
+          className="flex w-full items-baseline justify-between gap-3 py-1.5 text-left hover:bg-neutral-900/40"
+        >
+          {inner}
+        </button>
+      ) : (
+        <div className="flex items-baseline justify-between gap-3 py-1.5">{inner}</div>
       )}
+      {drillable && <PeerDrawer ticker={ticker} metricKey={def.key} open={open} />}
     </div>
   );
 }
