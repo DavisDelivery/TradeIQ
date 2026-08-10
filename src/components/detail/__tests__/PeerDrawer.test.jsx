@@ -115,6 +115,63 @@ describe('small pools show names instead of a statistic', () => {
   });
 });
 
+// W3.2 — the drawer's first job is "what am I looking at?".
+describe('the definition is always shown', () => {
+  const POLICY = {
+    label: 'P/E',
+    meaning: 'Share price divided by earnings per share — what you pay for each dollar earned.',
+    caveat: 'Cheap is not good or bad on its own.',
+    direction: 'neutral', band: null, showBeside: [],
+  };
+
+  it('leads with the meaning even when a full percentile is available', async () => {
+    renderDrawer({ ok: true, stat: STAT, policy: POLICY });
+    await waitFor(() => expect(screen.getByTestId('peer-explainer')).toBeInTheDocument());
+    expect(screen.getByText(/what you pay for each dollar earned/)).toBeInTheDocument();
+    expect(screen.getByTestId('peer-caveat')).toBeInTheDocument();
+  });
+
+  it('still shows the meaning when the metric has NO peer pool', async () => {
+    // The whole point: a metric with no rank used to open to a bare refusal,
+    // which taught the reader that most rows were not worth tapping.
+    renderDrawer({
+      ok: true, stat: null, policy: POLICY, reason: 'no-pool',
+      note: 'This metric is not in the screener universe.',
+    });
+    await waitFor(() => expect(screen.getByTestId('peer-explainer')).toBeInTheDocument());
+    expect(screen.getByText(/what you pay for each dollar earned/)).toBeInTheDocument();
+    expect(screen.getByText(/not in the screener universe/)).toBeInTheDocument();
+  });
+
+  it('explains a not-rankable metric instead of ranking it by size', async () => {
+    renderDrawer({
+      ok: true, stat: null, reason: 'not-rankable',
+      policy: {
+        label: 'Free cash flow',
+        meaning: 'Cash left from operations after the spending needed to maintain the business.',
+        caveat: 'An absolute figure scales with company size.',
+        direction: 'neutral', band: null, showBeside: ['pfcf'],
+      },
+      note: 'This is an absolute figure, so a peer percentile would rank companies by size.',
+    });
+    await waitFor(() => expect(screen.getByTestId('peer-explainer')).toBeInTheDocument());
+    expect(screen.getByText(/rank companies by size/)).toBeInTheDocument();
+    expect(screen.queryByTestId('peer-strip')).not.toBeInTheDocument();
+  });
+
+  it('omits the caveat block when the policy has none', async () => {
+    renderDrawer({ ok: true, stat: STAT, policy: { ...POLICY, caveat: null } });
+    await waitFor(() => expect(screen.getByTestId('peer-explainer')).toBeInTheDocument());
+    expect(screen.queryByTestId('peer-caveat')).not.toBeInTheDocument();
+  });
+
+  it('survives a response with no policy at all', async () => {
+    renderDrawer({ ok: true, stat: STAT });
+    await waitFor(() => expect(screen.getByTestId('peer-phrase')).toBeInTheDocument());
+    expect(screen.queryByTestId('peer-explainer')).not.toBeInTheDocument();
+  });
+});
+
 describe('a refusal is an answer, not an error', () => {
   it('renders the no-pool note as prose', async () => {
     renderDrawer({

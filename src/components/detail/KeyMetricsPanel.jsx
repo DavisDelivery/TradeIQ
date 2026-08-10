@@ -51,7 +51,7 @@ const CHUNKS = [
       { label: 'P/B', path: 'valuation.pb', fmt: 'num1', key: 'pb' },
       { label: 'EV/EBITDA', path: 'valuation.evEbitda', fmt: 'num1', key: 'evEbitda' },
       { label: 'P/FCF', path: 'valuation.pfcf', fmt: 'num1', key: 'pfcf' },
-      { label: 'Market cap', path: 'valuation.marketCap', fmt: 'usd' },
+      { label: 'Market cap', path: 'valuation.marketCap', fmt: 'usd', key: 'marketCap' },
     ],
   },
   {
@@ -62,7 +62,7 @@ const CHUNKS = [
       { label: 'Net margin', path: 'profitability.netMargin', fmt: 'pct1', key: 'netMargin' },
       { label: 'ROE', path: 'profitability.roe', fmt: 'pct1', key: 'roe' },
       { label: 'ROA', path: 'profitability.roa', fmt: 'pct1', key: 'roa' },
-      { label: 'EPS', path: 'profitability.eps', fmt: 'eps' },
+      { label: 'EPS', path: 'profitability.eps', fmt: 'eps', key: 'eps' },
     ],
   },
   {
@@ -71,16 +71,16 @@ const CHUNKS = [
       { label: 'Current ratio', path: 'health.currentRatio', fmt: 'num2', key: 'currentRatio' },
       { label: 'Quick ratio', path: 'health.quickRatio', fmt: 'num2', key: 'quickRatio' },
       { label: 'Debt / equity', path: 'health.debtEquity', fmt: 'num2', key: 'debtEquity' },
-      { label: 'Long-term debt', path: 'health.longTermDebt', fmt: 'usd' },
-      { label: 'Free cash flow', path: 'market.freeCashFlow', fmt: 'usd' },
+      { label: 'Long-term debt', path: 'health.longTermDebt', fmt: 'usd', key: 'longTermDebt' },
+      { label: 'Free cash flow', path: 'market.freeCashFlow', fmt: 'usd', key: 'freeCashFlow' },
     ],
   },
   {
     title: 'Trading',
     items: [
       { label: 'Beta', path: 'market.beta', fmt: 'num2', key: 'beta' },
-      { label: '52w position', path: 'market.range52w.currentPctile', fmt: 'pct0' },
-      { label: 'Enterprise value', path: 'valuation.enterpriseValue', fmt: 'usd' },
+      { label: '52w position', path: 'market.range52w.currentPctile', fmt: 'pct0', key: 'range52wPct' },
+      { label: 'Enterprise value', path: 'valuation.enterpriseValue', fmt: 'usd', key: 'enterpriseValue' },
     ],
   },
   {

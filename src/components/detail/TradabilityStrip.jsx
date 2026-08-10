@@ -14,8 +14,9 @@
 // ATR is shown in BOTH dollars and percent, deliberately. Dollars is what the
 // stop is written in; percent is what makes two names comparable.
 
-import React from 'react';
+import React, { useState } from 'react';
 import { useStockDetail } from '../../hooks/useStockDetail.js';
+import { PeerDrawer } from './PeerDrawer.jsx';
 
 export function fmtUsdCompact(v) {
   if (typeof v !== 'number' || !Number.isFinite(v)) return '—';
@@ -46,23 +47,27 @@ export function fmtPct(v, dp = 1) {
 export function tradabilityCells(t) {
   if (!t) return [];
   const cells = [
-    { label: 'Avg $ vol', value: fmtUsdCompact(t.advDollar), raw: t.advDollar },
-    { label: 'ATR', value: t.atr == null ? '—' : `$${fmtNum(t.atr)}`, raw: t.atr },
-    { label: 'ATR %', value: fmtPct(t.atrPct), raw: t.atrPct },
-    { label: 'Rel. vol', value: fmtNum(t.relativeVolume), raw: t.relativeVolume },
-    { label: 'Float', value: fmtShares(t.floatM), raw: t.floatM },
+    { label: 'Avg $ vol', value: fmtUsdCompact(t.advDollar), raw: t.advDollar, key: 'advDollar' },
+    { label: 'ATR', value: t.atr == null ? '—' : `$${fmtNum(t.atr)}`, raw: t.atr, key: 'atr' },
+    { label: 'ATR %', value: fmtPct(t.atrPct), raw: t.atrPct, key: 'atrPct' },
+    { label: 'Rel. vol', value: fmtNum(t.relativeVolume), raw: t.relativeVolume, key: 'relativeVolume' },
+    { label: 'Float', value: fmtShares(t.floatM), raw: t.floatM, key: 'floatM' },
   ];
   return cells.filter((c) => typeof c.raw === 'number' && Number.isFinite(c.raw));
 }
 
 export function TradabilityStrip({ ticker }) {
   const { data } = useStockDetail(ticker);
+  const [openKey, setOpenKey] = useState(null);
   const cells = tradabilityCells(data?.finviz?.tradability);
 
   // No skeleton and no empty shell: a strip of five dashes is worse than no
   // strip, and this is decoration until it has numbers.
   if (cells.length === 0) return null;
 
+  // ONE drawer, BELOW the strip rather than inside it. The cells are a
+  // flex-wrap row, so a drawer opening within one of them would reflow its
+  // neighbours sideways instead of pushing the page down.
   return (
     <section
       data-testid="tradability-strip"
@@ -71,14 +76,33 @@ export function TradabilityStrip({ ticker }) {
       <div className="text-[9px] uppercase tracking-[0.2em] text-neutral-600 font-mono mb-2">
         Tradability
       </div>
-      <dl className="flex flex-wrap gap-x-6 gap-y-2">
-        {cells.map((c) => (
-          <div key={c.label} data-testid={`trad-${c.label}`}>
-            <dt className="text-[9px] uppercase tracking-widest text-neutral-500">{c.label}</dt>
-            <dd className="text-[14px] tabular-nums text-neutral-100">{c.value}</dd>
-          </div>
-        ))}
-      </dl>
+      {/* Spans rather than dt/dd, for the same reason as OwnershipPanel: the
+          cell itself is the control, and dt/dd inside a button is not valid
+          markup. */}
+      <div className="flex flex-wrap gap-x-6 gap-y-2">
+        {cells.map((c) => {
+          const open = openKey === c.key;
+          return (
+            <button
+              key={c.label}
+              type="button"
+              data-testid={`trad-${c.label}`}
+              aria-expanded={open}
+              onClick={() => setOpenKey(open ? null : c.key)}
+              className={`text-left px-1 -mx-1 hover:bg-neutral-900/40 ${open ? 'bg-neutral-900/40' : ''}`}
+            >
+              <span className="block text-[9px] uppercase tracking-widest text-neutral-500">
+                {c.label}
+                <span aria-hidden className="ml-1 text-neutral-600">{open ? '▾' : '▸'}</span>
+              </span>
+              <span className="block text-[14px] tabular-nums text-neutral-100">{c.value}</span>
+            </button>
+          );
+        })}
+      </div>
+
+      <PeerDrawer ticker={ticker} metricKey={openKey} open={openKey !== null} />
+
       <p className="mt-2 text-[10px] text-neutral-600">
         How much you can buy and how far it moves on an ordinary day — not a signal.
       </p>

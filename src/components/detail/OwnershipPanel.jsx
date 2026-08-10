@@ -19,8 +19,9 @@
 // visibly separate so the weaker fact cannot borrow the stronger one's
 // evidence.
 
-import React from 'react';
+import React, { useState } from 'react';
 import { useStockDetail } from '../../hooks/useStockDetail.js';
+import { PeerDrawer } from './PeerDrawer.jsx';
 
 export const fmtPct2 = (v, dp = 2) =>
   typeof v === 'number' && Number.isFinite(v) ? `${v.toFixed(dp)}%` : null;
@@ -55,20 +56,29 @@ export function shortNarrative(shortFloatPct, shortRatio) {
     'does not say which.';
 }
 
+/**
+ * W3.2 — every row carries its peer key, so every row opens a drawer.
+ *
+ * These six were the largest gap: four of them (institutional, insider,
+ * short float, days-to-cover) are columns in the very screener export the
+ * peer engine already reads, so they had a real distribution available and
+ * simply nothing wired to reach it.
+ */
 export function ownershipRows(o) {
   if (!o) return [];
   return [
-    { label: 'Institutional', value: fmtPct2(o.instOwnPct, 1) },
-    { label: 'Insider', value: fmtPct2(o.insiderOwnPct, 2) },
-    { label: 'Insider net trans.', value: fmtPct2(o.insiderTransPct, 2) },
-    { label: 'Float', value: fmtFloatM(o.floatM) },
-    { label: 'Short % of float', value: fmtPct2(o.shortFloatPct, 2) },
-    { label: 'Days to cover', value: fmtDays(o.shortRatio) },
+    { label: 'Institutional', value: fmtPct2(o.instOwnPct, 1), key: 'instOwnPct' },
+    { label: 'Insider', value: fmtPct2(o.insiderOwnPct, 2), key: 'insiderOwnPct' },
+    { label: 'Insider net trans.', value: fmtPct2(o.insiderTransPct, 2), key: 'insiderTransPct' },
+    { label: 'Float', value: fmtFloatM(o.floatM), key: 'floatM' },
+    { label: 'Short % of float', value: fmtPct2(o.shortFloatPct, 2), key: 'shortFloatPct' },
+    { label: 'Days to cover', value: fmtDays(o.shortRatio), key: 'shortRatio' },
   ].filter((r) => r.value !== null);
 }
 
 export function OwnershipPanel({ ticker }) {
   const { data } = useStockDetail(ticker);
+  const [openKey, setOpenKey] = useState(null);
   const o = data?.finviz?.ownership ?? null;
   const rows = ownershipRows(o);
 
@@ -85,14 +95,33 @@ export function OwnershipPanel({ ticker }) {
         Ownership &amp; short structure
       </div>
 
-      <dl className="divide-y divide-neutral-900">
-        {rows.map((r) => (
-          <div key={r.label} data-testid={`own-${r.label}`} className="flex items-baseline justify-between gap-3 py-1.5">
-            <dt className="text-[12px] text-neutral-400">{r.label}</dt>
-            <dd className="text-[13px] tabular-nums text-neutral-100">{r.value}</dd>
-          </div>
-        ))}
-      </dl>
+      {/* Not a <dl> any more. The whole row is the control, and dt/dd are
+          only valid as children of dl (or a div inside one) — nesting them
+          in a button would be markup a screen reader is entitled to
+          mis-announce. Two spans in a button reads as "Institutional 72.4%,
+          button", which is exactly the row. */}
+      <div className="divide-y divide-neutral-900">
+        {rows.map((r) => {
+          const open = openKey === r.key;
+          return (
+            <div key={r.label} data-testid={`own-${r.label}`}>
+              <button
+                type="button"
+                aria-expanded={open}
+                onClick={() => setOpenKey(open ? null : r.key)}
+                className="w-full flex items-baseline justify-between gap-3 py-1.5 text-left hover:bg-neutral-900/40"
+              >
+                <span className="text-[12px] text-neutral-400">
+                  {r.label}
+                  <span aria-hidden className="ml-1 text-neutral-600">{open ? '▾' : '▸'}</span>
+                </span>
+                <span className="text-[13px] tabular-nums text-neutral-100">{r.value}</span>
+              </button>
+              <PeerDrawer ticker={ticker} metricKey={r.key} open={open} />
+            </div>
+          );
+        })}
+      </div>
 
       {narrative && (
         <p data-testid="own-short-narrative" className="mt-3 text-[11px] leading-relaxed text-neutral-400">
