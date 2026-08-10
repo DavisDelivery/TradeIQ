@@ -30,6 +30,24 @@
 import { percentileRank } from './quality-value';
 import { policyFor, comparativePhrase } from './metric-direction';
 
+/**
+ * Metrics with NO peer pool, by owner decision (2026-08-10).
+ *
+ * The Finviz universe — the only cross-section we can compute peer statistics
+ * from without a per-peer fan-out — does not carry these five columns. The
+ * standing rule is never to mix sources in one pool, because a P/FCF ranked
+ * against a pool assembled from a different vendor with different definitions
+ * is a comparison of two things that were never measured the same way.
+ *
+ * So these ship as VALUES WITH NO RANK, and the absence is stated rather than
+ * left as a blank space the reader fills in. Listing them here rather than
+ * omitting them from the direction table is deliberate: the table still says
+ * how to phrase them if a same-source pool ever exists.
+ */
+export const NO_PEER_POOL = new Set([
+  'evEbitda', 'pfcf', 'fcfYield', 'opMargin', 'quickRatio',
+]);
+
 /** Minimum pool size for a percentile to be reported at all. */
 export const MIN_POOL_FOR_PERCENTILE = 20;
 
@@ -69,6 +87,8 @@ export interface PeerStat {
   winsorNote: string;
   /** True when the SUBJECT itself has no meaningful value for this metric. */
   subjectNotMeaningful: boolean;
+  /** True when no peer pool exists for this metric at any level. */
+  noPool: boolean;
   /** One falsifiable sentence. Never a verdict. */
   phrase: string;
 }
@@ -141,6 +161,34 @@ export function buildPeerStat(input: BuildPeerStatInput): PeerStat {
       ? input.subjectValue
       : null;
 
+  // No pool exists for this metric at all — refuse before computing anything,
+  // so a caller that supplies a pool by mistake cannot get a rank out of it.
+  if (NO_PEER_POOL.has(metricKey)) {
+    return {
+      metricKey,
+      subjectTicker,
+      subjectValue,
+      poolLevel,
+      poolLabel: `${poolName} (${POOL_LABEL[poolLevel]})`,
+      n: 0,
+      excludedCount: 0,
+      exclusionNote: null,
+      percentile: null,
+      ordinal: null,
+      peers: null,
+      median: null,
+      displayLow: null,
+      displayHigh: null,
+      winsorNote: 'No peer distribution for this metric.',
+      subjectNotMeaningful: false,
+      noPool: true,
+      phrase:
+        'No peer comparison: this metric is not in the screener universe the peer ' +
+        'statistics are computed from, and mixing a second source into the pool ' +
+        'would compare figures that were never measured the same way.',
+    };
+  }
+
   const candidates = input.pool.filter((c) => c.ticker !== subjectTicker);
   const usable = candidates.filter((c) => isMeaningful(metricKey, c.value)) as Array<{
     ticker: string; value: number;
@@ -178,6 +226,7 @@ export function buildPeerStat(input: BuildPeerStatInput): PeerStat {
     displayHigh,
     winsorNote: 'Distribution clipped at the 2.5th and 97.5th percentiles for display; ranks use every value.',
     subjectNotMeaningful,
+    noPool: false,
   };
 
   // The subject has nothing to rank.

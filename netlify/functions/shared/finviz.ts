@@ -44,6 +44,10 @@ export const FINVIZ_UNIVERSE_FILTERS: Record<FinvizUniverse, string> = {
 export interface FinvizRow {
   ticker: string;
   sector: string | null;
+  /** PROFILE-1 W3 — screener column 4. The peer-pool level that actually
+   *  means something: a margin ranked against "Technology" compares a
+   *  software company with a contract manufacturer. */
+  industry: string | null;
   /** Millions of USD, as Finviz reports it. */
   marketCapM: number | null;
   pe: number | null;
@@ -120,6 +124,16 @@ interface ColumnSpec {
 const COLUMNS: ColumnSpec[] = [
   { id: 1, header: 'Ticker', field: 'ticker', kind: 'text' },
   { id: 3, header: 'Sector', field: 'sector', kind: 'text' },
+  // PROFILE-1 W3. Header is byte-exact per the same 2026-08-03 enumeration
+  // that verified the rest of this table; the id ordering corroborates it
+  // (3 Sector, 4 Industry, 5 Country, 6 Market Cap).
+  //
+  // FAILURE MODE, checked before adding: `missingHeaders` is a WARNING, never
+  // a throw (scan-screens.ts:77-79 pushes it into warnings; finviz-snapshot
+  // reports it). So if Finviz's header text ever differs, `industry` goes
+  // null everywhere and a schema-drift warning appears — the screens keep
+  // scanning. That is the whole reason this was safe to add.
+  { id: 4, header: 'Industry', field: 'industry', kind: 'text' },
   { id: 6, header: 'Market Cap', field: 'marketCapM', kind: 'num' },
   { id: 7, header: 'P/E', field: 'pe', kind: 'num' },
   { id: 8, header: 'Forward P/E', field: 'forwardPe', kind: 'num' },
@@ -558,7 +572,12 @@ const CACHE_FIELDS: (keyof FinvizRow)[] = [
  * cached VALUES must change the cache KEY, or containers keep serving
  * pre-change shapes for a full TTL.
  */
-const UNIVERSE_CACHE_EPOCH = 'v3';
+// v4: the Industry column (id 4) joined COLUMNS. The sharded universe cache
+// stores rows POSITIONALLY against a field manifest, so a v3 shard written
+// before the column existed would deserialise without `industry` and every
+// peer pool would silently fall back to sector for up to 15 minutes. Bumping
+// the epoch orphans the old shards instead.
+const UNIVERSE_CACHE_EPOCH = 'v4';
 
 /**
  * Rows per cache shard. Measured 2026-08-03: the russell2k columnar doc at

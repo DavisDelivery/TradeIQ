@@ -11,6 +11,7 @@ import {
   MIN_POOL_FOR_PERCENTILE,
   WINSOR_LOW,
   WINSOR_HIGH,
+  NO_PEER_POOL,
   type PeerCandidate,
 } from '../peer-stats';
 import { METRIC_POLICY } from '../metric-direction';
@@ -30,6 +31,42 @@ const stat = (over: Partial<Parameters<typeof buildPeerStat>[0]> = {}) =>
     poolName: 'Specialty Retail',
     ...over,
   });
+
+// ---------------------------------------------------------------------------
+// OWNER DECISION 2026-08-10: five metrics have no pool and get no rank
+// ---------------------------------------------------------------------------
+describe('metrics with no peer pool get a value and no rank', () => {
+  const uncovered = ['evEbitda', 'pfcf', 'fcfYield', 'opMargin', 'quickRatio'];
+
+  it('lists exactly the five the Finviz universe does not carry', () => {
+    expect([...NO_PEER_POOL].sort()).toEqual([...uncovered].sort());
+  });
+
+  it.each(uncovered)('%s returns no rank even when a pool is supplied', (key) => {
+    // Structural, not a convention: a caller that hands over a pool by
+    // mistake still cannot get a percentile out of it.
+    const s = stat({ metricKey: key, pool: big() });
+    expect(s.noPool).toBe(true);
+    expect(s.percentile).toBeNull();
+    expect(s.ordinal).toBeNull();
+    expect(s.median).toBeNull();
+  });
+
+  it('says WHY, rather than leaving a blank the reader fills in', () => {
+    const s = stat({ metricKey: 'pfcf' });
+    expect(s.phrase).toMatch(/not in the screener universe/);
+    expect(s.phrase).toMatch(/never measured the same way/);
+  });
+
+  it('still reports the subject value — the metric is shown, only unranked', () => {
+    expect(stat({ metricKey: 'pfcf', subjectValue: 31.2 }).subjectValue).toBe(31.2);
+  });
+
+  it('leaves covered metrics ranking normally', () => {
+    expect(stat({ metricKey: 'pe' }).noPool).toBe(false);
+    expect(stat({ metricKey: 'grossMargin' }).noPool).toBe(false);
+  });
+});
 
 // ---------------------------------------------------------------------------
 // GATE: no percentile renders with N < 20

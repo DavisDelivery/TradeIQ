@@ -79,6 +79,8 @@ export interface FinvizProfileBlocks {
   earningsDate: string | null;
   earningsSession: 'amc' | 'bmo' | null;
   sector: string | null;
+  /** Peer-pool level for W3. Null until the universe cache refills at v4. */
+  industry: string | null;
 }
 
 const n = (v: unknown): number | null =>
@@ -143,6 +145,9 @@ export function shapeFinvizRow(row: FinvizRow): FinvizProfileBlocks {
     earningsDate: typeof row.earningsDate === 'string' ? row.earningsDate : null,
     earningsSession: row.earningsSession ?? null,
     sector: typeof row.sector === 'string' ? row.sector : null,
+    industry: typeof row.industry === 'string' && row.industry.trim() !== ''
+      ? row.industry
+      : null,
   };
 }
 

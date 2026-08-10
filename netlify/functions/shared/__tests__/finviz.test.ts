@@ -43,7 +43,7 @@ vi.stubGlobal('fetch', fetchMock);
 
 // Byte-exact headers the live export emitted 2026-08-03 for our column set.
 const HEADERS = [
-  'Ticker', 'Sector', 'Market Cap', 'P/E', 'Forward P/E', 'PEG', 'Dividend Yield',
+  'Ticker', 'Sector', 'Industry', 'Market Cap', 'P/E', 'Forward P/E', 'PEG', 'Dividend Yield',
   'EPS Growth This Year', 'EPS Growth Next Year', 'EPS Growth Next 5 Years',
   'EPS Growth Quarter Over Quarter', 'Sales Growth Quarter Over Quarter',
   'Insider Ownership', 'Institutional Ownership', 'Short Float', 'Return on Equity',
@@ -72,6 +72,7 @@ function csvOf(headers: string[], rows: Record<string, string>[]): string {
 const AAPL: Record<string, string> = {
   Ticker: 'AAPL',
   Sector: 'Technology',
+  Industry: 'Consumer Electronics',
   'Market Cap': '4494326.59',
   'P/E': '35.08',
   'Dividend Yield': '0.35%',
@@ -212,10 +213,16 @@ describe('getFinvizUniverseSnapshot cache discipline', () => {
       provider: 'finviz',
       endpoint: 'screener-universe',
       ticker: '_sp500',
-      extra: 'v3', // epoch bumped again with the after-hours columns
+      // v4 — bumped with the Industry column (PROFILE-1 W3). Shards store
+      // rows POSITIONALLY against the manifest's field list, so a v3 shard
+      // written before the column existed would deserialise without
+      // `industry` and every peer pool would silently fall back to sector
+      // for up to 15 minutes. The epoch orphans them instead.
+      extra: 'v4',
     });
     expect(manifests[0][1].shards).toBe(1);
     expect(manifests[0][1].f).toContain('ticker');
+    expect(manifests[0][1].f).toContain('industry');
   });
 
   it('the manifest is written LAST so a crash cannot promise missing shards', async () => {

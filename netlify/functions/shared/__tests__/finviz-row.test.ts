@@ -6,7 +6,7 @@ import type { FinvizRow } from '../finviz';
 
 const row = (over: Partial<FinvizRow> = {}): FinvizRow =>
   ({
-    ticker: 'AAPL', sector: 'Technology',
+    ticker: 'AAPL', sector: 'Technology', industry: 'Consumer Electronics',
     price: 200, avgVolume: 50_000_000, relVolume: 1.3, atr: 4.5, floatM: 15_000,
     instOwnPct: 61.2, insiderOwnPct: 0.07, insiderTransPct: -1.4,
     shortFloatPct: 0.9, shortRatio: 1.8,
@@ -110,6 +110,21 @@ describe('growth and events', () => {
 
   it('nulls the session when the vendor omits it', () => {
     expect(shapeFinvizRow(row({ earningsSession: null })).earningsSession).toBeNull();
+  });
+
+  it('carries INDUSTRY, the peer level that actually means something', () => {
+    // A margin ranked against "Technology" compares a software company with a
+    // contract manufacturer; "Consumer Electronics" is a real comparison.
+    expect(shapeFinvizRow(row()).industry).toBe('Consumer Electronics');
+    expect(shapeFinvizRow(row()).sector).toBe('Technology');
+  });
+
+  it('treats an empty industry string as null, not as a pool of its own', () => {
+    // Finviz emits '-' / '' for names it does not classify. Left as a string,
+    // every such name would pool together as a fake industry.
+    expect(shapeFinvizRow(row({ industry: '' })).industry).toBeNull();
+    expect(shapeFinvizRow(row({ industry: '   ' })).industry).toBeNull();
+    expect(shapeFinvizRow(row({ industry: null })).industry).toBeNull();
   });
 });
 
