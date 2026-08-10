@@ -25,6 +25,9 @@ import {
   type Bar,
 } from './shared/data-provider';
 import { getInsiderActivity } from './shared/insider-provider';
+// PROFILE-1 — the profile's first-ever finviz import. Fifty columns we
+// already pay for have never reached this endpoint (see finviz-row.ts).
+import { getFinvizProfileBlocks, type FinvizProfileBlocks } from './shared/finviz-row';
 import { getSectorMedians, type SectorMedians } from './shared/sector-medians';
 import { quarterlyFromStatements, type QuarterlyFundamental } from './shared/quarterly-fundamentals';
 import { findEntry, SECTOR_ETFS, SPY } from './shared/universe';
@@ -52,6 +55,7 @@ const DEP_TIMEOUTS = {
   insider: 6_000,             // Finnhub — W1c-style rate-limit retry could eat budget
   sectorMedians: 6_000,       // fans out to 16 peers; each peer bounded at 4s internally
   tickerInfo: 4_000,
+  finvizRow: 5_000,     // one small CSV export, cached 15 min per ticker
 };
 
 const log = createLogger('stock-detail');
@@ -116,6 +120,9 @@ interface StockDetailResponse {
     sectorEtf: string | null;
     _reason?: string;
   };
+  /** PROFILE-1 — tradability, ownership, growth and analyst blocks off the
+   *  Finviz row. Null when the row is unavailable; never a row of zeros. */
+  finviz?: FinvizProfileBlocks | null;
   /** Phase 6 PR-G0 — per-section degradation map. Keys are dep names that
    *  hit the per-dep timeout or rejected during fetch; values are short
    *  reason strings ("<name>_timeout" | "<name>_error"). Absent when every
@@ -161,6 +168,7 @@ export const handler: Handler = async (event) => {
       insiderR,
       sectorMedianR,
       infoR,
+      finvizR,
     ] = await Promise.all([
       withTimeoutStatus(getDailyBars(ticker, from, to), DEP_TIMEOUTS.bars, [] as Bar[]),
       withTimeoutStatus(getDailyBars(SPY, from, to), DEP_TIMEOUTS.spyBars, [] as Bar[]),
@@ -178,6 +186,7 @@ export const handler: Handler = async (event) => {
         { medians: {} as SectorMedians, sampleSize: 0, sector, cached: false },
       ),
       withTimeoutStatus(getTickerInfo(ticker), DEP_TIMEOUTS.tickerInfo, null),
+      withTimeoutStatus(getFinvizProfileBlocks(ticker), DEP_TIMEOUTS.finvizRow, null),
     ]);
 
     const bars = barsR.value;
@@ -205,6 +214,7 @@ export const handler: Handler = async (event) => {
     flagDegraded('upcoming', upcomingR);
     flagDegraded('news', newsR);
     flagDegraded('insider', insiderR);
+    flagDegraded('finviz', finvizR);
     flagDegraded('sectorMedians', sectorMedianR);
     flagDegraded('tickerInfo', infoR);
     if (Object.keys(degraded).length > 0) {
@@ -378,6 +388,7 @@ export const handler: Handler = async (event) => {
         ...(quarterly.length === 0 ? { _reason: 'quarterly_history_unavailable' } : {}),
       },
       relativeStrength,
+      finviz: finvizR.value ?? null,
       ...(Object.keys(degraded).length > 0 ? { _degraded: degraded } : {}),
     };
 

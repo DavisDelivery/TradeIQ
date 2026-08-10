@@ -34,6 +34,7 @@ import { RelativeStrengthChart } from './RelativeStrengthChart.jsx';
 import { FundamentalsChart } from './FundamentalsChart.jsx';
 import { KeyMetricsPanel } from './KeyMetricsPanel.jsx';
 import { EarningsBehaviorPanel } from './EarningsBehaviorPanel.jsx';
+import { TradabilityStrip } from './TradabilityStrip.jsx';
 import { CatalystsFeed } from './CatalystsFeed.jsx';
 import { RiskCallouts } from './RiskCallouts.jsx';
 import { ScoreBreakdown } from './ScoreBreakdown.jsx';
@@ -87,6 +88,12 @@ export function StockDetailPanel({ board, ticker, row }) {
         row={row}
         thesis={thesis}
       />
+
+      {/* W2.1 — the tradability strip sits directly under the hero, above
+          everything else. It is the CONSTRAINT on the trade (how much can I
+          buy, how far does it move), and a constraint discovered after the
+          thesis is a constraint discovered too late. */}
+      <TradabilityStrip ticker={ticker} />
 
       {/* One-tap execution log — captures live price + timestamp at tap. */}
       <TradeTakenButton ticker={ticker} />
