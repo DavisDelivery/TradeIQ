@@ -11,10 +11,21 @@ import {
 
 // The kickoff's NEUTRAL list, transcribed. If someone reclassifies one of
 // these as good/bad, this fails before the UI can.
-const MUST_BE_NEUTRAL = [
+const KICKOFF_NEUTRAL = [
   'pe', 'forwardPe', 'ps', 'pb', 'evEbitda', 'pfcf', 'fcfYield',
   'dividendYield', 'beta', 'rsi14', 'atrPct', 'instOwnPct', 'insiderOwnPct',
 ];
+
+// W3.2 added policies for the rows that previously had none — they were not
+// clickable, so nothing needed to know how to phrase them. Every one is
+// descriptive: sizes, absolute dollars and positions in a range. None of
+// them may acquire an arrow either, so they join the same gate.
+const W3_2_NEUTRAL = [
+  'marketCap', 'enterpriseValue', 'eps', 'range52wPct', 'relativeVolume',
+  'insiderTransPct', 'longTermDebt', 'freeCashFlow', 'advDollar', 'atr', 'floatM',
+];
+
+const MUST_BE_NEUTRAL = [...KICKOFF_NEUTRAL, ...W3_2_NEUTRAL];
 
 const MUST_BE_HIGHER = [
   'grossMargin', 'opMargin', 'netMargin', 'roa', 'roe',

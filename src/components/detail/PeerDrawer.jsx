@@ -68,6 +68,27 @@ function DistributionStrip({ stat }) {
   );
 }
 
+/**
+ * What the metric IS, before anything about where it sits.
+ *
+ * W3.2 — this is the half that made every row worth tapping. It comes from
+ * the direction table, so a metric cannot be defined one way here and
+ * phrased another way in the stat row.
+ */
+function Explainer({ policy }) {
+  if (!policy) return null;
+  return (
+    <div data-testid="peer-explainer">
+      <p className="text-[11px] leading-relaxed text-neutral-300">{policy.meaning}</p>
+      {policy.caveat && (
+        <p className="mt-1.5 text-[10px] leading-relaxed text-neutral-500" data-testid="peer-caveat">
+          {policy.caveat}
+        </p>
+      )}
+    </div>
+  );
+}
+
 function PeerBody({ ticker, metricKey, open }) {
   // `enabled: open` is what makes this lazy — a closed drawer costs nothing.
   const { data, isLoading, isError, error } = usePeerStat(ticker, metricKey, { enabled: open });
@@ -84,15 +105,26 @@ function PeerBody({ ticker, metricKey, open }) {
   }
 
   const stat = data?.stat ?? null;
+  const policy = data?.policy ?? null;
 
-  // A refusal is an ANSWER, so it renders as prose rather than as an error.
+  // A refusal is an ANSWER, so it renders as prose rather than as an error —
+  // and the definition still leads, because that is why the row was tapped.
   if (!stat) {
-    return <p className="text-[11px] leading-relaxed text-neutral-400">{data?.note ?? 'No peer comparison available.'}</p>;
+    return (
+      <div>
+        <Explainer policy={policy} />
+        <p className={`text-[10px] leading-relaxed text-neutral-500 ${policy ? 'mt-2' : ''}`}>
+          {data?.note ?? 'No peer comparison available.'}
+        </p>
+      </div>
+    );
   }
 
   return (
     <div>
-      <p className="text-[11px] leading-relaxed text-neutral-300" data-testid="peer-phrase">
+      <Explainer policy={policy} />
+
+      <p className={`text-[11px] leading-relaxed text-neutral-300 ${policy ? 'mt-2.5' : ''}`} data-testid="peer-phrase">
         {stat.phrase}
       </p>
 

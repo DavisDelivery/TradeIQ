@@ -33,12 +33,22 @@ const stat = (over: Partial<Parameters<typeof buildPeerStat>[0]> = {}) =>
   });
 
 // ---------------------------------------------------------------------------
-// OWNER DECISION 2026-08-10: five metrics have no pool and get no rank
+// OWNER DECISION 2026-08-10: metrics with no pool get a value and no rank
+//
+// Five at the time. W3.2 made two more rows clickable — enterprise value and
+// 52-week position — and neither is a column in the export either, so they
+// join the same list rather than getting a bespoke excuse. 52w position in
+// particular is NOT derivable from the distance-from-high and
+// distance-from-low columns without putting a computed number in a pool of
+// reported ones.
 // ---------------------------------------------------------------------------
 describe('metrics with no peer pool get a value and no rank', () => {
-  const uncovered = ['evEbitda', 'pfcf', 'fcfYield', 'opMargin', 'quickRatio'];
+  const uncovered = [
+    'evEbitda', 'pfcf', 'fcfYield', 'opMargin', 'quickRatio',
+    'enterpriseValue', 'range52wPct',
+  ];
 
-  it('lists exactly the five the Finviz universe does not carry', () => {
+  it('lists exactly the metrics the Finviz universe does not carry', () => {
     expect([...NO_PEER_POOL].sort()).toEqual([...uncovered].sort());
   });
 

@@ -46,6 +46,13 @@ export const METRIC_TO_FINVIZ: Record<string, keyof FinvizRow> = {
   shortRatio: 'shortRatio',
   revenueGrowth: 'salesGrowthQoQPct',
   epsGrowth: 'epsGrowthQoQPct',
+  // W3.2 — rows that were previously not clickable at all. Market cap is an
+  // absolute magnitude but ranking it is the ONE case where size is the
+  // question being asked ("how big is this against its industry?"), so it
+  // pools rather than sitting in NOT_RANKABLE.
+  marketCap: 'marketCapM',
+  relativeVolume: 'relVolume',
+  insiderTransPct: 'insiderTransPct',
 };
 
 /** ATR% is derived, not a column, so it is read specially. */

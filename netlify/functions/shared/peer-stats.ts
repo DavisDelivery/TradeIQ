@@ -46,6 +46,33 @@ import { policyFor, comparativePhrase } from './metric-direction';
  */
 export const NO_PEER_POOL = new Set([
   'evEbitda', 'pfcf', 'fcfYield', 'opMargin', 'quickRatio',
+  // The universe carries no 52-week percentile — only distance-from-high and
+  // distance-from-low, which are a different quantity. Deriving one from the
+  // other would put a computed number in a pool of reported ones.
+  'range52wPct',
+  'enterpriseValue',
+]);
+
+/**
+ * Metrics where a peer rank would be a restatement of company size.
+ *
+ * PROFILE-1 W3.2, and a DIFFERENT refusal from NO_PEER_POOL — which is about
+ * the pool not existing. These are absolute magnitudes: dollars, share
+ * counts, per-share figures. Ranking free cash flow across an industry sorts
+ * by how big each company is, and dressing that up as a percentile implies
+ * the reader learned something about the business.
+ *
+ * EPS is here for a sharper reason than size: earnings per share depends on
+ * how many shares happen to exist, which is a financing decision. Two
+ * identical businesses can report EPS an order of magnitude apart after a
+ * split, so the cross-section is not measuring one thing at all.
+ *
+ * Every one of these still opens a drawer — the definition and the caveat
+ * are the answer, and each points at the comparable form of itself via
+ * `showBeside`.
+ */
+export const NOT_RANKABLE = new Set([
+  'eps', 'longTermDebt', 'freeCashFlow', 'advDollar', 'atr', 'floatM',
 ]);
 
 /** Minimum pool size for a percentile to be reported at all. */
