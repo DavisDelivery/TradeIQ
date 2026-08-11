@@ -47,6 +47,20 @@ export const DAILY_WINDOW = 126;
 export const MONTH_ENDS = ESTIMATION_MONTHS + 1;
 export const BENCH = 'SPY';
 
+/**
+ * The month-end closes required to produce the scoring window's returns.
+ *
+ * ONE function, so the fetch list and the factor window cannot disagree.
+ * A return is dated to the LATER of the two months it spans, so covering
+ * returns [end-35 .. end] needs closes [end-36 .. end] — one extra month at
+ * the START, not at the end. Getting that backwards is what made every
+ * ticker unscorable on the first production run.
+ */
+export function closeMonthsFor(scoringEndYm: number): number[] {
+  const first = addMonths(scoringEndYm, -ESTIMATION_MONTHS);
+  return Array.from({ length: MONTH_ENDS }, (_, i) => addMonths(first, i));
+}
+
 export interface RunQuietStrengthOpts {
   now?: Date;
   scanBudgetMs?: number;
@@ -257,11 +271,25 @@ export async function runQuietStrengthScan(
   }
 
   // --- dates --------------------------------------------------------------
+  //
+  // THE CLOSE WINDOW IS ANCHORED TO scoringEndYm, NOT TO `now`.
+  //
+  // It used to walk back from ymOf(now), which put the earliest close at
+  // scoringEndYm-35 instead of scoringEndYm-36. A return is dated to the
+  // LATER of its two months (see toMonthlyReturns), so the earliest close can
+  // only ever produce a return one month after itself — the window came up
+  // exactly one month short at the start and one month long at the end, and
+  // the alignment loop refused EVERY ticker as 'insufficient-history'. That
+  // is universe-independent and permanent: 0 of 1851 on 2026-08-10, and it
+  // would have been 0 every night after.
+  //
+  // Deriving the two windows separately from `now` is what let them drift, so
+  // the fetch list is now computed FROM the scoring window it has to feed.
   const daily = recentTradingDates(now, DAILY_WINDOW);
   const dailySet = new Set(daily);
   const monthEnds: string[] = [];
-  for (let i = MONTH_ENDS - 1; i >= 0; i--) {
-    const d = lastTradingDateOfMonth(addMonths(ymOf(now), -i - 1));
+  for (const ym of closeMonthsFor(scoringEndYm)) {
+    const d = lastTradingDateOfMonth(ym);
     if (!dailySet.has(d)) monthEnds.push(d);
   }
   const allDates = [...new Set([...monthEnds, ...daily])].sort();

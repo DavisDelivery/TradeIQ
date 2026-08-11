@@ -151,3 +151,76 @@ describe('formatters', () => {
     expect(fmtExposure({ exposure: null })).toBe('—');
   });
 });
+
+// ---------------------------------------------------------------------------
+// QS-1 POST-MORTEM — an empty board must say WHY it is empty
+// ---------------------------------------------------------------------------
+//
+// On 2026-08-10 the scan ran on schedule, scored 0 of 1851, recorded three
+// warnings naming the cause, and this view said "The first Quiet Strength
+// scan has not completed yet." Every fact needed to diagnose it existed; none
+// of it reached a screen. These tests hold that shut.
+
+describe('an unpublished run is reported, not disguised as "never ran"', () => {
+  const unpublished = (over = {}) => payload({
+    source: 'snapshot-unpublished',
+    rows: [],
+    note:
+      'A scan ran at 2026-08-10T22:41:00.103Z and scored 0 of 1851 names, so it ' +
+      'was not published. The reasons are listed below.',
+    warnings: [
+      'only 0 scorable names — below the 30-name floor',
+      'publish guard: empty result over 1851-ticker universe; refusing to swap _latest',
+    ],
+    lastAttempt: {
+      snapshotId: 'all-2026-08-10-2241',
+      generatedAt: '2026-08-10T22:41:00.103Z',
+      status: 'partial',
+      scored: 0,
+      universeChecked: 1851,
+      unscorableCounts: { 'insufficient-history': 1851 },
+    },
+    ...over,
+  });
+
+  const mock = (body) => vi.stubGlobal('fetch', vi.fn(async () => ({
+    ok: true, status: 200, json: async () => body,
+  })));
+
+  it('does NOT claim the scan has not completed', async () => {
+    mock(unpublished());
+    renderView();
+    await waitFor(() => expect(screen.getByText(/scored 0 of 1851/)).toBeInTheDocument());
+    expect(screen.queryByText(/has not completed yet/)).not.toBeInTheDocument();
+  });
+
+  it('renders every warning the run recorded', async () => {
+    mock(unpublished());
+    renderView();
+    await waitFor(() => expect(screen.getByText(/below the 30-name floor/)).toBeInTheDocument());
+    expect(screen.getByText(/refusing to swap _latest/)).toBeInTheDocument();
+  });
+
+  it('still shows the evidence banner on the empty path', async () => {
+    mock(unpublished());
+    renderView();
+    expect(await screen.findByText(/after haircut/)).toBeInTheDocument();
+  });
+
+  it('keeps "not completed yet" for a board that genuinely never ran', async () => {
+    // The distinction is the point — this message must remain TRUE somewhere.
+    mock(payload({ source: 'snapshot-missing', rows: [], warnings: [], note: undefined }));
+    renderView();
+    await waitFor(() =>
+      expect(screen.getByText(/has not completed yet/)).toBeInTheDocument());
+  });
+
+  it('does not say "no names cleared the screen" when the run was refused', async () => {
+    // The old fallback for any non-missing source, and it reads as a normal
+    // quiet night rather than a broken pipeline.
+    mock(unpublished());
+    renderView();
+    await waitFor(() => expect(screen.getByText(/scored 0 of 1851/)).toBeInTheDocument());
+    expect(screen.queryByText(/No names cleared the screen/)).not.toBeInTheDocument();
+  });
+});
