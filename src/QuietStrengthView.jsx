@@ -104,9 +104,16 @@ export function QuietStrengthView() {
 
       {!isLoading && rows.length === 0 && (
         <p className="text-sm text-neutral-400">
-          {data?.source === 'snapshot-missing'
-            ? 'The first Quiet Strength scan has not completed yet.'
-            : 'No names cleared the screen.'}
+          {/* The server's note is preferred because it distinguishes states
+              this component cannot: never-run, ran-and-refused-publication,
+              and ran-and-found-nothing all render an empty table, and only
+              the first is "has not completed yet". Saying that about a run
+              that failed for a stated reason is how the QS-1 defect stayed
+              invisible for a day. */}
+          {data?.note
+            ?? (data?.source === 'snapshot-missing'
+              ? 'The first Quiet Strength scan has not completed yet.'
+              : 'No names cleared the screen.')}
         </p>
       )}
 
