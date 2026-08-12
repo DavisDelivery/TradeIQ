@@ -1,0 +1,49 @@
+{
+  "generated_at": "2026-08-12T00:39:34",
+  "horizons": {
+    "1w": {
+      "SPY": {
+        "signal": {
+          "n": 1,
+          "mean": -23.154,
+          "se": null,
+          "t": null,
+          "n_eff": 1,
+          "clusters": 1
+        },
+        "control": {
+          "n": 3,
+          "mean": -3.74,
+          "median": -4.046,
+          "se": 1.074,
+          "t": -3.48,
+          "win_pct": 0.0,
+          "clusters": 3,
+          "n_eff": 3
+        },
+        "signal_minus_control_pp": -19.414
+      },
+      "XLY": {
+        "signal": {
+          "n": 1,
+          "mean": -24.058,
+          "se": null,
+          "t": null,
+          "n_eff": 1,
+          "clusters": 1
+        },
+        "control": {
+          "n": 3,
+          "mean": -4.643,
+          "median": -4.949,
+          "se": 1.074,
+          "t": -4.32,
+          "win_pct": 0.0,
+          "clusters": 3,
+          "n_eff": 3
+        },
+        "signal_minus_control_pp": -19.415
+      }
+    }
+  }
+}
