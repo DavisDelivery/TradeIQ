@@ -20,6 +20,7 @@
 
 import React, { useMemo, useState } from 'react';
 import { chartTheme } from '../../lib/chartTheme.js';
+import { annualFromQuarterly } from '../../../netlify/functions/shared/quarterly-fundamentals';
 import {
   BarChart, Bar, LineChart, Line, ComposedChart,
   XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Legend, ReferenceLine,
@@ -45,9 +46,19 @@ const TABS = [
   { id: 'leverage', label: 'D/E',      kind: 'line',    field: 'debtToEquity', accessor: (q) => q.debtToEquity, unit: 'ratio', color: 'down' },
 ];
 
+// FUND-1: ranges are expressed in YEARS so one definition serves both the
+// quarterly and the annual series. Previously `keep` was a raw quarter count
+// (5Y = 20), which meant nothing once an annual view existed.
 const RANGES = [
-  { id: '5Y', label: '5Y', keep: 20 },
-  { id: 'ALL', label: 'All', keep: Infinity },
+  { id: '5Y', label: '5Y', years: 5 },
+  { id: 'ALL', label: 'All', years: Infinity },
+];
+
+// Quarterly vs annual. Annual sums flows, revenue-weights margins, and takes
+// the year-end value for debt/equity — see annualFromQuarterly.
+const PERIODICITIES = [
+  { id: 'Q', label: 'Q' },
+  { id: 'Y', label: 'Y' },
 ];
 
 function fmtUSD(v) {
@@ -124,6 +135,7 @@ export function FundamentalsChart({ ticker }) {
   const { data, isLoading, isError, error, refetch } = useStockDetail(ticker);
   const [tabId, setTabId] = useState('revenue');
   const [rangeId, setRangeId] = useState('5Y');
+  const [periodId, setPeriodId] = useState('Q');
 
   const tab = TABS.find((t) => t.id === tabId);
   const range = RANGES.find((r) => r.id === rangeId);
@@ -140,11 +152,20 @@ export function FundamentalsChart({ ticker }) {
   }, [data]);
   const _reason = data?.fundamentalsHistory?._reason;
 
+  // Annual rollup happens BEFORE the range slice, so "5Y" means five years
+  // in either mode rather than five rows.
+  const series = useMemo(
+    () => (periodId === 'Y' ? annualFromQuarterly(allQuarters) : allQuarters),
+    [allQuarters, periodId],
+  );
+
   const rows = useMemo(() => {
-    const slice = range.keep === Infinity ? allQuarters : allQuarters.slice(-range.keep);
+    const perYear = periodId === 'Y' ? 1 : 4;
+    const keep = range.years === Infinity ? Infinity : range.years * perYear;
+    const slice = keep === Infinity ? series : series.slice(-keep);
     if (tab.kind === 'bar' && tab.unit === 'usd') return withYoYGrowth(slice, tab.accessor);
     return slice;
-  }, [allQuarters, range, tab]);
+  }, [series, range, tab, periodId]);
 
   // Honest emptiness check: is every value in the active series null?
   const seriesAllNull = useMemo(() => {
@@ -181,6 +202,29 @@ export function FundamentalsChart({ ticker }) {
                   }
                 >
                   {t.label}
+                </button>
+              );
+            })}
+          </div>
+          <div role="tablist" aria-label="Periodicity" className="flex gap-1 ml-2">
+            {PERIODICITIES.map((p) => {
+              const active = p.id === periodId;
+              return (
+                <button
+                  key={p.id}
+                  type="button"
+                  role="tab"
+                  aria-selected={active}
+                  data-testid={`fund-period-${p.id}`}
+                  onClick={() => setPeriodId(p.id)}
+                  className={
+                    'px-2 h-7 text-[10px] font-mono uppercase tracking-widest border transition-colors ' +
+                    (active
+                      ? 'border-emerald-500/50 text-emerald-400 bg-emerald-500/10'
+                      : 'border-neutral-800 text-neutral-500 hover:text-neutral-300')
+                  }
+                >
+                  {p.label}
                 </button>
               );
             })}
@@ -253,7 +297,16 @@ export function FundamentalsChart({ ticker }) {
 
       {!isLoading && !isError && allQuarters.length > 0 && (
         <div className="mt-2 text-[9px] uppercase tracking-widest font-mono text-neutral-600 text-right">
-          {allQuarters.length} quarters · oldest {allQuarters[0]?.endDate} · latest {allQuarters[allQuarters.length - 1]?.endDate}
+          {rows.length} {periodId === 'Y' ? 'years' : 'quarters'} shown
+          {series.length > rows.length ? ` of ${series.length}` : ''}
+          {' · oldest '}{rows[0]?.endDate}{' · latest '}{rows[rows.length - 1]?.endDate}
+          {/* Say so when ALL and 5Y are the same picture, rather than
+              letting the button look broken — that IS the reported bug. */}
+          {range.years === Infinity && series.length <= 20 && (
+            <span className="block text-neutral-600 normal-case tracking-normal">
+              all available history is under 5 years — same as 5Y
+            </span>
+          )}
         </div>
       )}
     </section>

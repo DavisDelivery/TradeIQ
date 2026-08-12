@@ -92,3 +92,92 @@ function round(x: number, dp: number): number {
   const f = 10 ** dp;
   return Math.round(x * f) / f;
 }
+
+
+/**
+ * FUND-1 (2026-08-07) — roll quarters up into fiscal years.
+ *
+ * The aggregation rule DIFFERS BY METRIC TYPE, and getting it uniform would
+ * be silently wrong:
+ *
+ *   FLOWS (revenue, EPS, free cash flow) SUM across the four quarters. An
+ *   average would report a quarterly run-rate under an annual label.
+ *
+ *   MARGINS are REVENUE-WEIGHTED, not simple averages. margin_q =
+ *   profit_q / revenue_q, so the true annual margin is
+ *   Σprofit / Σrevenue = Σ(margin_q · revenue_q) / Σrevenue_q. A plain mean
+ *   over-weights small quarters — for a seasonal retailer whose Q4 is half
+ *   the year, the unweighted number can be off by hundreds of basis points.
+ *
+ *   DEBT-TO-EQUITY is a BALANCE-SHEET ratio, a snapshot rather than a flow.
+ *   It takes the LAST quarter of the year. Summing it would be meaningless
+ *   and averaging it would smooth away the year-end position the user
+ *   actually wants to see.
+ *
+ * PARTIAL YEARS ARE DROPPED. A fiscal year with fewer than four reported
+ * quarters is not an annual figure; rendering one next to complete years
+ * invites reading a stub as a collapse in revenue.
+ */
+export function annualFromQuarterly(
+  quarters: QuarterlyFundamental[] | undefined,
+): QuarterlyFundamental[] {
+  if (!quarters || quarters.length === 0) return [];
+
+  const byYear = new Map<number, QuarterlyFundamental[]>();
+  for (const q of quarters) {
+    const fy = q.fiscalYear;
+    if (typeof fy !== 'number' || !Number.isFinite(fy)) continue;
+    const arr = byYear.get(fy) ?? [];
+    arr.push(q);
+    byYear.set(fy, arr);
+  }
+
+  const out: QuarterlyFundamental[] = [];
+  for (const [fy, rows] of [...byYear.entries()].sort((a, b) => a[0] - b[0])) {
+    if (rows.length < 4) continue; // partial year — not an annual number
+    const ordered = [...rows].sort((a, b) =>
+      String(a.endDate ?? '').localeCompare(String(b.endDate ?? '')),
+    );
+    const last = ordered[ordered.length - 1];
+
+    out.push({
+      period: `FY ${fy}`,
+      endDate: last.endDate,
+      filingDate: last.filingDate,
+      fiscalQuarter: null,        // an annual row has no quarter
+      fiscalYear: fy,
+      revenue: sum(ordered.map((r) => r.revenue)),
+      eps: sum(ordered.map((r) => r.eps)),
+      freeCashFlow: sum(ordered.map((r) => r.freeCashFlow)),
+      grossMargin: revenueWeighted(ordered, (r) => r.grossMargin),
+      opMargin: revenueWeighted(ordered, (r) => r.opMargin),
+      netMargin: revenueWeighted(ordered, (r) => r.netMargin),
+      debtToEquity: last.debtToEquity,  // point-in-time, year-end
+    });
+  }
+  return out;
+}
+
+/** Sum, or null when NOTHING was reported — never a fabricated zero. */
+function sum(vals: Array<number | null>): number | null {
+  const nums = vals.filter((v): v is number => typeof v === 'number' && Number.isFinite(v));
+  return nums.length === 0 ? null : nums.reduce((a, b) => a + b, 0);
+}
+
+/** Revenue-weighted mean of a margin series. See the header for why. */
+function revenueWeighted(
+  rows: QuarterlyFundamental[],
+  pick: (r: QuarterlyFundamental) => number | null,
+): number | null {
+  let num = 0;
+  let den = 0;
+  for (const r of rows) {
+    const m = pick(r);
+    const rev = r.revenue;
+    if (typeof m !== 'number' || !Number.isFinite(m)) continue;
+    if (typeof rev !== 'number' || !Number.isFinite(rev) || rev <= 0) continue;
+    num += m * rev;
+    den += rev;
+  }
+  return den > 0 ? num / den : null;
+}

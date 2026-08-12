@@ -55,6 +55,12 @@ function fredKey(): string {
 // Bars
 // ---------------------------------------------------------------------------
 
+/**
+ * Quarters of statement history to request. 40 ≈ 10 years; the provider
+ * returns fewer when the company is younger, which the UI reports honestly.
+ */
+export const STATEMENT_QUARTERS = 40;
+
 export interface Bar {
   t: number;
   o: number;
@@ -475,9 +481,16 @@ export async function getFundamentals(
       // LIVE mode — ratios + three statement endpoints in parallel.
       const [ratiosResp, incomeResp, balanceResp, cashflowResp] = await Promise.all([
         fetchRatiosWithStatus(ticker),
-        fetchIncomeStatementsWithStatus(ticker, { limit: 8 }),
-        fetchBalanceSheetsWithStatus(ticker, { limit: 8 }),
-        fetchCashFlowStatementsWithStatus(ticker, { limit: 8 }),
+        // FUND-1 (2026-08-07): was `limit: 8`. Eight quarters is two years,
+        // which made the detail panel's 5Y button a lie and its ALL button a
+        // no-op — both rendered the same 8 bars, which is what "ALL doesn't
+        // work" actually was. 40 quarters = 10 years, enough for 5Y to mean
+        // 5Y and for ALL to show more than 5Y. The pit-cache key carries
+        // `lim=<n>`, so this reads through to a fresh entry rather than
+        // serving the old 8-row payload.
+        fetchIncomeStatementsWithStatus(ticker, { limit: STATEMENT_QUARTERS }),
+        fetchBalanceSheetsWithStatus(ticker, { limit: STATEMENT_QUARTERS }),
+        fetchCashFlowStatementsWithStatus(ticker, { limit: STATEMENT_QUARTERS }),
       ]);
       // Live mode: rate-limit-exhausted or hard-error on statements is a
       // failure (return null). Ratios alone failing is tolerable — we

@@ -83,3 +83,98 @@ describe('quarterlyFromStatements', () => {
     expect(row.period).toBe('2024-12-31');
   });
 });
+
+// FUND-1 (2026-08-07) — annual rollup.
+//
+// Reported bug: "ALL doesn't work, and I want a yearly button." ALL was not
+// broken — the provider only ever returned 8 quarters, so 5Y and ALL drew
+// the same 8 bars. The provider limit is now 40; these tests pin the annual
+// aggregation, whose rules differ by metric type in ways a uniform average
+// would silently get wrong.
+import { annualFromQuarterly } from '../quarterly-fundamentals';
+
+function aq(fy: number, fq: number, over: Record<string, unknown> = {}) {
+  return {
+    period: `Q${fq} ${fy}`,
+    endDate: `${fy}-${String(fq * 3).padStart(2, '0')}-30`,
+    filingDate: null,
+    fiscalQuarter: fq,
+    fiscalYear: fy,
+    revenue: 100,
+    eps: 1,
+    grossMargin: 40,
+    opMargin: 20,
+    netMargin: 10,
+    freeCashFlow: 50,
+    debtToEquity: 1.0,
+    ...over,
+  } as any;
+}
+
+describe('annualFromQuarterly', () => {
+  it('SUMS flow metrics across the four quarters', () => {
+    const y = annualFromQuarterly([aq(2025, 1), aq(2025, 2), aq(2025, 3), aq(2025, 4)]);
+    expect(y).toHaveLength(1);
+    expect(y[0].revenue).toBe(400);
+    expect(y[0].eps).toBe(4);
+    expect(y[0].freeCashFlow).toBe(200);
+    expect(y[0].period).toBe('FY 2025');
+    expect(y[0].fiscalQuarter).toBeNull();
+  });
+
+  it('REVENUE-WEIGHTS margins rather than averaging them', () => {
+    // Seasonal retailer: Q4 is 70% of the year at a lower margin. A plain
+    // mean says 40%; the truth is much closer to Q4's 20%.
+    const rows = [
+      aq(2025, 1, { revenue: 100, grossMargin: 60 }),
+      aq(2025, 2, { revenue: 100, grossMargin: 60 }),
+      aq(2025, 3, { revenue: 100, grossMargin: 60 }),
+      aq(2025, 4, { revenue: 700, grossMargin: 20 }),
+    ];
+    const y = annualFromQuarterly(rows);
+    const plainMean = (60 + 60 + 60 + 20) / 4; // 50 — wrong
+    const weighted = (60 * 300 + 20 * 700) / 1000; // 32 — right
+    expect(y[0].grossMargin).toBeCloseTo(weighted, 8);
+    expect(y[0].grossMargin).not.toBeCloseTo(plainMean, 1);
+  });
+
+  it('takes YEAR-END debt/equity, not a sum or an average', () => {
+    // A balance-sheet ratio is a snapshot. Summing it is meaningless and
+    // averaging hides the year-end position the user wants.
+    const y = annualFromQuarterly([
+      aq(2025, 1, { debtToEquity: 3 }),
+      aq(2025, 2, { debtToEquity: 3 }),
+      aq(2025, 3, { debtToEquity: 3 }),
+      aq(2025, 4, { debtToEquity: 0.5 }),
+    ]);
+    expect(y[0].debtToEquity).toBe(0.5);
+  });
+
+  it('DROPS partial years — a 2-quarter stub is not an annual figure', () => {
+    // Rendering one beside complete years reads as a revenue collapse.
+    const y = annualFromQuarterly([
+      aq(2024, 1), aq(2024, 2), aq(2024, 3), aq(2024, 4),
+      aq(2025, 1), aq(2025, 2),
+    ]);
+    expect(y.map((r) => r.fiscalYear)).toEqual([2024]);
+  });
+
+  it('returns null rather than 0 when a metric was never reported', () => {
+    const y = annualFromQuarterly([
+      aq(2025, 1, { freeCashFlow: null }), aq(2025, 2, { freeCashFlow: null }),
+      aq(2025, 3, { freeCashFlow: null }), aq(2025, 4, { freeCashFlow: null }),
+    ]);
+    expect(y[0].freeCashFlow).toBeNull();
+    expect(y[0].revenue).toBe(400);
+  });
+
+  it('orders years oldest-first and handles empty input', () => {
+    const y = annualFromQuarterly([
+      aq(2025, 1), aq(2025, 2), aq(2025, 3), aq(2025, 4),
+      aq(2024, 1), aq(2024, 2), aq(2024, 3), aq(2024, 4),
+    ]);
+    expect(y.map((r) => r.fiscalYear)).toEqual([2024, 2025]);
+    expect(annualFromQuarterly([])).toEqual([]);
+    expect(annualFromQuarterly(undefined)).toEqual([]);
+  });
+});

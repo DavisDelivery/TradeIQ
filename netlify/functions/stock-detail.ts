@@ -207,7 +207,10 @@ export const handler: Handler = async (event) => {
     // Phase 6 PR-D: the quarterly chart series is now a pure transform over
     // the statements bundle that 4w's getFundamentals already returns — no
     // second fetch, no remaining VX dependency.
-    const quarterly: QuarterlyFundamental[] = quarterlyFromStatements(fund?.statements, 20);
+    // FUND-1: no client-side cap. The provider decides how much history
+    // exists; truncating to 20 here is what made ALL indistinguishable
+    // from 5Y even once the provider limit was raised.
+    const quarterly: QuarterlyFundamental[] = quarterlyFromStatements(fund?.statements, Infinity);
 
     if (!bars || bars.length === 0) {
       log.warn('no_bars', { ticker, durationMs: Date.now() - start });

@@ -67,11 +67,29 @@ describe('FundamentalsChart', () => {
   it('range toggle 5Y → All shows more quarters when available', async () => {
     const quarterly = Array.from({ length: 40 }, (_, i) => makeQuarter(i));
     renderChart({ ticker: 'AAPL' }, { ok: true, ticker: 'AAPL', fundamentalsHistory: { quarterly } });
-    await waitFor(() => expect(screen.getByText(/40 quarters/)).toBeInTheDocument());
-    // 5Y is the default range — chart slices to 20.
+    // 5Y is the default: 20 of the 40 available quarters.
+    await waitFor(() => expect(screen.getByText(/20 quarters shown of 40/)).toBeInTheDocument());
     expect(screen.getByRole('tab', { name: '5Y' })).toHaveAttribute('aria-selected', 'true');
     fireEvent.click(screen.getByRole('tab', { name: 'All' }));
     expect(screen.getByRole('tab', { name: 'All' })).toHaveAttribute('aria-selected', 'true');
+    // ALL genuinely widens the window — the reported bug was that it did not.
+    expect(screen.getByText(/40 quarters shown/)).toBeInTheDocument();
+  });
+
+  // FUND-1 — the reported ask: "ALL doesn't work and I want a yearly button".
+  it('Y toggle switches the series to fiscal years', async () => {
+    // 8 complete fiscal years of quarters.
+    const quarterly = Array.from({ length: 32 }, (_, i) => makeQuarter(i));
+    renderChart({ ticker: 'AAPL' }, { ok: true, ticker: 'AAPL', fundamentalsHistory: { quarterly } });
+    await waitFor(() => expect(screen.getByText(/quarters shown/)).toBeInTheDocument());
+
+    fireEvent.click(screen.getByTestId('fund-period-Y'));
+    // 5Y in annual mode is 5 ROWS, not 5 quarters — the range is expressed
+    // in years so one definition serves both modes.
+    expect(screen.getByText(/5 years shown of 8/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('tab', { name: 'All' }));
+    expect(screen.getByText(/8 years shown/)).toBeInTheDocument();
   });
 
   it('shows "no data in this window" when every value in the active series is null', async () => {
