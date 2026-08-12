@@ -12,7 +12,6 @@ const mockUseRegime = vi.fn();
 const mockUseLiveQuotes = vi.fn();
 const mockUseDeskStats = vi.fn();
 const mockUseEarningsRadar = vi.fn();
-const mockUseProphet = vi.fn();
 const mockUseStopWatch = vi.fn();
 
 vi.mock('../hooks/useBreakpoint.js', () => ({
@@ -30,7 +29,6 @@ vi.mock('../hooks/useEarningsRadar.js', () => ({ useEarningsRadar: (...a) => moc
 // deliberately omits) — stub it; it renders null until a broker sync exists
 // anyway, and has no assertions here.
 vi.mock('../components/desk/BrokerPanel.jsx', () => ({ BrokerPanel: () => null }));
-vi.mock('../hooks/useProphet.js', () => ({ useProphet: (...a) => mockUseProphet(...a) }));
 // STOP-1 — PositionsPanel reads the server-side stop watcher through a raw
 // useQuery; this harness omits the QueryClientProvider on purpose, so drive
 // the watcher's state directly.
@@ -82,8 +80,6 @@ function seedDefaults() {
     isLoading: false,
     error: null,
   });
-  // Target board retired (AUDIT-1) — prophet is the remaining signal source.
-  mockUseProphet.mockReturnValue({ data: { picks: [{ ticker: 'AAPL', conviction: 'high' }] } });
   mockUseStopWatch.mockReturnValue({
     breaches: [], breachByTradeId: {}, lastObserved: null,
     stale: false, watching: true, error: null, isLoading: false,
@@ -141,11 +137,15 @@ describe('DeskView — desktop', () => {
     expect(within(msft).getAllByText('—').length).toBeGreaterThanOrEqual(4);
   });
 
-  it('signal cell carries the board verdict chip (evidence, not prediction)', () => {
+  // The Signal column is gone (2026-08-07): prophet was the last board that
+  // could populate it, and every ranking board is now retired for want of a
+  // measured edge. A chip with nothing behind it is decoration implying
+  // evidence, so the column was removed rather than left empty.
+  it('renders no signal column — every board that fed it has been retired', () => {
     render(<DeskView />);
-    const aapl = screen.getByTestId('watch-row-AAPL');
-    expect(within(aapl).getByText('PRO high')).toBeInTheDocument();
-    expect(within(aapl).getByTestId('verdict-chip-prophet')).toBeInTheDocument();
+    const watchlist = screen.getByTestId('desk-watchlist');
+    expect(within(watchlist).queryByText('Signal')).not.toBeInTheDocument();
+    expect(within(watchlist).queryByTestId(/verdict-chip-/)).not.toBeInTheDocument();
   });
 
   it('watchlist columns sort on header click (Last ascends/descends)', () => {
