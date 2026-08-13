@@ -10,6 +10,7 @@
 import React from 'react';
 import { LogButton } from '../LogButton.jsx';
 import { OrderButtons } from '../OrderButtons.jsx';
+import { VerdictChip } from '../VerdictChip.jsx';
 import { fmt } from '../../lib/formatters.jsx';
 import { ScoreBadge } from './ScoreBadge.jsx';
 
@@ -78,6 +79,15 @@ export function StockDetailHero({ board, ticker, rationale, detail, row, thesis 
             </span>
           </>
         )}
+      </div>
+
+      {/* BROKER-1 W1 — the edge statement sits directly ABOVE the order row,
+          on its own line, and renders whether or not a thesis or research
+          panel is present. Those panels were the only place a chip appeared
+          before, so boards without one put a Buy button on screen with no
+          measured-edge statement anywhere near it. */}
+      <div className="mt-2" data-testid="hero-verdict">
+        <VerdictChip board={board} />
       </div>
 
       <div className="mt-2 flex items-center gap-2 flex-wrap">
