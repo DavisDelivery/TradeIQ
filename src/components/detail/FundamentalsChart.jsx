@@ -45,10 +45,98 @@ const TABS = [
   { id: 'leverage', label: 'D/E',      kind: 'line',    field: 'debtToEquity', accessor: (q) => q.debtToEquity, unit: 'ratio', color: 'down' },
 ];
 
+// Windows are expressed in YEARS so the same choice means the same span in
+// either period mode: 5Y is 20 quarterly bars or 5 annual ones.
 const RANGES = [
-  { id: '5Y', label: '5Y', keep: 20 },
-  { id: 'ALL', label: 'All', keep: Infinity },
+  { id: '5Y', label: '5Y', years: 5 },
+  { id: 'ALL', label: 'All', years: Infinity },
 ];
+
+const PERIODS = [
+  { id: 'Q', label: 'Qtr' },
+  { id: 'FY', label: 'Annual' },
+];
+
+/**
+ * Roll quarters into fiscal years. EVERY METRIC AGGREGATES DIFFERENTLY, and
+ * getting that wrong is the whole risk here — a plain mean would be wrong for
+ * all five series.
+ *
+ *   revenue / eps / freeCashFlow  SUM. They are flows.
+ *   margins                       REVENUE-WEIGHTED mean, which is not an
+ *                                 approximation of the annual margin — it is
+ *                                 exactly equal to it, because
+ *                                 Σ(margin_q × rev_q) / Σ(rev_q) is
+ *                                 Σ(profit_q) / Σ(rev_q). A plain mean would
+ *                                 let a tiny quarter's 80% margin outvote a
+ *                                 huge quarter's 20%.
+ *   debtToEquity                  LAST quarter of the year. It is a balance
+ *                                 sheet reading — a stock, not a flow — so
+ *                                 summing is meaningless and averaging blurs
+ *                                 a year-end position into a year-long one.
+ *
+ * INCOMPLETE YEARS ARE DROPPED. A fiscal year with three quarters in it
+ * renders as a collapse next to full years, which is a lie told by a bar
+ * chart. The current year is therefore absent from the annual view until it
+ * closes; the quarterly view still shows it, and the footer says how many
+ * were dropped so the absence is stated rather than silently applied.
+ *
+ * A flow with ANY null quarter yields null rather than a short sum, for the
+ * same reason: three quarters of revenue labelled as a year is understated
+ * by a quarter and looks like a decline.
+ */
+export function toFiscalYears(quarters) {
+  const byYear = new Map();
+  for (const q of quarters) {
+    const fy = q?.fiscalYear;
+    if (typeof fy !== 'number' || !Number.isFinite(fy)) continue;
+    if (!byYear.has(fy)) byYear.set(fy, []);
+    byYear.get(fy).push(q);
+  }
+
+  const sumOrNull = (rows, get) => {
+    const vals = rows.map(get);
+    if (vals.some((v) => v == null || !Number.isFinite(v))) return null;
+    return vals.reduce((a, b) => a + b, 0);
+  };
+
+  const weighted = (rows, get) => {
+    let num = 0;
+    let den = 0;
+    for (const r of rows) {
+      const m = get(r);
+      const w = r.revenue;
+      if (m == null || !Number.isFinite(m)) continue;
+      if (w == null || !Number.isFinite(w) || w <= 0) continue;
+      num += m * w;
+      den += w;
+    }
+    return den > 0 ? num / den : null;
+  };
+
+  const out = [];
+  for (const [fy, rowsRaw] of [...byYear.entries()].sort((a, b) => a[0] - b[0])) {
+    if (rowsRaw.length !== 4) continue; // incomplete fiscal year
+    const rows = [...rowsRaw].sort((a, b) =>
+      String(a.endDate ?? '').localeCompare(String(b.endDate ?? '')));
+    const last = rows[rows.length - 1];
+    out.push({
+      period: `FY ${fy}`,
+      endDate: last.endDate,
+      fiscalYear: fy,
+      fiscalQuarter: null,
+      filingDate: last.filingDate ?? null,
+      revenue: sumOrNull(rows, (r) => r.revenue),
+      eps: sumOrNull(rows, (r) => r.eps),
+      freeCashFlow: sumOrNull(rows, (r) => r.freeCashFlow),
+      grossMargin: weighted(rows, (r) => r.grossMargin),
+      opMargin: weighted(rows, (r) => r.opMargin),
+      netMargin: weighted(rows, (r) => r.netMargin),
+      debtToEquity: last.debtToEquity ?? null,
+    });
+  }
+  return out;
+}
 
 function fmtUSD(v) {
   if (v == null || !Number.isFinite(v)) return '';
@@ -86,10 +174,16 @@ function tooltipFmt(unit, label) {
   };
 }
 
-/** Add a YoY growth field to every row (4 quarters back). */
-function withYoYGrowth(rows, accessor) {
+/**
+ * Add a YoY growth field to every row.
+ *
+ * `back` is how many rows ago "a year ago" is: 4 for quarters, 1 for fiscal
+ * years. Leaving it at 4 in the annual view would have compared each year to
+ * four years earlier and labelled the result YoY.
+ */
+function withYoYGrowth(rows, accessor, back = 4) {
   return rows.map((r, i, all) => {
-    const ago = all[i - 4];
+    const ago = all[i - back];
     const cur = accessor(r);
     const prev = ago ? accessor(ago) : null;
     const yoy = cur != null && prev != null && prev !== 0 ? ((cur - prev) / Math.abs(prev)) * 100 : null;
@@ -124,9 +218,11 @@ export function FundamentalsChart({ ticker }) {
   const { data, isLoading, isError, error, refetch } = useStockDetail(ticker);
   const [tabId, setTabId] = useState('revenue');
   const [rangeId, setRangeId] = useState('5Y');
+  const [periodId, setPeriodId] = useState('Q');
 
   const tab = TABS.find((t) => t.id === tabId);
   const range = RANGES.find((r) => r.id === rangeId);
+  const annual = periodId === 'FY';
 
   // Defensive ascending sort by endDate. The component assumes oldest→newest
   // (slice(-keep) = most recent window, [0]=oldest label, [last]=latest), but
@@ -140,11 +236,32 @@ export function FundamentalsChart({ ticker }) {
   }, [data]);
   const _reason = data?.fundamentalsHistory?._reason;
 
+  // The full series in the ACTIVE period, before the window is applied — the
+  // footer describes this, so it reports what exists rather than what is shown.
+  const allPeriods = useMemo(
+    () => (annual ? toFiscalYears(allQuarters) : allQuarters),
+    [allQuarters, annual],
+  );
+
+  // Fiscal years present in the raw quarters but dropped as incomplete. Stated
+  // in the footer so "where is this year?" has an answer on the screen.
+  const droppedYears = useMemo(() => {
+    if (!annual) return 0;
+    const seen = new Set(
+      allQuarters.map((q) => q?.fiscalYear).filter((y) => typeof y === 'number'),
+    );
+    return seen.size - allPeriods.length;
+  }, [annual, allQuarters, allPeriods]);
+
   const rows = useMemo(() => {
-    const slice = range.keep === Infinity ? allQuarters : allQuarters.slice(-range.keep);
-    if (tab.kind === 'bar' && tab.unit === 'usd') return withYoYGrowth(slice, tab.accessor);
+    const keep = range.years === Infinity ? Infinity : range.years * (annual ? 1 : 4);
+    const slice = keep === Infinity ? allPeriods : allPeriods.slice(-keep);
+    // YoY on annual rows compares to the PRIOR ROW, not four rows back.
+    if (tab.kind === 'bar' && tab.unit === 'usd') {
+      return withYoYGrowth(slice, tab.accessor, annual ? 1 : 4);
+    }
     return slice;
-  }, [allQuarters, range, tab]);
+  }, [allPeriods, range, tab, annual]);
 
   // Honest emptiness check: is every value in the active series null?
   const seriesAllNull = useMemo(() => {
@@ -181,6 +298,29 @@ export function FundamentalsChart({ ticker }) {
                   }
                 >
                   {t.label}
+                </button>
+              );
+            })}
+          </div>
+          <div role="tablist" aria-label="Period" className="flex gap-1 ml-2">
+            {PERIODS.map((p) => {
+              const active = p.id === periodId;
+              return (
+                <button
+                  key={p.id}
+                  type="button"
+                  role="tab"
+                  aria-selected={active}
+                  data-testid={`period-${p.id}`}
+                  onClick={() => setPeriodId(p.id)}
+                  className={
+                    'px-2 h-7 text-[10px] font-mono uppercase tracking-widest border transition-colors ' +
+                    (active
+                      ? 'border-emerald-500/60 text-emerald-300 bg-emerald-500/10'
+                      : 'border-neutral-800 text-neutral-500 hover:text-neutral-200 hover:border-neutral-600')
+                  }
+                >
+                  {p.label}
                 </button>
               );
             })}
@@ -234,26 +374,30 @@ export function FundamentalsChart({ ticker }) {
             </button>
           </div>
         )}
-        {!isLoading && !isError && allQuarters.length === 0 && (
+        {!isLoading && !isError && allPeriods.length === 0 && (
           <div className="h-full flex items-center justify-center text-center px-3 text-[11px] font-mono uppercase tracking-widest text-neutral-600">
-            no quarterly history{_reason ? ` — ${_reason}` : ''}
+            {annual && allQuarters.length > 0
+              ? 'no complete fiscal year yet — switch to Qtr'
+              : `no quarterly history${_reason ? ` — ${_reason}` : ''}`}
           </div>
         )}
-        {!isLoading && !isError && allQuarters.length > 0 && seriesAllNull && (
+        {!isLoading && !isError && allPeriods.length > 0 && seriesAllNull && (
           <div className="h-full flex items-center justify-center text-center px-3 text-[11px] font-mono uppercase tracking-widest text-neutral-600">
             no {tab.label.toLowerCase()} data in this window
           </div>
         )}
-        {!isLoading && !isError && allQuarters.length > 0 && !seriesAllNull && (
+        {!isLoading && !isError && allPeriods.length > 0 && !seriesAllNull && (
           <ResponsiveContainer width="100%" height="100%">
             <FundamentalsBody tab={tab} rows={rows} />
           </ResponsiveContainer>
         )}
       </div>
 
-      {!isLoading && !isError && allQuarters.length > 0 && (
-        <div className="mt-2 text-[9px] uppercase tracking-widest font-mono text-neutral-600 text-right">
-          {allQuarters.length} quarters · oldest {allQuarters[0]?.endDate} · latest {allQuarters[allQuarters.length - 1]?.endDate}
+      {!isLoading && !isError && allPeriods.length > 0 && (
+        <div className="mt-2 text-[9px] uppercase tracking-widest font-mono text-neutral-600 text-right" data-testid="fundamentals-footer">
+          {allPeriods.length} {annual ? 'fiscal years' : 'quarters'} · oldest{' '}
+          {allPeriods[0]?.endDate} · latest {allPeriods[allPeriods.length - 1]?.endDate}
+          {annual && droppedYears > 0 && ` · ${droppedYears} incomplete year${droppedYears === 1 ? '' : 's'} omitted`}
         </div>
       )}
     </section>

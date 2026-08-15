@@ -96,3 +96,84 @@ describe('FundamentalsChart', () => {
     expect(screen.getByRole('button', { name: /retry/i })).toBeInTheDocument();
   });
 });
+
+// ---------------------------------------------------------------------------
+// Reported: "All time button doesn't work and I want to look at years too."
+// ---------------------------------------------------------------------------
+describe('period toggle — quarters vs fiscal years', () => {
+  // 12 quarters = FY2021, FY2022, FY2023 complete.
+  const twelve = Array.from({ length: 12 }, (_, i) => makeQuarter(i));
+  const body = { ok: true, ticker: 'AAA', fundamentalsHistory: { quarterly: twelve } };
+
+  it('starts on quarters and says so', async () => {
+    renderChart({ ticker: 'AAA' }, body);
+    const foot = await screen.findByTestId('fundamentals-footer');
+    expect(foot.textContent).toMatch(/12 quarters/i);
+  });
+
+  it('switching to Annual rolls 12 quarters into 3 fiscal years', async () => {
+    renderChart({ ticker: 'AAA' }, body);
+    await screen.findByTestId('fundamentals-footer');
+    fireEvent.click(screen.getByTestId('period-FY'));
+    await waitFor(() =>
+      expect(screen.getByTestId('fundamentals-footer').textContent).toMatch(/3 fiscal years/i));
+  });
+
+  it('switching back to Qtr restores the quarterly count', async () => {
+    renderChart({ ticker: 'AAA' }, body);
+    await screen.findByTestId('fundamentals-footer');
+    fireEvent.click(screen.getByTestId('period-FY'));
+    await waitFor(() =>
+      expect(screen.getByTestId('fundamentals-footer').textContent).toMatch(/fiscal years/i));
+    fireEvent.click(screen.getByTestId('period-Q'));
+    await waitFor(() =>
+      expect(screen.getByTestId('fundamentals-footer').textContent).toMatch(/12 quarters/i));
+  });
+
+  it('discloses an incomplete year rather than dropping it silently', async () => {
+    // 13 quarters: FY2024 has one quarter and cannot be drawn.
+    const thirteen = Array.from({ length: 13 }, (_, i) => makeQuarter(i));
+    renderChart({ ticker: 'AAA' }, {
+      ok: true, ticker: 'AAA', fundamentalsHistory: { quarterly: thirteen },
+    });
+    await screen.findByTestId('fundamentals-footer');
+    fireEvent.click(screen.getByTestId('period-FY'));
+    await waitFor(() =>
+      expect(screen.getByTestId('fundamentals-footer').textContent)
+        .toMatch(/1 incomplete year omitted/i));
+  });
+
+  it('explains an annual view with no complete year, instead of "no history"', async () => {
+    const two = Array.from({ length: 2 }, (_, i) => makeQuarter(i));
+    renderChart({ ticker: 'AAA' }, {
+      ok: true, ticker: 'AAA', fundamentalsHistory: { quarterly: two },
+    });
+    await screen.findByTestId('fundamentals-footer');
+    fireEvent.click(screen.getByTestId('period-FY'));
+    await waitFor(() =>
+      expect(screen.getByText(/no complete fiscal year yet/i)).toBeInTheDocument());
+  });
+});
+
+describe('the 5Y window means five years in either mode', () => {
+  // 40 quarters = 10 fiscal years, which only became reachable once the LIVE
+  // statement fetch stopped asking for 8.
+  const forty = Array.from({ length: 40 }, (_, i) => makeQuarter(i));
+  const body = { ok: true, ticker: 'AAA', fundamentalsHistory: { quarterly: forty } };
+
+  it('ALL now differs from 5Y — the reported bug', async () => {
+    // With only 8 quarters available both buttons rendered the same chart,
+    // which is what "All time button doesn't work" looked like.
+    renderChart({ ticker: 'AAA' }, body);
+    const foot = await screen.findByTestId('fundamentals-footer');
+    expect(foot.textContent).toMatch(/40 quarters/i);
+  });
+
+  it('annual + ALL shows ten fiscal years', async () => {
+    renderChart({ ticker: 'AAA' }, body);
+    await screen.findByTestId('fundamentals-footer');
+    fireEvent.click(screen.getByTestId('period-FY'));
+    await waitFor(() =>
+      expect(screen.getByTestId('fundamentals-footer').textContent).toMatch(/10 fiscal years/i));
+  });
+});

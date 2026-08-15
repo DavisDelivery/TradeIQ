@@ -404,6 +404,25 @@ function filterByFilingDate<T extends { period_end?: string; filing_date?: strin
 
 const LIVE_CACHE = makeLiveCache<FundamentalsSnapshot>();
 
+/**
+ * Quarters of statement history fetched on the LIVE path.
+ *
+ * Was 8 — about two years — while the profile's Fundamentals chart offered a
+ * "5Y" window (20 quarters) and an "ALL" window. Neither could ever be filled,
+ * so both buttons rendered the same eight bars and ALL looked broken. It was
+ * not: the toggle was slicing a list that never had more than 8 rows in it.
+ *
+ * 40 gives ten years, which makes 5Y honest and ALL meaningful, and it is what
+ * an annual view needs to show more than two bars. The provider's own coverage
+ * reaches further back (2009-03-29); this is a payload ceiling, not a data
+ * ceiling, and the chart footer states the count it actually received rather
+ * than implying it has everything.
+ *
+ * The live cache key embeds the limit (`limit=${n}:v1`), so changing this
+ * number busts the cache by construction — no manual invalidation needed.
+ */
+export const LIVE_STATEMENT_QUARTERS = 40;
+
 /** Test seam — clears the 24h live cache. */
 export function _clearLiveFundamentalsCache(): void {
   LIVE_CACHE.clear();
@@ -459,6 +478,10 @@ export async function getFundamentals(
     let ratiosRow: MassiveRatiosResult | null = null;
 
     if (opts.asOfDate) {
+      // NB: the PIT branch below deliberately stays at 8. It feeds backtests,
+      // where the window is a modelling choice and widening it would silently
+      // change historical results. Only the LIVE path — which feeds the
+      // profile's Fundamentals chart — was starved.
       // PIT mode — three statement endpoints, no ratios endpoint.
       const [inc, bs, cf] = await Promise.all([
         getIncomeStatementsPit(ticker, opts.asOfDate, 8),
@@ -475,9 +498,9 @@ export async function getFundamentals(
       // LIVE mode — ratios + three statement endpoints in parallel.
       const [ratiosResp, incomeResp, balanceResp, cashflowResp] = await Promise.all([
         fetchRatiosWithStatus(ticker),
-        fetchIncomeStatementsWithStatus(ticker, { limit: 8 }),
-        fetchBalanceSheetsWithStatus(ticker, { limit: 8 }),
-        fetchCashFlowStatementsWithStatus(ticker, { limit: 8 }),
+        fetchIncomeStatementsWithStatus(ticker, { limit: LIVE_STATEMENT_QUARTERS }),
+        fetchBalanceSheetsWithStatus(ticker, { limit: LIVE_STATEMENT_QUARTERS }),
+        fetchCashFlowStatementsWithStatus(ticker, { limit: LIVE_STATEMENT_QUARTERS }),
       ]);
       // Live mode: rate-limit-exhausted or hard-error on statements is a
       // failure (return null). Ratios alone failing is tolerable — we
