@@ -44,7 +44,26 @@ describe('VerdictChip', () => {
   });
 
   it('renders nothing for a board with no registry entry', () => {
-    const { container } = render(<VerdictChip board="catalyst" />);
+    // BROKER-1 W1 changed the EXAMPLE, not the rule. 'catalyst' used to be
+    // the unregistered case; it is now registered UNMEASURED, which was the
+    // whole point of W1. The behaviour itself still needs pinning, so this
+    // uses an id that is genuinely absent.
+    const { container } = render(<VerdictChip board="not-a-board" />);
     expect(container.firstChild).toBeNull();
+  });
+
+  it('renders NOT MEASURED for a board that ships without a measurement', () => {
+    // The inverse of the case above, and the reason W1 exists: catalyst is
+    // reachable, has an order row, and previously rendered no chip at all.
+    render(<VerdictChip board="catalyst" />);
+    const chip = screen.getByTestId('verdict-chip-catalyst');
+    expect(chip.textContent).toBe('NOT MEASURED');
+    expect(chip.getAttribute('title')).toContain('Never backtested');
+  });
+
+  it('does not colour an unmeasured board like a failed one', () => {
+    // Absence of evidence is not evidence of failure; rose is NO_EDGE's.
+    render(<VerdictChip board="catalyst" />);
+    expect(screen.getByTestId('verdict-chip-catalyst').className).not.toMatch(/rose/);
   });
 });

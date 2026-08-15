@@ -14,6 +14,10 @@ const STATUS_STYLES = {
   MIXED: 'border-amber-500/50 bg-amber-500/10 text-amber-300',
   PENDING: 'border-neutral-600 bg-neutral-800/60 text-neutral-400',
   VALIDATED: 'border-emerald-500/50 bg-emerald-500/10 text-emerald-300',
+  // Deliberately NOT red. "Not measured" is an absence of evidence, not
+  // evidence of failure, and colouring it like NO_EDGE would make the chip
+  // assert something the registry does not.
+  UNMEASURED: 'border-neutral-600 bg-neutral-800/60 text-neutral-300',
 };
 
 /**
@@ -34,13 +38,8 @@ export function VerdictChip({ board, compact = false }) {
   ]
     .filter(Boolean)
     .join('\n');
-  const text = compact
-    ? v.status === 'NO_EDGE'
-      ? 'NO EDGE'
-      : v.status === 'PENDING'
-        ? 'PENDING'
-        : v.status
-    : label;
+  const COMPACT = { NO_EDGE: 'NO EDGE', PENDING: 'PENDING', UNMEASURED: 'NOT MEASURED' };
+  const text = compact ? (COMPACT[v.status] ?? v.status) : label;
   return (
     <span
       data-testid={`verdict-chip-${board}`}

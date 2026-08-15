@@ -21,6 +21,7 @@ import { HistoryView } from './HistoryView.jsx';
 import { LogButton } from './components/LogButton.jsx';
 import { UniverseSelector, UNIVERSE_AWARE_VIEWS } from './components/UniverseSelector.jsx';
 import { FreshnessPill } from './components/FreshnessPill.jsx';
+import { isUnvalidated, isVerdictBoard } from '../netlify/functions/shared/verdicts';
 import { readLog, logTrade, removeTrade, computeForwardReturns } from './tradeLog.js';
 import { useSortable, SortableTh } from './lib/useSortable.jsx';
 import { captureException } from './lib/sentry.js';
@@ -70,7 +71,7 @@ import { APP_VERSION } from '../netlify/functions/shared/app-version';
 // place with a PENDING chip until the W3 composite runs land; its nav
 // fate then follows the pre-committed rule in
 // reports/fix-1/composite-verdict.md.
-const VIEWS = [
+const RAW_VIEWS = [
   // DESK-1 — the trader workstation: tape + watchlist + focus dossier +
   // positions/base rates. Same VIEWS entry renders in the mobile TopBar
   // scroller AND the 4k Sidebar (Phase 4k single source of truth).
@@ -132,7 +133,7 @@ const VIEWS = [
   // — including 'evidence against' for the short-squeeze screen — and the
   // forward-test league is what will eventually tell us which ones work on
   // our data.
-  { id: 'screens', label: 'Screens', shortLabel: 'Screens', icon: Filter, section: 'unvalidated' },
+  { id: 'screens', label: 'Screens', shortLabel: 'Screens', icon: Filter },
   // QS-1 — Quiet Strength (residual momentum). Unvalidated on purpose: the
   // evidence is replicated but EXTERNAL, and we have measured nothing on our
   // own universe yet. #194 retired six boards on measured evidence, so a
@@ -142,8 +143,33 @@ const VIEWS = [
   // Placed AFTER screens deliberately: TopBar/Sidebar/MobileDrawer detect the
   // section divider positionally with `views[i-1]?.section !== 'unvalidated'`,
   // so the unvalidated block has to stay contiguous and last.
-  { id: 'quiet-strength', label: 'Quiet Strength', shortLabel: 'Quiet', icon: Waves, section: 'unvalidated' },
+  { id: 'quiet-strength', label: 'Quiet Strength', shortLabel: 'Quiet', icon: Waves },
 ];
+
+// BROKER-1 W1 — the divider is DERIVED, not hand-typed.
+//
+// `section: 'unvalidated'` used to be a literal on individual rows, which meant
+// the nav and the verdict registry could disagree — and they did: every board
+// reachable here was missing from BOARD_VERDICTS entirely. Now membership comes
+// from isUnvalidated(), so registering a board or changing its status moves it
+// in the nav on the next render, and no one has to remember a second list.
+//
+// THE SORT IS LOAD-BEARING. All three renderers (Sidebar, MobileDrawer, and the
+// desktop TopBar below) detect the divider POSITIONALLY, with
+// `views[i-1]?.section !== 'unvalidated'`. Marking rows without moving them
+// would scatter a divider before each unvalidated run — catalyst, trident,
+// insiders, earnings and crosses all sit mid-list. So the partition is stable:
+// original order preserved within each group, unvalidated last and contiguous.
+const VIEWS = (() => {
+  const withSection = RAW_VIEWS.map((v) => ({
+    ...v,
+    section: isVerdictBoard(v.id) && isUnvalidated(v.id) ? 'unvalidated' : undefined,
+  }));
+  return [
+    ...withSection.filter((v) => v.section !== 'unvalidated'),
+    ...withSection.filter((v) => v.section === 'unvalidated'),
+  ];
+})();
 
 // ======================================================================
 // ERROR BOUNDARY — catches React render errors in any child subtree and

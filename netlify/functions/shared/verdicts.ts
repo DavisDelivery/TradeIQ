@@ -16,16 +16,42 @@
 // two FIX-1 W3 runs complete (see reports/fix-1/composite-verdict.md for
 // the pre-committed decision rule that will set it).
 
-export type VerdictStatus = 'NO_EDGE' | 'MIXED' | 'PENDING' | 'VALIDATED';
+/**
+ * UNMEASURED is not a softer NO_EDGE — it is the absence of a measurement.
+ *
+ * BROKER-1 W1. Registering it matters because the registry and the navigation
+ * had drifted completely apart: every board a user can actually open
+ * (catalyst, trident, screens, insiders, earnings, crosses, quiet-strength)
+ * was ABSENT from BOARD_VERDICTS, while every board present in it had been
+ * retired. The intersection was empty, so VerdictChip — whose whole job is to
+ * stop a fluent thesis outranking a backtest — returned null on every reachable
+ * board and rendered nowhere at all.
+ *
+ * That is the state in which a NO_EDGE board sits one tap from a real-money
+ * Buy button with no edge statement anywhere on the screen.
+ */
+export type VerdictStatus = 'NO_EDGE' | 'MIXED' | 'PENDING' | 'VALIDATED' | 'UNMEASURED';
 
 export type VerdictBoard =
+  // Retired boards. Kept because the measurement is the record — a board that
+  // lost to SPY should not be able to return without its verdict returning too.
   | 'williams'
   | 'lynch'
   | 'prophet'
   | 'target'
   | 'fable'
   | 'vector'
-  | 'trend';
+  | 'trend'
+  // Boards reachable in the app today. These IDs must match VIEWS ids in
+  // src/App.jsx exactly — the chip looks up by nav id, so 'insiders' not
+  // 'insider'. verdict-coverage.test.ts pins that correspondence.
+  | 'catalyst'
+  | 'trident'
+  | 'screens'
+  | 'insiders'
+  | 'earnings'
+  | 'crosses'
+  | 'quiet-strength';
 
 export interface BoardVerdict {
   board: VerdictBoard;
@@ -211,6 +237,92 @@ export const BOARD_VERDICTS: Record<VerdictBoard, BoardVerdict> = {
       'FABLE ships as a labelled screener (like Target) — the gate/pillars still describe ' +
       'trend quality; they do not claim validated alpha over buy-and-hold.',
   },
+
+  // -------------------------------------------------------------------------
+  // BROKER-1 W1 — the boards a user can actually open.
+  //
+  // Every one of these is UNMEASURED: no backtest run, no forward record long
+  // enough to speak. That is a statement about our evidence, not a claim that
+  // the board is bad — which is exactly why the label is "NOT MEASURED"
+  // rather than "NO VALIDATED EDGE". They sit below the Unvalidated divider
+  // because an unmeasured board is not a validated one, and they render a chip
+  // above every Buy button for the same reason.
+  //
+  // A row here may only change to VALIDATED/NO_EDGE/MIXED when a real run
+  // lands and the commit links its runId — the standing discipline at the top
+  // of this file.
+  // -------------------------------------------------------------------------
+  catalyst: {
+    board: 'catalyst',
+    status: 'UNMEASURED',
+    window: 'no backtest run exists',
+    excessVsSPYPp: null, excessVsQQQPp: null, ic: null, rollingWindowsWon: null,
+    runId: null, date: '2026-08-13',
+    note:
+      'Never backtested. The board scans intraday and publishes on schedule, but no run has ' +
+      'measured whether its ranking beats holding the index, so there is no edge claim to ' +
+      'make either way.',
+  },
+  trident: {
+    board: 'trident',
+    status: 'UNMEASURED',
+    window: 'no backtest run exists',
+    excessVsSPYPp: null, excessVsQQQPp: null, ic: null, rollingWindowsWon: null,
+    runId: null, date: '2026-08-13',
+    note: 'Never backtested. No measurement exists for or against this board.',
+  },
+  screens: {
+    board: 'screens',
+    status: 'UNMEASURED',
+    window: 'per-screen published evidence; the board itself is unmeasured in-app',
+    excessVsSPYPp: null, excessVsQQQPp: null, ic: null, rollingWindowsWon: null,
+    runId: null, date: '2026-08-13',
+    note:
+      'Individual screens carry published external evidence grades, but this app has run no ' +
+      'measurement of them on its own universe and costs. External replication is not the ' +
+      'same claim as a measured in-app edge.',
+  },
+  insiders: {
+    board: 'insiders',
+    status: 'UNMEASURED',
+    window: 'no backtest run exists',
+    excessVsSPYPp: null, excessVsQQQPp: null, ic: null, rollingWindowsWon: null,
+    runId: null, date: '2026-08-13',
+    note:
+      'Never backtested. Note the shipped board is an UNFILTERED insider screen; the ' +
+      'routine/opportunistic split that carries the evidence (Cohen-Malloy-Pomorski) exists ' +
+      'as a scoring module but is not yet wired to a board.',
+  },
+  earnings: {
+    board: 'earnings',
+    status: 'UNMEASURED',
+    window: 'no backtest run exists',
+    excessVsSPYPp: null, excessVsQQQPp: null, ic: null, rollingWindowsWon: null,
+    runId: null, date: '2026-08-13',
+    note: 'Never backtested. Calendar-driven; no measurement of forward return.',
+  },
+  crosses: {
+    board: 'crosses',
+    status: 'UNMEASURED',
+    window: 'no backtest run exists',
+    excessVsSPYPp: null, excessVsQQQPp: null, ic: null, rollingWindowsWon: null,
+    runId: null, date: '2026-08-13',
+    note: 'Never backtested. Moving-average crosses are descriptive here, not a measured signal.',
+  },
+  'quiet-strength': {
+    board: 'quiet-strength',
+    status: 'UNMEASURED',
+    window: 'forward record opened 2026-08-11; first cohort of 20 still open',
+    excessVsSPYPp: null, excessVsQQQPp: null, ic: null, rollingWindowsWon: null,
+    runId: null, date: '2026-08-13',
+    note:
+      'UNMEASURED in this app, and deliberately so despite the strongest external evidence of ' +
+      'any board here: residual momentum is replicated out-of-sample across 48 countries ' +
+      '(Blitz/Huij/Martens; Hanauer/Windmuller), and the board ships an evidence banner ' +
+      'stating an expected 0.5-1.5pp/yr net of haircut. That is someone ELSE\'S measurement. ' +
+      'Ours began 2026-08-11 with a 20-name cohort that has not matured, so the honest ' +
+      'in-app verdict is that we have not measured it yet.',
+  },
 };
 
 /** Signed "+80.9pp" / "−73.4pp" formatting (U+2212 minus for display). */
@@ -245,6 +357,10 @@ export function verdictLabel(v: BoardVerdict): string {
     }
     case 'PENDING':
       return 'EDGE PENDING VALIDATION';
+    // No numbers, ever — there are none. "NOT MEASURED (−0.0pp)" would be a
+    // measurement claim, which is the precise thing this status denies.
+    case 'UNMEASURED':
+      return 'NOT MEASURED';
     case 'VALIDATED': {
       const parts: string[] = [];
       if (v.excessVsSPYPp !== null) parts.push(`${pp(v.excessVsSPYPp)} vs SPY`);
@@ -253,7 +369,24 @@ export function verdictLabel(v: BoardVerdict): string {
   }
 }
 
-/** Boards demoted out of the default navigation (no validated edge). */
+/**
+ * Boards demoted out of the default navigation.
+ *
+ * UNMEASURED counts. An unmeasured board is not a validated one, and the
+ * divider's promise to the reader is "everything above this line has been
+ * measured and held up" — a board nobody has measured cannot sit above it.
+ *
+ * NOTE, deliberately unchanged: PENDING and MIXED still return false. Both
+ * describe a measurement that EXISTS and is incomplete or split, which is a
+ * different claim from absence. Changing them would move boards in the nav on
+ * a judgement the brief did not ask for; flagged rather than done.
+ */
 export function isUnvalidated(board: VerdictBoard): boolean {
-  return BOARD_VERDICTS[board].status === 'NO_EDGE';
+  const s = BOARD_VERDICTS[board].status;
+  return s === 'NO_EDGE' || s === 'UNMEASURED';
+}
+
+/** Type guard for nav ids, which are plain strings at the call site. */
+export function isVerdictBoard(id: string): id is VerdictBoard {
+  return Object.prototype.hasOwnProperty.call(BOARD_VERDICTS, id);
 }
