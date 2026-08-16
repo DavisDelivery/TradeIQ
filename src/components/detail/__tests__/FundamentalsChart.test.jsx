@@ -177,3 +177,29 @@ describe('the 5Y window means five years in either mode', () => {
       expect(screen.getByTestId('fundamentals-footer').textContent).toMatch(/10 fiscal years/i));
   });
 });
+
+describe('stale fundamentals are called out, not drawn as current', () => {
+  it('shows a banner when the server flags the window as old', () => {
+    const q = Array.from({ length: 20 }, (_, i) => makeQuarter(i));
+    renderChart({ ticker: 'AAA' }, {
+      ok: true, ticker: 'AAA',
+      fundamentalsHistory: {
+        quarterly: q,
+        _stale: { ageDays: 1870, reason: 'newest statement period ends 2021-07-03, 62 months old — the provider is serving a historical window, not current filings' },
+      },
+    });
+    return screen.findByTestId('fundamentals-stale').then((el) => {
+      expect(el.textContent).toMatch(/out of date/i);
+      expect(el.textContent).toMatch(/2021-07-03/);
+    });
+  });
+
+  it('stays silent when the data is current', async () => {
+    const q = Array.from({ length: 20 }, (_, i) => makeQuarter(i));
+    renderChart({ ticker: 'AAA' }, {
+      ok: true, ticker: 'AAA', fundamentalsHistory: { quarterly: q },
+    });
+    await screen.findByTestId('fundamentals-footer');
+    expect(screen.queryByTestId('fundamentals-stale')).not.toBeInTheDocument();
+  });
+});

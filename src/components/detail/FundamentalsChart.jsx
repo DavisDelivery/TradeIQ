@@ -235,6 +235,10 @@ export function FundamentalsChart({ ticker }) {
     return [...raw].sort((a, b) => String(a.endDate ?? '').localeCompare(String(b.endDate ?? '')));
   }, [data]);
   const _reason = data?.fundamentalsHistory?._reason;
+  // Server-side tripwire: the provider silently served a window ending in 2021
+  // once, and the chart drew it as though it were current. A normal-looking
+  // chart of five-year-old revenue is worse than an empty one.
+  const _stale = data?.fundamentalsHistory?._stale ?? null;
 
   // The full series in the ACTIVE period, before the window is applied — the
   // footer describes this, so it reports what exists rather than what is shown.
@@ -349,6 +353,16 @@ export function FundamentalsChart({ ticker }) {
           </div>
         </div>
       </header>
+
+      {_stale && (
+        <div
+          data-testid="fundamentals-stale"
+          className="mb-3 flex items-start gap-2 border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-[11px] leading-relaxed text-amber-200"
+        >
+          <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+          <span>Out of date — {_stale.reason}</span>
+        </div>
+      )}
 
       <div className="h-56 sm:h-64 w-full">
         {isLoading && (
