@@ -409,19 +409,63 @@ const LIVE_CACHE = makeLiveCache<FundamentalsSnapshot>();
  *
  * Was 8 — about two years — while the profile's Fundamentals chart offered a
  * "5Y" window (20 quarters) and an "ALL" window. Neither could ever be filled,
- * so both buttons rendered the same eight bars and ALL looked broken. It was
- * not: the toggle was slicing a list that never had more than 8 rows in it.
+ * so both buttons rendered the same eight bars and ALL looked broken.
  *
- * 40 gives ten years, which makes 5Y honest and ALL meaningful, and it is what
- * an annual view needs to show more than two bars. The provider's own coverage
- * reaches further back (2009-03-29); this is a payload ceiling, not a data
- * ceiling, and the chart footer states the count it actually received rather
- * than implying it has everything.
+ * RAISING IT TO 40 MADE THINGS WORSE, AND THE FAILURE WAS SILENT.
+ * Asking for 40 returned exactly 20 rows for EVERY ticker with a hard ceiling
+ * around mid-2021 — five-year-old financials, served as though current:
+ *
+ *     limit=8   ->  8 rows, newest 2026-06-27   (current)
+ *     limit=40  -> 20 rows, newest 2021-07-03   (AAPL/MSFT/NUE/XOM alike)
+ *
+ * So the provider does not clamp an over-large limit; it falls back to a fixed
+ * historical window. 20 is the largest value confirmed to return current data
+ * and it is exactly what the "5Y" button promises.
  *
  * The live cache key embeds the limit (`limit=${n}:v1`), so changing this
- * number busts the cache by construction — no manual invalidation needed.
+ * number busts the cache by construction.
+ *
+ * DO NOT raise this without re-checking currency against a real ticker.
+ * `assertStatementCurrency` below is the guard that makes a repeat loud.
  */
-export const LIVE_STATEMENT_QUARTERS = 40;
+export const LIVE_STATEMENT_QUARTERS = 20;
+
+/**
+ * How stale the newest statement may be before we refuse to call it current.
+ *
+ * Quarterly filings land roughly 4-8 weeks after period end, so a healthy feed
+ * is at most ~5 months behind. 12 months is deliberately generous: this is a
+ * tripwire for a provider silently serving a historical window, not a
+ * freshness SLA.
+ */
+export const STATEMENT_STALE_AFTER_DAYS = 365;
+
+/**
+ * Flag statement history whose newest period is implausibly old.
+ *
+ * The 40-limit incident rendered FY2017-FY2020 revenue on a live profile with
+ * nothing on screen saying it was five years old — a chart that looks entirely
+ * normal and is completely misleading. The data layer knew the newest period
+ * end; nothing compared it to today. Now it does, and the reason travels with
+ * the payload instead of being invisible.
+ */
+export function statementStaleness(
+  newestPeriodEnd: string | null | undefined,
+  now: Date = new Date(),
+): { stale: boolean; ageDays: number | null; reason: string | null } {
+  if (!newestPeriodEnd) return { stale: false, ageDays: null, reason: null };
+  const t = Date.parse(`${newestPeriodEnd}T00:00:00Z`);
+  if (!Number.isFinite(t)) return { stale: false, ageDays: null, reason: null };
+  const ageDays = Math.floor((now.getTime() - t) / 86_400_000);
+  if (ageDays <= STATEMENT_STALE_AFTER_DAYS) return { stale: false, ageDays, reason: null };
+  return {
+    stale: true,
+    ageDays,
+    reason:
+      `newest statement period ends ${newestPeriodEnd}, ${Math.floor(ageDays / 30)} months ` +
+      'old — the provider is serving a historical window, not current filings',
+  };
+}
 
 /** Test seam — clears the 24h live cache. */
 export function _clearLiveFundamentalsCache(): void {

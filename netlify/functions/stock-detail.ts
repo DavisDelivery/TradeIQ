@@ -22,6 +22,7 @@ import {
   getUpcomingEarnings,
   getNews,
   getPreviousClose,
+  statementStaleness,
   type Bar,
 } from './shared/data-provider';
 import { getInsiderActivity } from './shared/insider-provider';
@@ -113,6 +114,8 @@ interface StockDetailResponse {
   fundamentalsHistory?: {
     quarterly: QuarterlyFundamental[];
     _reason?: string;
+    /** Set when the newest period is implausibly old — see statementStaleness. */
+    _stale?: { ageDays: number; reason: string };
   };
   relativeStrength?: {
     vsSpy: Array<{ date: string; cumulativeOutperformancePct: number }>;
@@ -386,6 +389,15 @@ export const handler: Handler = async (event) => {
       fundamentalsHistory: {
         quarterly,
         ...(quarterly.length === 0 ? { _reason: 'quarterly_history_unavailable' } : {}),
+        // A provider that silently serves a historical window produces a chart
+        // that looks entirely normal and is years out of date. Say so.
+        ...(() => {
+          const newest = quarterly.length
+            ? quarterly.map((q) => q.endDate).sort().slice(-1)[0]
+            : null;
+          const st = statementStaleness(newest);
+          return st.stale ? { _stale: { ageDays: st.ageDays as number, reason: st.reason as string } } : {};
+        })(),
       },
       relativeStrength,
       finviz: finvizR.value ?? null,

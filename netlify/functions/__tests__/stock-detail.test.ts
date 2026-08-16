@@ -19,6 +19,19 @@ vi.mock('../shared/data-provider', () => ({
   getUpcomingEarnings: (...a: unknown[]) => getUpcomingEarningsMock(...a),
   getNews: (...a: unknown[]) => getNewsMock(...a),
   getPreviousClose: (...a: unknown[]) => getPreviousCloseMock(...a),
+  // Pure date arithmetic with no I/O, so the double is the REAL behaviour
+  // rather than a stub. Stubbing it to "never stale" would let a future
+  // regression in the staleness wiring pass this suite silently — which is
+  // the same class of miss that let a 2021 window render as current.
+  statementStaleness: (newest: string | null | undefined, now: Date = new Date()) => {
+    if (!newest) return { stale: false, ageDays: null, reason: null };
+    const t = Date.parse(`${newest}T00:00:00Z`);
+    if (!Number.isFinite(t)) return { stale: false, ageDays: null, reason: null };
+    const ageDays = Math.floor((now.getTime() - t) / 86_400_000);
+    return ageDays <= 365
+      ? { stale: false, ageDays, reason: null }
+      : { stale: true, ageDays, reason: `newest statement period ends ${newest}, stale` };
+  },
 }));
 
 const getInsiderActivityMock = vi.fn();
