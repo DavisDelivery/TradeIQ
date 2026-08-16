@@ -279,12 +279,19 @@ export function FundamentalsChart({ ticker }) {
       data-testid="fundamentals-chart"
       className="border border-neutral-800/80 bg-neutral-950/30 p-4"
     >
-      <header className="flex flex-wrap items-baseline justify-between gap-3 mb-3">
+      {/* NINE controls now live here — five series, two periods, two windows.
+          This row did NOT wrap, so on a phone the last group ran off the right
+          edge: ANNUAL was clipped and 5Y/ALL were pushed off-screen entirely,
+          i.e. unreachable. Adding the period toggle is what tipped it over
+          seven, which had just fit. Every level wraps now, and the groups use
+          the container gap rather than their own left margins so a wrapped row
+          does not start with dead space. */}
+      <header className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-2 mb-3">
         <div className="text-[10px] uppercase tracking-[0.2em] text-neutral-500 font-mono">
           Fundamentals
         </div>
-        <div className="flex items-center gap-2">
-          <div role="tablist" aria-label="Series" className="flex gap-1">
+        <div className="flex flex-wrap items-center gap-2">
+          <div role="tablist" aria-label="Series" className="flex flex-wrap gap-1">
             {TABS.map((t) => {
               const active = t.id === tabId;
               return (
@@ -306,7 +313,7 @@ export function FundamentalsChart({ ticker }) {
               );
             })}
           </div>
-          <div role="tablist" aria-label="Period" className="flex gap-1 ml-2">
+          <div role="tablist" aria-label="Period" className="flex gap-1">
             {PERIODS.map((p) => {
               const active = p.id === periodId;
               return (
@@ -329,7 +336,7 @@ export function FundamentalsChart({ ticker }) {
               );
             })}
           </div>
-          <div role="tablist" aria-label="Window" className="flex gap-1 ml-2">
+          <div role="tablist" aria-label="Window" className="flex gap-1">
             {RANGES.map((r) => {
               const active = r.id === rangeId;
               return (
@@ -407,11 +414,27 @@ export function FundamentalsChart({ ticker }) {
         )}
       </div>
 
+      {/* One long string wrapped wherever it ran out of room, and an ISO date
+          has a hyphen the browser is happy to break on — so a narrow screen
+          rendered "latest 2020-12-" / "31". Each fact is its own nowrap span
+          and the line breaks between them instead. */}
       {!isLoading && !isError && allPeriods.length > 0 && (
-        <div className="mt-2 text-[9px] uppercase tracking-widest font-mono text-neutral-600 text-right" data-testid="fundamentals-footer">
-          {allPeriods.length} {annual ? 'fiscal years' : 'quarters'} · oldest{' '}
-          {allPeriods[0]?.endDate} · latest {allPeriods[allPeriods.length - 1]?.endDate}
-          {annual && droppedYears > 0 && ` · ${droppedYears} incomplete year${droppedYears === 1 ? '' : 's'} omitted`}
+        <div
+          className="mt-2 flex flex-wrap justify-end gap-x-1 text-[9px] uppercase tracking-widest font-mono text-neutral-600"
+          data-testid="fundamentals-footer"
+        >
+          <span className="whitespace-nowrap">
+            {allPeriods.length} {annual ? 'fiscal years' : 'quarters'}
+          </span>
+          <span className="whitespace-nowrap">· oldest {allPeriods[0]?.endDate}</span>
+          <span className="whitespace-nowrap">
+            · latest {allPeriods[allPeriods.length - 1]?.endDate}
+          </span>
+          {annual && droppedYears > 0 && (
+            <span className="whitespace-nowrap">
+              · {droppedYears} incomplete year{droppedYears === 1 ? '' : 's'} omitted
+            </span>
+          )}
         </div>
       )}
     </section>

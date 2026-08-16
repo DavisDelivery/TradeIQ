@@ -203,3 +203,59 @@ describe('stale fundamentals are called out, not drawn as current', () => {
     expect(screen.queryByTestId('fundamentals-stale')).not.toBeInTheDocument();
   });
 });
+
+// ---------------------------------------------------------------------------
+// Reported: "Also poorly formatted."
+//
+// Adding the Qtr/Annual toggle took the control row from seven buttons to
+// nine. The row did not wrap, so on a phone ANNUAL was clipped and 5Y/ALL were
+// pushed off the right edge — not merely ugly, UNREACHABLE. jsdom has no
+// layout engine and cannot measure that overflow, so these assert the
+// mechanism that prevents it rather than the pixels.
+// ---------------------------------------------------------------------------
+describe('the control row survives a narrow screen', () => {
+  const twenty = Array.from({ length: 20 }, (_, i) => makeQuarter(i));
+  const body = { ok: true, ticker: 'AAA', fundamentalsHistory: { quarterly: twenty } };
+
+  const render20 = () => renderChart({ ticker: 'AAA' }, body);
+
+  it('lets the control groups wrap instead of overflowing', async () => {
+    render20();
+    const controls = (await screen.findByRole('tablist', { name: 'Window' })).parentElement;
+    expect(controls.className).toMatch(/flex-wrap/);
+  });
+
+  it('wraps the five series buttons too, since they alone can fill a phone', async () => {
+    render20();
+    expect((await screen.findByRole('tablist', { name: 'Series' })).className)
+      .toMatch(/flex-wrap/);
+  });
+
+  it('carries no left margin on a group, which would indent a wrapped row', async () => {
+    // Spacing is the container's gap. A group-level `ml-*` survives the wrap
+    // and pushes the first button of the new line in by itself.
+    render20();
+    await screen.findByRole('tablist', { name: 'Window' });
+    for (const name of ['Series', 'Period', 'Window']) {
+      expect(screen.getByRole('tablist', { name }).className).not.toMatch(/\bml-\d/);
+    }
+  });
+
+  it('never breaks a date across two lines in the footer', async () => {
+    // "latest 2020-12-" / "31" — the browser breaks ISO dates at the hyphen.
+    render20();
+    const foot = await screen.findByTestId('fundamentals-footer');
+    expect(foot.className).toMatch(/flex-wrap/);
+    const segments = Array.from(foot.querySelectorAll('span'));
+    expect(segments.length).toBeGreaterThanOrEqual(3);
+    for (const s of segments) expect(s.className).toMatch(/whitespace-nowrap/);
+  });
+
+  it('still reads as one sentence once split into segments', async () => {
+    render20();
+    const foot = await screen.findByTestId('fundamentals-footer');
+    expect(foot.textContent).toMatch(/20 quarters/i);
+    expect(foot.textContent).toMatch(/oldest 2021-03-30/);
+    expect(foot.textContent).toMatch(/latest 2025-12-30/);
+  });
+});
