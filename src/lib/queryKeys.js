@@ -51,6 +51,13 @@ export const queryKeys = {
   // bug above (a queryFn input missing from the key is a silent no-op
   // inside staleTime).
   quietStrength: (limit) => ['tradeiq', 'quietStrength', limit ?? 40],
+  // COMP-1 — Compounders is a single-universe board (largecap = sp500 ∪ ndx
+  // ∪ dji), so the universe is NOT in the key: there is only one, and adding
+  // a segment the endpoint does not read would invent a cache dimension.
+  // `limit` is in it for the same reason it is on quietStrength — it is a
+  // queryFn input, and a queryFn input missing from the key is the
+  // catalyst-M1 silent no-op waiting to happen.
+  compounders: (limit) => ['tradeiq', 'compounders', limit ?? 40],
   // PROFILE-1 W3 — one peer distribution per (ticker, metric). BOTH belong in
   // the key: the endpoint reads both, so omitting metric would serve the
   // first-opened drawer's distribution for every other metric on the page.

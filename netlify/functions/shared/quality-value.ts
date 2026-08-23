@@ -52,7 +52,19 @@ export interface QVInput extends UniverseCandidate {
   fcfYieldPct?: number | null;
 }
 
-export type QualityBasis = 'gross-profits-to-assets' | 'roic-proxy' | 'none';
+/**
+ * Which measurement a quality score actually came from.
+ *
+ * 'roe-proxy' is distinct from 'roic-proxy' on purpose: ROE is inflatable by
+ * leverage and ROIC is not, so stamping an ROE number 'roic-proxy' makes the
+ * weaker metric read as the stronger one to every downstream consumer of a
+ * snapshot.
+ */
+export type QualityBasis =
+  | 'gross-profits-to-assets'
+  | 'roic-proxy'
+  | 'roe-proxy'
+  | 'none';
 
 /**
  * Novy-Marx gross profitability. Null unless BOTH statement inputs are real.
@@ -168,7 +180,7 @@ export function scoreQualityValue(candidates: QVInput[]): QVResult {
 
   const unscorable: Record<string, 'no-quality' | 'no-value'> = {};
   const qualityBasisCounts: Record<QualityBasis, number> = {
-    'gross-profits-to-assets': 0, 'roic-proxy': 0, none: 0,
+    'gross-profits-to-assets': 0, 'roic-proxy': 0, 'roe-proxy': 0, none: 0,
   };
 
   const scored: QVScore[] = kept.map((c, i) => {

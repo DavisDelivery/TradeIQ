@@ -79,6 +79,11 @@ export const FORWARD_BOARDS: ForwardBoardConfig[] = [
   // control. The distinction is stated in the board payload too, so the
   // league number is not read as the strategy's return.
   { board: 'quiet-strength', universe: 'all', take: 20 },
+  // COMP-1 — without a cohort here the board's UNMEASURED verdict is
+  // self-fulfilling: verdicts.ts states the status is UNMEASURED because "no
+  // backtest run and no forward cohort exist", and nothing else in the build
+  // creates one. This is the only path by which it can ever earn a t-statistic.
+  { board: 'compounders', universe: 'largecap', take: 20 },
   // FVZ-6 — every published screen enters the league as its own cohort, with
   // the screen id standing in for the universe key (scan-screens-background
   // writes one snapshot per screen).

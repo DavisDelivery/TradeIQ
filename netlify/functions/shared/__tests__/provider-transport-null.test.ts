@@ -88,14 +88,22 @@ describe('getInsiderActivity — transport-error discipline (M8)', () => {
   });
 
   it('still computes real activity from verified rows', async () => {
+    // DATES ARE RELATIVE, NOT LITERAL. This fixture used to hard-code
+    // 2026-05-18 against a 90-day lookback, so it passed until 2026-08-16 and
+    // has failed every run since — a test that reddens CI on a calendar date
+    // rather than on a code change, which is worse than no test because it
+    // trains everyone to ignore the suite. Anchored to "now" so it asserts the
+    // behaviour (a verified buy inside the window is counted) at any date.
+    const daysAgo = (n: number) =>
+      new Date(Date.now() - n * 86_400_000).toISOString().slice(0, 10);
     finnhubMock.mockResolvedValue({
       data: [
         {
           name: 'CEO PERSON',
           share: 1_000,
           change: 1_000,
-          filingDate: '2026-05-20',
-          transactionDate: '2026-05-18',
+          filingDate: daysAgo(10),
+          transactionDate: daysAgo(12),
           transactionPrice: 50,
           transactionCode: 'P',
           isDerivative: false,

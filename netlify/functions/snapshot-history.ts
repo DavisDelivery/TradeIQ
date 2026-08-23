@@ -40,6 +40,10 @@ const VALID_BOARDS: BoardName[] = [
   // union and the nightly worker wrote picks correctly, while every History
   // request 400'd in production because this list was never updated.
   'quiet-strength',
+  // COMP-1 — registered WITH the board, not after. The screens rollout is the
+  // cautionary tale this list already carries: the union and the worker were
+  // updated, this array was not, and every History request 400'd in production.
+  'compounders',
 ];
 
 const VALID_UNIVERSES: UniverseKey[] = [

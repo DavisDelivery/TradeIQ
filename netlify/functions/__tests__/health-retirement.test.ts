@@ -102,7 +102,7 @@ describe('the live boards are the ones we expect', () => {
   it('lists exactly the boards with a producer', () => {
     const live = ALL_BOARDS.filter((b) => hasScanFor(b, LIVE)).sort();
     expect(live).toEqual(
-      ['catalyst', 'crosses', 'earnings', 'insider', 'quiet-strength', 'screens', 'trident'].sort(),
+      ['catalyst', 'compounders', 'crosses', 'earnings', 'insider', 'quiet-strength', 'screens', 'trident'].sort(),
     );
   });
 });

@@ -6,7 +6,7 @@ import {
   BarChart3, Brain, Newspaper, Globe2, Eye, Target, Clock, ArrowUpRight,
   ArrowDownRight, Minus, Shield, Cpu, LineChart as LineChartIcon, Filter, X, Waves,
   Inbox, Bell, ExternalLink, Info, BookMarked, Sparkles, Landmark, FlaskConical,
-  Monitor, Menu, Crosshair, Trophy, ScanSearch
+  Monitor, Menu, Crosshair, Trophy, ScanSearch, Sprout
 } from 'lucide-react';
 import {
   AreaChart, Area, LineChart, Line, BarChart, Bar, RadarChart,
@@ -55,6 +55,7 @@ import { MobileDrawer } from './layout/MobileDrawer.jsx';
 import { CrossesView } from './CrossesView.jsx';
 import { ScreensView } from './ScreensView.jsx';
 import { QuietStrengthView } from './QuietStrengthView.jsx';
+import { CompoundersView } from './CompoundersView.jsx';
 import { ForwardTestView } from './ForwardTestView.jsx';
 
 
@@ -144,6 +145,14 @@ const RAW_VIEWS = [
   // section divider positionally with `views[i-1]?.section !== 'unvalidated'`,
   // so the unvalidated block has to stay contiguous and last.
   { id: 'quiet-strength', label: 'Quiet Strength', shortLabel: 'Quiet', icon: Waves },
+  // COMP-1 — Compounders (quality-led, momentum-confirmed). Unvalidated,
+  // and by a wider margin than Quiet Strength: QS at least borrows a
+  // replicated measurement of its own signal, while here only the two
+  // INPUTS replicate and the blend of them has never been measured at all.
+  // No section literal — verdicts.ts says UNMEASURED and the partition
+  // below puts it in the unvalidated block, which is also why it can be
+  // appended here without disturbing the contiguity the divider needs.
+  { id: 'compounders', label: 'Compounders', shortLabel: 'Compound', icon: Sprout },
 ];
 
 // BROKER-1 W1 — the divider is DERIVED, not hand-typed.
@@ -451,6 +460,7 @@ export default function App() {
       {activeView === 'crosses' && <ErrorBoundary label="Crosses"><CrossesView /></ErrorBoundary>}
       {activeView === 'screens' && <ErrorBoundary label="Screens"><ScreensView /></ErrorBoundary>}
       {activeView === 'quiet-strength' && <ErrorBoundary label="Quiet Strength"><QuietStrengthView /></ErrorBoundary>}
+      {activeView === 'compounders' && <ErrorBoundary label="Compounders"><CompoundersView /></ErrorBoundary>}
       {activeView === 'forward' && <ErrorBoundary label="Forward Test"><ForwardTestView /></ErrorBoundary>}
       {activeView === 'history' && <ErrorBoundary label="History"><HistoryView /></ErrorBoundary>}
       {activeView === 'options' && <ErrorBoundary label="Options"><OptionsFlowView universe={universe} /></ErrorBoundary>}

@@ -39,6 +39,10 @@ const BOARD_UNIVERSES: Record<BoardName, UniverseKey[]> = {
   // under 'all' (see scan-quiet-strength-background.ts), so health probes
   // 'all'. Listing index names here would reproduce the FIX-1 bug above.
   'quiet-strength': ['all'],
+  // COMP-1 — the compounders scan writes ONE snapshot under 'largecap'
+  // (see scan-compounders-background.ts), the key its producer actually
+  // uses. Same discipline as quiet-strength above.
+  compounders: ['largecap'],
   crosses: ['sp500'],
   trident: ['sp500', 'russell2k'],
   sentiment: ['sp500'],
