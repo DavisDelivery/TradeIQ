@@ -113,7 +113,7 @@ export function buildEvidenceBanner(): CompoundersBanner {
     // unmeasured board invites the reader to transfer the papers' evidence to
     // the ranking, which is the precise mistake the grade above forbids.
     sources: [
-      'quality input — Novy-Marx (2013); Hou, Xue & Zhang (2020): gross profits-to-ASSETS survives replication where book-equity profitability does not',
+      'quality input — Novy-Marx (2013) gross profits-to-ASSETS. Hou, Xue & Zhang (2020) find the ASSETS denominator survives replication where book-equity does not; note the survivor they and the house review name is the CASH-BASED numerator, and this board ships the accrual version because gross_profit and total_assets are what the statement provider returns — a stated weakening, not a match',
       'momentum input — Jegadeesh & Titman (1993); Geczy & Samonov: 12-1, 212 years of US data, 40 countries',
       'quality input — Asness, Frazzini & Pedersen: QMJ positive in 23 of 24 countries',
       'method — Fisher, Shah & Titman (2016): integrated scoring beats two independently-formed sleeves',
@@ -163,8 +163,10 @@ async function lastAttempt() {
 // ---------------------------------------------------------------------------
 
 const DISCLOSURE =
-  'Compounders ranks quality first — gross profits over assets, the ratio that ' +
-  'survives replication and that leverage cannot flatter — and uses 12-1 momentum ' +
+  'Compounders ranks quality first — gross profits over assets, whose ASSETS ' +
+  'denominator survives replication and which leverage cannot flatter, though it ' +
+  'is the accrual rather than the cash-based numerator the evidence actually ' +
+  'names — and uses 12-1 momentum ' +
   'only to confirm, integrated into one score rather than two sleeves. It carries ' +
   'NO value axis: that is a deliberate departure from the house quality-value ' +
   'recommendation, and it is why a high-multiple franchise can rank here. The ' +
