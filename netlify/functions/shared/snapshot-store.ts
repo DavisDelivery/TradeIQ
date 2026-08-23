@@ -43,7 +43,12 @@ export type BoardName =
   // QS-1 — residual momentum ("Quiet Strength"). Keyed 'all' because the
   // scan reads grouped-daily, which covers the whole US tape, and then cuts
   // it down with the research-policy floors rather than to an index list.
-  | 'quiet-strength';
+  | 'quiet-strength'
+  // COMP-1 — quality-led, momentum-confirmed ("Compounders"). Keyed
+  // 'largecap' (sp500 u ndx u dji): the board exists to rank durable
+  // franchises, and its expensive stage is per-ticker statements, which only
+  // a large-cap-sized funnel fits in a container.
+  | 'compounders';
 
 export type UniverseKey =
   | 'sp500'
@@ -154,6 +159,10 @@ export const FRESHNESS_BUDGETS_MS: Record<BoardName, number> = {
   // so the forward league has a fresh cohort to log every session. 26h is
   // therefore the right budget (the scan's cadence), not the signal's.
   'quiet-strength': 26 * 60 * 60_000,
+  // COMP-1 — quality rebalances slowly (statements move quarterly), but the
+  // scan runs nightly so the forward league has a fresh cohort to log every
+  // session. 26h is the scan's cadence, which is what freshness measures.
+  compounders: 26 * 60 * 60_000,
 };
 
 // ====================================================================
@@ -590,6 +599,12 @@ const DAILY_CLOSE_SLOTS: Partial<
   // boards flagged stale every weekend while their snapshots were exactly
   // as fresh as the schedule allows.
   'quiet-strength': { slot: { hourUtc: 22, minuteUtc: 40 }, universes: ['all'] },
+  // COMP-1 — 21:55 UTC. MUST match scan-compounders.ts CRON exactly: this
+  // table is what stops the board flagging stale over a weekend, so a slot
+  // that disagrees with the cron is a false stale every Saturday. (Was 21:40,
+  // which collided with scan-insider-ndx — the insider family is registered
+  // here at its earliest slot only, which is what hid the clash.)
+  compounders: { slot: { hourUtc: 21, minuteUtc: 55 }, universes: ['largecap'] },
 };
 
 /**

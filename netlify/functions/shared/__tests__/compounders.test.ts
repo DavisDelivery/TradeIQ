@@ -72,7 +72,7 @@ describe('quality is gross profits over ASSETS', () => {
   it('falls back to ROE only when the statements are missing, and says so', () => {
     const q = qualityOf(cand({ ticker: 'B', grossProfit: null, totalAssets: null, roePct: 30 }));
     expect(q.value).toBe(30);
-    expect(q.basis).toBe('roic-proxy');
+    expect(q.basis).toBe('roe-proxy');
   });
 
   it('refuses to invent quality from nothing', () => {
@@ -222,22 +222,39 @@ describe('the NVDA case, which is why this board was built', () => {
     return (out.findIndex((s) => s.ticker === 'NVDALIKE') + 1) / out.length;
   };
 
-  it('reaches the top quartile on quality alone, with below-median momentum', () => {
-    // ~30th percentile momentum. Measured placement: top 21%.
-    expect(placementOf(10)).toBeLessThan(0.25);
+  // THESE TEST THE MECHANISM, NOT A PLACEMENT NUMBER.
+  //
+  // An earlier version asserted `placementOf(10) < 0.25` and
+  // `placementOf(50) < 0.15`. A review measured what that actually pinned:
+  // QUALITY_WEIGHT 0.55 and 0.50 both FAIL those thresholds, so the suite had
+  // quietly locked the weight at roughly >= 0.57 to keep an NVDA-shaped name
+  // in a chosen band. Nobody swept a parameter, but a ticker-shaped result had
+  // become a regression invariant — which is the same thing wearing a
+  // different hat. What is actually worth guarding is that the quality axis
+  // CAN carry a momentum laggard, not how far.
+  //
+  // VERIFIED after the rewrite: the suite now passes at QUALITY_WEIGHT 0.55,
+  // 0.60, 0.75 and 0.80. The only value that fails is 0.50, and it fails on
+  // "leads with quality" — the stated design of the board, not a placement.
+
+  it('lifts a momentum laggard above where momentum alone would put it', () => {
+    const withQuality = placementOf(10);
+    const momentumOnlyRank = 1 - 0.3;  // ~30th percentile momentum, i.e. bottom 70%
+    expect(withQuality).toBeLessThan(momentumOnlyRank);
   });
 
-  it('reaches roughly the top decile once momentum is merely average', () => {
-    // ~50th percentile momentum. Measured placement: top 12%.
-    expect(placementOf(50)).toBeLessThan(0.15);
+  it('improves monotonically as momentum improves, quality held at the top', () => {
+    expect(placementOf(150)).toBeLessThanOrEqual(placementOf(50));
+    expect(placementOf(50)).toBeLessThanOrEqual(placementOf(10));
   });
 
-  it('is NOT engineered to the top — good momentum is still what wins', () => {
-    // The honest limit of this design: elite quality buys you the top quintile,
-    // not the top of the board. A name that is strong on BOTH axes outranks it,
-    // which is the integrated-scoring behaviour we actually want.
-    expect(placementOf(10)).toBeGreaterThan(0.05);
-    expect(placementOf(150)).toBeLessThan(placementOf(10));
+  it('is NOT engineered to the top — a name strong on BOTH axes still wins', () => {
+    // The honest limit of the design, and the integrated-scoring behaviour we
+    // want: elite quality alone does not buy the top of the board.
+    expect(placementOf(10)).toBeGreaterThan(0);
+    const out = scoreCompounders([...universe, nvdaLike(10)]).scored
+      .filter((s) => s.composite !== null);
+    expect(out[0].ticker).not.toBe('NVDALIKE');
   });
 
   it('would NOT rank on momentum alone — the reason every old board missed it', () => {

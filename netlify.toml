@@ -507,6 +507,16 @@
   to = "/.netlify/functions/quiet-strength-board"
   status = 200
 
+# COMP-1 — Compounders board. Added in the same commit as the endpoint on
+# purpose: without this stanza the request falls through to the SPA catch-all
+# below, returns index.html with status 200, and the hook's r.json() throws —
+# an endpoint that looks wired and serves garbage, which is the failure this
+# file's header warns about and the screens rollout actually shipped.
+[[redirects]]
+  from = "/api/compounders-board"
+  to = "/.netlify/functions/compounders-board"
+  status = 200
+
 # P1-S3 — consensus archive health. The archive is write-only and its payoff
 # is a year out, so this is the only way to see the clock is still ticking.
 [[redirects]]

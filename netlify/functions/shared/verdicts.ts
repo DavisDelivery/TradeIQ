@@ -51,7 +51,8 @@ export type VerdictBoard =
   | 'insiders'
   | 'earnings'
   | 'crosses'
-  | 'quiet-strength';
+  | 'quiet-strength'
+  | 'compounders';
 
 export interface BoardVerdict {
   board: VerdictBoard;
@@ -322,6 +323,34 @@ export const BOARD_VERDICTS: Record<VerdictBoard, BoardVerdict> = {
       'stating an expected 0.5-1.5pp/yr net of haircut. That is someone ELSE\'S measurement. ' +
       'Ours began 2026-08-11 with a 20-name cohort that has not matured, so the honest ' +
       'in-app verdict is that we have not measured it yet.',
+  },
+  // COMP-1 — Compounders (quality-led, momentum-confirmed).
+  //
+  // Weaker evidence than quiet-strength, not stronger, and the row says so.
+  // Quiet Strength at least borrows a replicated measurement OF ITS OWN
+  // SIGNAL; here the two INPUTS replicate (Novy-Marx gross-profits-to-assets;
+  // Jegadeesh-Titman 12-1) and the 0.6/0.4 blend of them does not inherit
+  // that — Fisher/Shah/Titman argue integrated scoring beats independent
+  // sleeves, which is a construction argument, not a measurement of this
+  // board. No backtest, no forward cohort, no t-statistic of any kind, so
+  // there is nothing to put through research-policy's |t| > MIN_DISCOVERY_T
+  // bar. UNMEASURED routes it below the Unvalidated divider automatically.
+  compounders: {
+    board: 'compounders',
+    status: 'UNMEASURED',
+    window: 'no backtest run and no forward cohort exist',
+    excessVsSPYPp: null, excessVsQQQPp: null, ic: null, rollingWindowsWon: null,
+    runId: null, date: '2026-08-22',
+    note:
+      'Never measured, on either axis of measurement we have: no backtest run and no forward ' +
+      'cohort. The inputs are externally replicated (Novy-Marx gross profits-to-assets; 12-1 ' +
+      'momentum across 212 years and 40 countries) but the 0.6 quality / 0.4 momentum blend ' +
+      'of them has never been run against SPY here, so "unmeasured" means unknown rather ' +
+      'than small — it may well lose, as all seven measured boards did. It also carries NO ' +
+      'value axis, a stated departure from the house quality-value construction, which is ' +
+      'why a high-multiple franchise can rank at the top of it. Ranked names that fell back ' +
+      'to the ROE proxy are ranked on a ratio leverage can inflate; the board reports how ' +
+      'many via exactBasisCount.',
   },
 };
 

@@ -44,7 +44,7 @@ function navIds(): string[] {
  */
 const BOARD_VIEWS = [
   'trident', 'catalyst', 'insiders', 'earnings', 'crosses',
-  'screens', 'quiet-strength',
+  'screens', 'quiet-strength', 'compounders',
 ];
 
 const TOOL_VIEWS = [

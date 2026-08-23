@@ -30,6 +30,19 @@
 //   Survivor #2  Cash-based operating profitability. Survives HXZ AND the
 //                q-factor model; QMJ positive in 23 of 24 countries; low
 //                turnover, large capacity.
+//
+// SECOND DEPARTURE, ALSO STATED: WE SHIP GROSS PROFITABILITY, NOT CASH-BASED.
+//
+// The report's survivor is cash-based operating profitability and it calls the
+// definition load-bearing. What this board computes is Novy-Marx gross profits
+// over assets. Those are not the same measurement: the report's claim has two
+// halves — the ASSETS denominator (which we honour) and the CASH-BASED
+// numerator that strips accruals (which we do not). We ship the accrual
+// version because gross_profit and total_assets are the fields the statement
+// provider actually returns, and reconstructing a cash-based numerator needs
+// an accruals build we do not have. That is a real weakening of the evidence
+// behind this axis, written here rather than left for a reader to notice that
+// the citation and the code describe different ratios.
 //   Method       INTEGRATED scoring beats two independently-formed sleeves
 //                (Fisher, Shah & Titman 2016) — lower turnover, and it will
 //                not buy a name that is excellent on one axis and terrible
@@ -56,9 +69,18 @@
 // top-percentile. But trailing-year relative strength versus SPY is +2.23%
 // cumulative and it sits at the 69.9th percentile of its own 52-week range.
 // It is a quality outlier that is NOT currently a momentum leader. So this
-// board is built quality-LED with momentum CONFIRMING, and where NVDA lands
-// is reported rather than engineered — the weights below were not tuned to
-// place any particular ticker.
+// board is built quality-LED with momentum CONFIRMING.
+//
+// HOW MUCH TO TRUST THE WEIGHTS. No parameter was swept against outcomes. But
+// "not tuned to any ticker" would be too strong: the board was DESIGNED after
+// looking at one name's profile, and a review found that an earlier version of
+// the test suite pinned an NVDA-shaped placement tightly enough to lock
+// QUALITY_WEIGHT at roughly >= 0.57. Nobody swept a parameter, but a
+// ticker-shaped result had become a regression invariant. Those assertions now
+// test the MECHANISM — quality can carry a momentum laggard — rather than a
+// placement threshold, so the weight is free to move. Honest summary: the two
+// axes are evidence-led; the 60/40 split between them is a judgement made by
+// someone who had NVDA's profile in mind.
 
 import {
   percentileRank,
@@ -76,9 +98,11 @@ import {
  *
  * Quality carries more because it is the persistent, low-turnover,
  * large-capacity axis and the one with the milder crash profile; momentum is
- * the confirming axis and the one that bleeds in a reversal. This is a
- * judgement, not a fitted parameter — it was NOT swept against outcomes, and
- * no ticker was targeted. `QUALITY_WEIGHT + MOMENTUM_WEIGHT === 1`.
+ * the confirming axis and the one that bleeds in a reversal. A judgement, not
+ * a fitted parameter: nothing was swept against outcomes. It was, however,
+ * chosen by someone who had already looked at the profile of the stock that
+ * prompted the board — see the header. The tests deliberately do not pin a
+ * placement that would lock this value. `QUALITY_WEIGHT + MOMENTUM_WEIGHT === 1`.
  */
 export const QUALITY_WEIGHT = 0.6;
 export const MOMENTUM_WEIGHT = 0.4;
@@ -88,6 +112,14 @@ export const MOMENTUM_WEIGHT = 0.4;
  * regardless of how hard it has run — that combination is the classic
  * momentum-crash casualty, and QMJ's whole finding is that junk does not pay.
  * Expressed as a percentile floor so it adapts to the universe.
+ *
+ * THERE IS DELIBERATELY NO RECIPROCAL MOMENTUM FLOOR, and that asymmetry
+ * points the same way the board's origin story does: a name at the 1st
+ * momentum percentile with top quality still ranks (0.6*1.0 + 0.4*0.01), which
+ * is exactly the profile that prompted the board. The defence is that it
+ * follows from calling this quality-LED rather than a blend of equals — but a
+ * reader is entitled to know it is a second structural choice favouring the
+ * originating case. "Momentum CONFIRMING" describes a weight, not a gate.
  */
 export const MIN_QUALITY_PCT = 0.25;
 
@@ -136,6 +168,13 @@ export interface CompounderResult {
   universeChecked: number;
   /** How many scored names used the exact Novy-Marx basis rather than the proxy. */
   exactBasisCount: number;
+  /**
+   * Scored names per quality basis. A MIXED pool is legal but suspect: the two
+   * bases are ranked separately (they are not comparable), which means a
+   * proxied name can top its own small group and outrank exactly-measured
+   * names. Callers that care — the scan does — should force one basis.
+   */
+  basisMix: Record<string, number>;
 }
 
 /**
@@ -157,7 +196,7 @@ export function qualityOf(c: CompounderInput): {
   if (exact !== null) return { value: exact, basis: 'gross-profits-to-assets' };
   const roe = c.roePct;
   if (typeof roe === 'number' && Number.isFinite(roe)) {
-    return { value: roe, basis: 'roic-proxy' };
+    return { value: roe, basis: 'roe-proxy' };
   }
   return { value: null, basis: 'none' };
 }
@@ -176,7 +215,23 @@ export function scoreCompounders(candidates: CompounderInput[]): CompounderResul
   const kept = filtered.kept;
 
   const qual = kept.map((c) => qualityOf(c));
-  const qualityPcts = percentileRank(qual.map((q) => q.value), true);
+
+  // PERCENTILES ARE COMPUTED WITHIN A BASIS, NEVER ACROSS ONE.
+  //
+  // This was a real defect, not a hypothetical. qualityOf returns a RATIO for
+  // the exact basis (gross profits / assets, ~0.1-0.7) and a PERCENT for the
+  // ROE fallback (~5-40). Ranked in one pool, every proxied name outranks
+  // every exactly-measured name on units alone — so a handful of failed
+  // statement fetches would quietly take the top of the board, and the board
+  // would look completely normal. Ranking inside each basis keeps a name
+  // compared only against names measured the same way.
+  const qualityPcts: Array<number | null> = kept.map(() => null);
+  for (const basis of new Set(qual.map((q) => q.basis))) {
+    if (basis === 'none') continue;
+    const idx = qual.map((q, i) => (q.basis === basis ? i : -1)).filter((i) => i >= 0);
+    const within = percentileRank(idx.map((i) => qual[i].value), true);
+    idx.forEach((i, k) => { qualityPcts[i] = within[k]; });
+  }
   const momentumPcts = percentileRank(
     kept.map((c) => c.momentum12_1Pct ?? null),
     true,
@@ -232,5 +287,10 @@ export function scoreCompounders(candidates: CompounderInput[]): CompounderResul
     exactBasisCount: scored.filter(
       (s) => s.composite !== null && s.qualityBasis === 'gross-profits-to-assets',
     ).length,
+    basisMix: scored.reduce<Record<string, number>>((acc, s) => {
+      if (s.composite === null) return acc;
+      acc[s.qualityBasis] = (acc[s.qualityBasis] ?? 0) + 1;
+      return acc;
+    }, {}),
   };
 }
