@@ -84,6 +84,9 @@ function snapshot(over: Record<string, unknown> = {}) {
     excludedCounts: { microcap: 0, illiquid: 3, 'price-floor': 0, 'no-data': 20 },
     unscorableCounts: { 'no-quality': 12, 'no-momentum': 4, 'below-quality-floor': 55 },
     exactBasisCount: 380,
+    momentumStartYm: 202507,
+    momentumEndYm: 202606,
+    momentumSkippedYm: 202607,
     freshnessBudgetMs: 26 * 60 * 60_000,
     warnings: [],
     rows,
@@ -217,6 +220,20 @@ describe('the verdict is UNMEASURED and the payload says so plainly', () => {
     const { body } = await call();
     expect(body.disclosure).toMatch(/NO value axis/);
     expect(body.disclosure).toMatch(/departure/i);
+  });
+
+  it('says which window the momentum leg was formed on', async () => {
+    // The reason this board exists is a user staring at an unchanged ranking
+    // with no way to tell whether the scan was dead or the input was frozen.
+    // It was frozen. A momentum leg formed on month-end closes is frozen for a
+    // whole calendar month too, so "which month" is not a detail — from the
+    // outside it is the difference between a working board and a broken one.
+    // The worker always wrote these; this endpoint dropped them at the seam.
+    h.latest.value = snapshot();
+    const { body } = await call();
+    expect(body.momentumStartYm).toBe(202507);
+    expect(body.momentumEndYm).toBe(202606);
+    expect(body.momentumSkippedYm).toBe(202607);
   });
 });
 
