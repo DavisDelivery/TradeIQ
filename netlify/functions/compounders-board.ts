@@ -152,6 +152,8 @@ async function lastAttempt() {
     // Carried on the failure path too: "0 scored" and "40 scored, all on the
     // ROE proxy" are different diagnoses of the same empty board.
     exactBasisCount: (doc as any).exactBasisCount ?? null,
+    momentumStartYm: (doc as any).momentumStartYm ?? null,
+    momentumEndYm: (doc as any).momentumEndYm ?? null,
     unscorableCounts: (doc as any).unscorableCounts ?? null,
     excludedCounts: (doc as any).excludedCounts ?? null,
     warnings: doc.warnings ?? [],
@@ -206,6 +208,8 @@ export const handler: Handler = async (event) => {
         excludedCounts: attempt?.excludedCounts ?? null,
         unscorableCounts: attempt?.unscorableCounts ?? null,
         exactBasisCount: attempt?.exactBasisCount ?? null,
+        momentumStartYm: attempt?.momentumStartYm ?? null,
+        momentumEndYm: attempt?.momentumEndYm ?? null,
         banner: buildEvidenceBanner(),
         lastAttempt: attempt,
         // Surfaced at the top level too, so a reader does not have to know the
@@ -252,6 +256,18 @@ export const handler: Handler = async (event) => {
       // are the same board by every other number in this payload, and only
       // one of them is ranked on the quality definition that replicated.
       exactBasisCount: (snap as any).exactBasisCount ?? null,
+      // PROVENANCE: the window this board was actually scored over.
+      //
+      // The worker has always written these into the snapshot and this
+      // endpoint dropped them, which reproduces the exact blind spot that
+      // started this board's existence: a user looked at Quiet Strength,
+      // saw an unchanged ranking for days, and had no way to tell whether the
+      // scan was dead or the input window was simply frozen. It was frozen.
+      // A momentum leg formed on month-end closes does not move for a whole
+      // calendar month either, so the board must say which month it is on.
+      momentumStartYm: (snap as any).momentumStartYm ?? null,
+      momentumEndYm: (snap as any).momentumEndYm ?? null,
+      momentumSkippedYm: (snap as any).momentumSkippedYm ?? null,
       // Never null: the stored banner is preferred so the user sees the one
       // the rows were actually published under, but a snapshot written before
       // this field existed still gets the current policy's banner.

@@ -409,7 +409,10 @@ describe('the funnel spends statement calls only where it is allowed to', () => 
     const rows = fixtures(6);
     rows[0].price = 2;                                    // price floor
     rows[1].marketCapM = 100;                             // microcap
-    rows[2].avgVolume = MIN_MEDIAN_DOLLAR_VOL / 100 / 100; // illiquid at $100
+    // Illiquid at $100/share. avgVolume is THOUSANDS of shares, so the floor
+    // divides by 1000 as well as by price — the earlier line omitted that and
+    // therefore described a name 1000x more liquid than it claimed to.
+    rows[2].avgVolume = MIN_MEDIAN_DOLLAR_VOL / 100 / 1_000 / 100;
     const h = harness(rows);
     const res = await run(h);
 

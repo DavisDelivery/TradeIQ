@@ -21,7 +21,7 @@
 // keeps two components from disagreeing about what "average dollar volume"
 // means.
 
-import { fetchFinvizScreener, type FinvizRow } from './finviz';
+import { fetchFinvizScreener, advDollar, type FinvizRow } from './finviz';
 import { liveCacheWrap } from './provider-live-cache';
 
 /** Finviz's universe snapshot uses 15 min; a profile row can be slower. */
@@ -105,7 +105,7 @@ export function shapeFinvizRow(row: FinvizRow): FinvizProfileBlocks {
 
   return {
     tradability: {
-      advDollar: avgVolume !== null && price !== null ? avgVolume * price : null,
+      advDollar: advDollar(avgVolume, price),
       avgVolume,
       relativeVolume: n(row.relVolume),
       atr,

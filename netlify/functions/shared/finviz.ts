@@ -79,6 +79,17 @@ export interface FinvizRow {
   rsi14: number | null;
   /** 1.0 = strong buy … 5.0 = strong sell. */
   analystRecom: number | null;
+  /**
+   * Average daily volume in THOUSANDS OF SHARES, as Finviz reports it — a
+   * value of 56_434 means 56.4 MILLION shares.
+   *
+   * The unit is stated here because reading it as raw shares is a silent
+   * 1000x error that looks entirely plausible. It shipped: `advDollar` was
+   * derived as avgVolume x price, which put AAPL's average daily turnover at
+   * $17.5M instead of $17.5B, and a $3M liquidity floor built on it excluded
+   * 487 of 518 S&P/NDX/DJI names — Coca-Cola and Johnson & Johnson among them
+   * — as "illiquid". Convert with `advDollar()` rather than multiplying here.
+   */
   avgVolume: number | null;
   relVolume: number | null;
   price: number | null;
@@ -239,6 +250,25 @@ export function parseCsvLine(line: string): string[] {
 }
 
 /** '', '-' → null; strips %, thousands commas. */
+/**
+ * Average daily turnover in DOLLARS from Finviz's thousands-of-shares column.
+ *
+ * Exists so the x1000 lives in exactly one place. Two independent call sites
+ * each open-coded `avgVolume * price` and both were wrong by three orders of
+ * magnitude; a third (`camillo-research.ts`) correctly renders the same field
+ * as "{n}k", which is how the codebase came to disagree with itself about a
+ * unit. Returns null unless both inputs are real — a liquidity figure guessed
+ * from a missing input is worse than no figure.
+ */
+export function advDollar(
+  avgVolumeThousands: number | null | undefined,
+  price: number | null | undefined,
+): number | null {
+  if (!Number.isFinite(avgVolumeThousands as number)) return null;
+  if (!Number.isFinite(price as number)) return null;
+  return (avgVolumeThousands as number) * 1_000 * (price as number);
+}
+
 export function parseFinvizNumber(raw: string | undefined): number | null {
   if (raw === undefined) return null;
   const t = raw.trim();
