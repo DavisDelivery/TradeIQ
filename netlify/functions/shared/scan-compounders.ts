@@ -24,7 +24,8 @@
 import type { Logger } from './logger';
 import type { GroupedRow } from './vector-data';
 import { getGroupedDaily } from './vector-data';
-import { fetchFinvizScreener, FINVIZ_UNIVERSE_FILTERS, type FinvizRow } from './finviz';
+import { fetchFinvizScreener, FINVIZ_UNIVERSE_FILTERS, type FinvizRow,
+  advDollar,} from './finviz';
 import { mapWithConcurrency } from './full-scan-iterator';
 import {
   fetchIncomeStatementsWithStatus,
@@ -559,13 +560,14 @@ export async function runCompoundersScan(
       sector: u.sector ?? null,
       industry: u.industry ?? null,
       marketCapM: u.marketCapM ?? null,
-      // Average dollar volume stands in for the median, derived the same way
-      // finviz-row.ts derives ADV$ (avgVolume x price) so two surfaces cannot
-      // disagree about what "average dollar volume" means. The alternative —
-      // a 126-session daily window, as QS fetches — is ~126 calls to reject
-      // names a largecap universe does not contain.
-      medianDollarVol:
-        u.avgVolume !== null && u.price !== null ? u.avgVolume * u.price : null,
+      // Average dollar volume stands in for the median. Via advDollar() so the
+      // thousands-of-shares conversion lives in one place: open-coding
+      // `avgVolume * price` here (copying finviz-row.ts, which had the same
+      // bug) made the $3M liquidity floor behave like a $3B one and threw out
+      // 487 of 518 large caps, KO and JNJ included, on the first live run.
+      // The alternative — a 126-session daily window, as QS fetches — is ~126
+      // calls to reject names a largecap universe does not contain.
+      medianDollarVol: advDollar(u.avgVolume, u.price),
       price: u.price ?? null,
       roePct: u.roePct ?? null,
       // SPAN COMES FROM THE WINDOW, NOT FROM A SECOND CONSTANT.

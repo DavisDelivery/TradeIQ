@@ -18,9 +18,13 @@ const row = (over: Partial<FinvizRow> = {}): FinvizRow =>
   }) as FinvizRow;
 
 describe('tradability derivations', () => {
-  it('computes ADV$ as average volume x price', () => {
+  it('computes ADV$ from THOUSANDS of shares x price', () => {
+    // Finviz's Average Volume column is in thousands, so the fixture's 50_000_000
+    // is 50 BILLION shares. This assertion previously omitted the x1000 and so
+    // encoded the shipped bug: it asserted the wrong answer and passed, which is
+    // why $17.5B of AAPL turnover rendered as $17.5M for months.
     const b = shapeFinvizRow(row()).tradability;
-    expect(b.advDollar).toBeCloseTo(50_000_000 * 200, 0);
+    expect(b.advDollar).toBeCloseTo(50_000_000 * 1_000 * 200, 0);
   });
 
   it('computes ATR as a PERCENT of price', () => {
