@@ -20,6 +20,7 @@
 //      mode this refuses.
 
 import { WINDOW_MONTHS } from '../residual-momentum';
+import type { MassiveIncomeStatement } from '../schemas';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { GroupedRow } from '../vector-data';
 import type { FinvizRow } from '../finviz';
@@ -191,7 +192,16 @@ describe('finalist selection', () => {
 // ---------------------------------------------------------------------------
 
 const quarters = (values: Array<number | null>) =>
-  values.map((gross_profit, i) => ({ gross_profit, period_end: `2026-0${6 - i}-30` })) as any[];
+  // A gross profit is only usable when the filer reports a cost line, so the
+  // helper models one: revenue = 2.5x gross profit, the rest is COGS.
+  values.map((gross_profit, i) => ({
+    gross_profit,
+    // A null gross profit stays null across the row — the point of those
+    // cases is a quarter with no usable statement at all.
+    revenue: gross_profit === null ? null : gross_profit * 2.5,
+    cost_of_revenue: gross_profit === null ? null : gross_profit * 1.5,
+    period_end: `2026-0${6 - i}-30`,
+  })) as any[];
 
 describe('TTM gross profit is all four quarters or nothing', () => {
   it('sums the four most recent quarters', () => {
@@ -331,7 +341,12 @@ function harness(rows: Fixture[], opts: { failStatementsFor?: (t: string) => boo
       return { data: [], rateLimited: false, rateLimitExhausted: false, errorMessage: 'boom' } as any;
     }
     return {
-      data: Array.from({ length: 4 }, () => ({ gross_profit: (r.grossProfit ?? 0) / 4 })),
+      data: Array.from({ length: 4 }, () => {
+        const gp = (r.grossProfit ?? 0) / 4;
+        // Real statements carry revenue and a cost line; without them the
+        // scan (correctly) refuses to treat the figure as gross profit.
+        return { gross_profit: gp, revenue: gp * 2.5, cost_of_revenue: gp * 1.5 };
+      }),
       rateLimited: false,
       rateLimitExhausted: false,
     } as any;
@@ -608,5 +623,57 @@ describe('the worker publishes only what it can stand behind', () => {
     const res = (await handler({ httpMethod: 'GET' } as any, {} as any)) as any;
     expect(res.statusCode).toBe(405);
     expect(mocks.writeSnapshot).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Gross profit has to BE gross profit
+//
+// The 2026-08-25 run — the first with a correct liquidity filter — ranked
+// JBHT, LUV, DAL, ODFL, UAL, FDX and EXPD in the top ten and pushed NVDA out
+// of the top 25. Airlines and truckers as the highest-quality franchises in
+// the index is not a plausible reading of Novy-Marx; it is what you get when
+// a filer reports no cost line, the provider returns gross_profit ≈ revenue,
+// and (revenue / assets) quietly becomes the quality axis. That ratio is asset
+// turnover, and it structurally favours exactly the capital-heavy businesses
+// the measure is supposed to rank last.
+// ---------------------------------------------------------------------------
+describe('gross profit is refused when it is really revenue', () => {
+  const q = (over: Partial<MassiveIncomeStatement>): MassiveIncomeStatement =>
+    ({ revenue: 1000, cost_of_revenue: 600, gross_profit: 400, ...over }) as MassiveIncomeStatement;
+
+  it('accepts a real gross profit with a reported cost line', () => {
+    expect(ttmGrossProfit([q({}), q({}), q({}), q({})])).toBe(1600);
+  });
+
+  it('refuses a filer with no reported cost of revenue (LUV, ODFL)', () => {
+    // gross_profit === revenue, COGS absent. GP/A here is revenue/assets.
+    const rows = Array.from({ length: 4 }, () =>
+      q({ revenue: 1000, cost_of_revenue: null, gross_profit: 1000 }));
+    expect(ttmGrossProfit(rows)).toBeNull();
+  });
+
+  it('refuses a zero cost line, which is the same thing spelled differently', () => {
+    const rows = Array.from({ length: 4 }, () =>
+      q({ revenue: 1000, cost_of_revenue: 0, gross_profit: 1000 }));
+    expect(ttmGrossProfit(rows)).toBeNull();
+  });
+
+  it('refuses gross profit ABOVE revenue — FDX reported a 169.8% margin', () => {
+    const rows = Array.from({ length: 4 }, () =>
+      q({ revenue: 1000, cost_of_revenue: 50, gross_profit: 1698 }));
+    expect(ttmGrossProfit(rows)).toBeNull();
+  });
+
+  it('still accepts a genuinely high-margin business (NVDA ~75%)', () => {
+    const rows = Array.from({ length: 4 }, () =>
+      q({ revenue: 1000, cost_of_revenue: 251, gross_profit: 749 }));
+    expect(ttmGrossProfit(rows)).toBe(2996);
+  });
+
+  it('refuses when revenue is missing, so the check cannot be made', () => {
+    const rows = Array.from({ length: 4 }, () =>
+      q({ revenue: null, cost_of_revenue: 600, gross_profit: 400 }));
+    expect(ttmGrossProfit(rows)).toBeNull();
   });
 });
