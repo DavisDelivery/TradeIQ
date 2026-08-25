@@ -295,15 +295,56 @@ export function selectFinalists(
  * the reader would never see. This is the same ok-flag discipline Wave 4C
  * had to retrofit onto ttmEps in data-provider.ts.
  */
+/**
+ * TTM gross profit, but ONLY where the filer actually reports a cost of
+ * revenue — otherwise null.
+ *
+ * WHY THE VALIDATION EXISTS. Novy-Marx gross profitability is (revenue −
+ * COGS) / assets. Plenty of service filers do not break out a cost line, and
+ * the provider then returns gross_profit ≈ revenue. Divide that by assets and
+ * you have not computed profitability at all — you have computed ASSET
+ * TURNOVER, and the board silently starts ranking capital-intensive,
+ * low-margin businesses as though they were the highest-quality franchises
+ * in the index.
+ *
+ * That is not hypothetical. The 2026-08-25 run put JBHT, LUV, DAL, ODFL, UAL,
+ * FDX and EXPD in the top ten — airlines and truckers — while NVDA fell out
+ * of the top 25. Measured from the same bundle the board reads:
+ *
+ *     LUV   gross margin 100.0%     COGS absent
+ *     ODFL  gross margin  97.8%     COGS absent
+ *     FDX   gross margin 169.8%     arithmetically impossible
+ *     NVDA  gross margin  74.9%     real
+ *     JBHT  gross margin  52.0%     real
+ *
+ * A gross margin above 100% cannot happen and is proof on its own that the
+ * field is unusable for those filers. So: require a reported, positive cost
+ * of revenue and a gross profit that does not exceed revenue. A name failing
+ * either is UNSCORABLE ('no-quality'), which is the board's existing rule —
+ * never rank a name on half the evidence — rather than ranked on a number
+ * that means something else entirely.
+ */
 export function ttmGrossProfit(rows: MassiveIncomeStatement[]): number | null {
   if (rows.length < TTM_QUARTERS) return null;
-  let sum = 0;
+  let gross = 0;
+  let revenue = 0;
+  let cogs = 0;
   for (const r of rows.slice(0, TTM_QUARTERS)) {
-    const v = r.gross_profit;
-    if (typeof v !== 'number' || !Number.isFinite(v)) return null;
-    sum += v;
+    const g = r.gross_profit;
+    if (typeof g !== 'number' || !Number.isFinite(g)) return null;
+    gross += g;
+    if (typeof r.revenue === 'number' && Number.isFinite(r.revenue)) revenue += r.revenue;
+    if (typeof r.cost_of_revenue === 'number' && Number.isFinite(r.cost_of_revenue)) {
+      cogs += r.cost_of_revenue;
+    }
   }
-  return sum;
+  // No reported cost line: gross_profit is standing in for revenue, so the
+  // ratio would measure turnover rather than profitability.
+  if (!(cogs > 0)) return null;
+  // Revenue must be there to check against, and gross profit cannot exceed
+  // it. FDX's 169.8% is what this catches.
+  if (!(revenue > 0) || gross > revenue) return null;
+  return gross;
 }
 
 /**
