@@ -62,7 +62,8 @@ import {
   type CompounderRow,
   type RunCompoundersOpts,
   type RunCompoundersResult,
-  windowSpanMonths,} from '../scan-compounders';
+  windowSpanMonths,
+  MAX_PLAUSIBLE_GROSS_MARGIN,} from '../scan-compounders';
 
 // The genuine scan, so the funnel tests exercise the code that ships.
 const { runCompoundersScan } = await vi.importActual<typeof import('../scan-compounders')>(
@@ -675,5 +676,52 @@ describe('gross profit is refused when it is really revenue', () => {
     const rows = Array.from({ length: 4 }, () =>
       q({ revenue: null, cost_of_revenue: 600, gross_profit: 400 }));
     expect(ttmGrossProfit(rows)).toBeNull();
+  });
+});
+
+// The second pass at the same defect. The first guard (TTM gross <= revenue,
+// plus a non-zero cost line) shipped and BOTH its holes appeared on the next
+// run, which is why these cases are per-quarter and use the real figures.
+describe('the margin ceiling is checked per quarter, not on the TTM sum', () => {
+  const q = (revenue: number, marginPct: number): MassiveIncomeStatement =>
+    ({
+      revenue,
+      cost_of_revenue: revenue * (1 - marginPct / 100),
+      gross_profit: revenue * (marginPct / 100),
+    }) as MassiveIncomeStatement;
+
+  it('refuses FDX — one impossible quarter hidden by three normal ones', () => {
+    // 169.8% / 74.7% / 74.9% / 70% sums to a TTM margin of 98.8%, which slid
+    // under a `gross <= revenue` test. The bad quarter has to be caught alone.
+    const rows = [q(25007, 169.8), q(24000, 74.7), q(23469, 74.9), q(22244, 70)];
+    expect(ttmGrossProfit(rows)).toBeNull();
+  });
+
+  it('refuses DAL — a non-zero cost line that is not a COGS breakout', () => {
+    // ~97.3% every quarter. `cogs > 0` was true; the margin still is not real.
+    const rows = [q(19757, 97.5), q(15854, 97.3), q(16003, 97.1), q(16673, 97.1)];
+    expect(ttmGrossProfit(rows)).toBeNull();
+  });
+
+  it('keeps JBHT — 52-56% is a real trucking gross margin', () => {
+    const rows = [q(3495, 52), q(3056, 54), q(3096, 54.3), q(3052, 56.4)];
+    expect(ttmGrossProfit(rows)).not.toBeNull();
+  });
+
+  it('keeps EXPD — 31-35% freight forwarding, genuinely asset-light', () => {
+    const rows = [q(3502, 31), q(2782, 34.9), q(2855, 32.3), q(2894, 33)];
+    expect(ttmGrossProfit(rows)).not.toBeNull();
+  });
+
+  it('keeps a genuine high-margin software business at 90%', () => {
+    // The ceiling must not reject the real cases it sits just above.
+    const rows = [q(1000, 90), q(1000, 91), q(1000, 89), q(1000, 90)];
+    expect(ttmGrossProfit(rows)).not.toBeNull();
+  });
+
+  it('refuses at the stated ceiling, so the trade-off is explicit', () => {
+    expect(MAX_PLAUSIBLE_GROSS_MARGIN).toBe(0.95);
+    const justOver = Array.from({ length: 4 }, () => q(1000, 95.5));
+    expect(ttmGrossProfit(justOver)).toBeNull();
   });
 });

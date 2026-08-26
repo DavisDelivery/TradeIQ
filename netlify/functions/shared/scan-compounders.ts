@@ -324,6 +324,13 @@ export function selectFinalists(
  * never rank a name on half the evidence — rather than ranked on a number
  * that means something else entirely.
  */
+/**
+ * Above this a reported gross margin is treated as a missing COGS breakout
+ * rather than a real result. See ttmGrossProfit for why it is 0.95 and what
+ * it costs.
+ */
+export const MAX_PLAUSIBLE_GROSS_MARGIN = 0.95;
+
 export function ttmGrossProfit(rows: MassiveIncomeStatement[]): number | null {
   if (rows.length < TTM_QUARTERS) return null;
   let gross = 0;
@@ -341,9 +348,34 @@ export function ttmGrossProfit(rows: MassiveIncomeStatement[]): number | null {
   // No reported cost line: gross_profit is standing in for revenue, so the
   // ratio would measure turnover rather than profitability.
   if (!(cogs > 0)) return null;
-  // Revenue must be there to check against, and gross profit cannot exceed
-  // it. FDX's 169.8% is what this catches.
-  if (!(revenue > 0) || gross > revenue) return null;
+  if (!(revenue > 0)) return null;
+  // A MARGIN CEILING, CHECKED PER QUARTER — not a TTM gross <= revenue test.
+  //
+  // The first version of this guard did exactly that and both of its holes
+  // showed up on the very next run:
+  //
+  //   FDX  one quarter reported a 169.8% margin — impossible — but the other
+  //        three were ~70-75%, so the TTM sum came to 98.8% and slid under a
+  //        gross <= revenue test. Summing hides a single corrupt quarter.
+  //   DAL  reports a small but NON-ZERO cost line every quarter, so `cogs > 0`
+  //        passed while the margin sat at 97.1-97.5%. An airline does not have
+  //        a 97% gross margin; the cost line is there without being a COGS
+  //        breakout.
+  //
+  // So each quarter must independently look like a real gross margin. The
+  // ceiling is a judgement: genuine software and exchange businesses reach the
+  // high 80s and low 90s, while every artifact observed here sat at 97% or
+  // above. Set at 95%, which admits the real high-margin cases and refuses the
+  // turnover-in-disguise ones. A genuine business above 95% is refused rather
+  // than mis-ranked, which is the trade this board already makes everywhere
+  // else: unscorable beats scored on the wrong quantity.
+  for (const r of rows.slice(0, TTM_QUARTERS)) {
+    const rev = r.revenue;
+    const gp = r.gross_profit;
+    if (typeof rev !== 'number' || !(rev > 0)) return null;
+    if (typeof gp !== 'number' || !Number.isFinite(gp)) return null;
+    if (gp / rev > MAX_PLAUSIBLE_GROSS_MARGIN) return null;
+  }
   return gross;
 }
 
