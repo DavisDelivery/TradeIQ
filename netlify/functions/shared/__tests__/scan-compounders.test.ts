@@ -528,7 +528,11 @@ const scanResult = (over: Partial<RunCompoundersResult> = {}): RunCompoundersRes
     // publish guard a healthy denominator it could never see in the outage it
     // was supposed to cover, and looked like coverage of the open case.
     universeChecked: 600,
-    finalistsScored: 250,
+    // Kept proportional to `rows` so the default fixture models a HEALTHY run
+    // (~67% of finalists scoring, as production does). It used to be a flat
+    // 250 against 10 rows — a 4% share, i.e. the collapse the worker now
+    // refuses — so every test inherited a hollow run and called it clean.
+    finalistsScored: Math.max(1, Math.round(rows.length / 0.67)),
     universeLegsRequested: 3,
     universeLegsAnswered: 3,
     scored: rows.length,
@@ -593,7 +597,10 @@ describe('the worker publishes only what it can stand behind', () => {
   });
 
   it('defers to the publish guard when the run came back hollow', async () => {
-    mocks.runScan.mockResolvedValue(scanResult({ rows: [], scored: 0, exactBasisCount: 0 }));
+    mocks.runScan.mockResolvedValue(scanResult({
+      // finalistsScored 0 so the shrink guard stands aside and this test
+      // exercises the publish guard it is named for.
+      finalistsScored: 0, rows: [], scored: 0, exactBasisCount: 0 }));
     await handler(post(), {} as any);
     const doc = written();
     expect(doc.status).toBe('partial');
@@ -723,5 +730,44 @@ describe('the margin ceiling is checked per quarter, not on the TTM sum', () => 
     expect(MAX_PLAUSIBLE_GROSS_MARGIN).toBe(0.95);
     const justOver = Array.from({ length: 4 }, () => q(1000, 95.5));
     expect(ttmGrossProfit(justOver)).toBeNull();
+  });
+});
+
+// Every defect on this board so far has had the same shape: not an error, just
+// far fewer names than there should be, rendering as an ordinary ranking.
+// assessSnapshotPublish only refuses at zero, so 21-of-518 published clean.
+describe('a board that shrank does not get promoted', () => {
+  // written() reads writeSnapshot.mock.calls[0], so without this the second
+  // test in the block asserts against the FIRST test's snapshot. That is how
+  // the "healthy run publishes" case came back partial with the shrink
+  // warning from the case before it.
+  beforeEach(() => {
+    mocks.runScan.mockReset();
+    mocks.writeSnapshot.mockReset();
+    mocks.writeSnapshot.mockResolvedValue({ snapshotId: 'compounders-test', promotedToLatest: true });
+  });
+
+  it('refuses to promote when most finalists failed to score', async () => {
+    // The first live run's actual numbers: 21 scored out of 250 finalists.
+    mocks.runScan.mockResolvedValue(scanResult({
+      scored: 21,
+      finalistsScored: 250,
+      exactBasisCount: 21,
+    }));
+    await handler(post(), {} as any);
+    const doc = written();
+    expect(doc.status).toBe('partial');
+    expect(doc.warnings.join(' ')).toMatch(/finalists scored/i);
+  });
+
+  it('publishes a normal run, so the floor is not merely blocking everything', async () => {
+    // A healthy run: ~170 of 250, the rest cut by the quality floor.
+    mocks.runScan.mockResolvedValue(scanResult({
+      scored: 170,
+      finalistsScored: 250,
+      exactBasisCount: 170,
+    }));
+    await handler(post(), {} as any);
+    expect(written().status).toBe('complete');
   });
 });
