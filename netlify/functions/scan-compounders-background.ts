@@ -22,6 +22,17 @@ const PER_SCAN_BUDGET_MS = 13 * 60_000;
  */
 const MIN_UNIVERSE = 300;
 
+/**
+ * Minimum share of finalists that must actually score.
+ *
+ * A healthy run scores roughly 170 of 250 finalists (~68%); the rest are the
+ * quality floor doing its job plus a handful of missing statements. The first
+ * live run managed 21 of 250 — 8% — and published it. Set at 40%: low enough
+ * that an ordinary bad day still publishes, high enough that a provider
+ * change silently gutting the statement or margin checks does not.
+ */
+const MIN_SCORED_SHARE = 0.4;
+
 const BOARD = 'compounders' as const;
 const UNIVERSE = 'largecap' as const;
 
@@ -74,6 +85,24 @@ export const handler: Handler = async (event) => {
       status = 'partial';
       warnings.push(
         `universe collapsed to ${scan.universeSize} names (floor ${MIN_UNIVERSE}) — not promoted`,
+      );
+    }
+
+    // A BOARD THAT SHRANK IS NOT A BOARD, EVEN WHEN IT IS NOT EMPTY.
+    //
+    // assessSnapshotPublish only refuses at resultCount === 0, so the first
+    // live run published 21 names out of a 518-name universe as a healthy
+    // 'complete' snapshot and nothing objected — the collapse was found by
+    // reading the payload by hand. Every failure on this board so far has had
+    // that shape: not an error, just far fewer names than there should be,
+    // rendering as an ordinary ranking. The scored count is the one number
+    // that moves in all of them, so it gets a floor of its own.
+    const scoredShare = scan.finalistsScored > 0 ? scan.scored / scan.finalistsScored : 0;
+    if (scan.finalistsScored > 0 && scoredShare < MIN_SCORED_SHARE) {
+      status = 'partial';
+      warnings.push(
+        `only ${scan.scored}/${scan.finalistsScored} finalists scored ` +
+          `(${(scoredShare * 100).toFixed(0)}%, floor ${(MIN_SCORED_SHARE * 100).toFixed(0)}%) — not promoted`,
       );
     }
 
