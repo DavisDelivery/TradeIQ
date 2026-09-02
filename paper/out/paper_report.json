@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-09-01T03:03:04",
+  "generated_at": "2026-09-02T01:16:58",
   "horizons": {
     "1w": {
       "SPY": {
@@ -47,6 +47,50 @@
           "n_eff": 9
         },
         "signal_minus_control_pp": -5.641
+      }
+    },
+    "4w": {
+      "SPY": {
+        "signal": {
+          "n": 1,
+          "mean": -27.064,
+          "se": null,
+          "t": null,
+          "n_eff": 1,
+          "clusters": 1
+        },
+        "control": {
+          "n": 3,
+          "mean": -4.706,
+          "median": 0.965,
+          "se": 8.353,
+          "t": -0.56,
+          "win_pct": 66.7,
+          "clusters": 3,
+          "n_eff": 3
+        },
+        "signal_minus_control_pp": -22.358
+      },
+      "XLY": {
+        "signal": {
+          "n": 1,
+          "mean": -25.174,
+          "se": null,
+          "t": null,
+          "n_eff": 1,
+          "clusters": 1
+        },
+        "control": {
+          "n": 3,
+          "mean": -2.817,
+          "median": 2.855,
+          "se": 8.353,
+          "t": -0.34,
+          "win_pct": 66.7,
+          "clusters": 3,
+          "n_eff": 3
+        },
+        "signal_minus_control_pp": -22.357
       }
     }
   }
