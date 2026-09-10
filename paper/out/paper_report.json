@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-09-09T01:15:33",
+  "generated_at": "2026-09-10T01:09:04",
   "horizons": {
     "1w": {
       "SPY": {
@@ -14,16 +14,16 @@
           "n_eff": 2
         },
         "control": {
-          "n": 14,
-          "mean": -0.55,
-          "median": -2.767,
-          "se": 1.804,
-          "t": -0.3,
-          "win_pct": 35.7,
-          "clusters": 11,
-          "n_eff": 12
+          "n": 16,
+          "mean": -0.557,
+          "median": -1.179,
+          "se": 1.572,
+          "t": -0.35,
+          "win_pct": 31.2,
+          "clusters": 12,
+          "n_eff": 14
         },
-        "signal_minus_control_pp": -1.855
+        "signal_minus_control_pp": -1.848
       },
       "XLY": {
         "signal": {
@@ -37,16 +37,16 @@
           "n_eff": 2
         },
         "control": {
-          "n": 11,
-          "mean": 0.323,
-          "median": -1.978,
-          "se": 1.985,
-          "t": 0.16,
-          "win_pct": 36.4,
-          "clusters": 9,
-          "n_eff": 9
+          "n": 13,
+          "mean": 0.501,
+          "median": -0.36,
+          "se": 1.656,
+          "t": 0.3,
+          "win_pct": 46.2,
+          "clusters": 10,
+          "n_eff": 11
         },
-        "signal_minus_control_pp": -5.641
+        "signal_minus_control_pp": -5.819
       }
     },
     "4w": {
