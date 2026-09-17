@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-09-16T01:24:27",
+  "generated_at": "2026-09-17T01:32:10",
   "horizons": {
     "1w": {
       "SPY": {
@@ -52,45 +52,49 @@
     "4w": {
       "SPY": {
         "signal": {
-          "n": 1,
-          "mean": -27.064,
-          "se": null,
-          "t": null,
-          "n_eff": 1,
-          "clusters": 1
+          "n": 2,
+          "mean": 0.296,
+          "median": 0.296,
+          "se": 27.359,
+          "t": 0.01,
+          "win_pct": 50.0,
+          "clusters": 2,
+          "n_eff": 2
         },
         "control": {
-          "n": 3,
-          "mean": -4.706,
-          "median": 0.965,
-          "se": 8.353,
-          "t": -0.56,
-          "win_pct": 66.7,
-          "clusters": 3,
-          "n_eff": 3
+          "n": 4,
+          "mean": -6.037,
+          "median": -4.533,
+          "se": 6.055,
+          "t": -1.0,
+          "win_pct": 50.0,
+          "clusters": 4,
+          "n_eff": 4
         },
-        "signal_minus_control_pp": -22.358
+        "signal_minus_control_pp": 6.333
       },
       "XLY": {
         "signal": {
-          "n": 1,
-          "mean": -25.174,
-          "se": null,
-          "t": null,
-          "n_eff": 1,
-          "clusters": 1
+          "n": 2,
+          "mean": 3.023,
+          "median": 3.023,
+          "se": 28.197,
+          "t": 0.11,
+          "win_pct": 50.0,
+          "clusters": 2,
+          "n_eff": 2
         },
         "control": {
-          "n": 3,
-          "mean": -2.817,
-          "median": 2.855,
-          "se": 8.353,
-          "t": -0.34,
-          "win_pct": 66.7,
-          "clusters": 3,
-          "n_eff": 3
+          "n": 4,
+          "mean": -3.729,
+          "median": -1.805,
+          "se": 5.976,
+          "t": -0.62,
+          "win_pct": 50.0,
+          "clusters": 4,
+          "n_eff": 4
         },
-        "signal_minus_control_pp": -22.357
+        "signal_minus_control_pp": 6.752
       }
     }
   }
